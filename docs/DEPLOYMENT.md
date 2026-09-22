@@ -132,3 +132,21 @@ Sau deploy, kiểm tra cả `https://nhactoi.ktvdung.io.vn/` và
 `https://nhactoi.ktvdung.io.vn/api/auth/google/config`; endpoint thứ hai chỉ
 kiểm tra cấu hình công khai OAuth và không thay thế kiểm tra đăng nhập, email,
 webhook hoặc thanh toán.
+
+## Xác minh production ngày 22/09/2026
+
+Commit `c8e5b67` đã được triển khai bằng sự kiện push thật từ GitHub qua
+Git Manager. Log kết thúc với `deployment is healthy`; `/` và
+`/api/auth/google/config` trả HTTP 200, `/api/me` trả 401 khi chưa đăng nhập,
+HTTP chuyển hướng 301 sang HTTPS với certificate hợp lệ. Giao diện đăng nhập
+và đăng ký tải được trên trình duyệt.
+
+Database production được khởi tạo mới, có 0 user và 0 workspace tại thời điểm
+kiểm tra. Tiến trình phục vụ ứng dụng chỉ lắng nghe `127.0.0.1:3100`.
+Google OAuth hiện chưa cấu hình (`enabled: false`); đăng ký đầu tiên dùng email
+và mật khẩu do người vận hành chọn.
+
+Khi kiểm tra những lần deploy tiếp theo, cần đối chiếu symlink `current` với
+commit mới và log `deployment is healthy`. HTTP 200 của webhook chỉ xác nhận
+aaPanel đã nhận yêu cầu, không xác nhận build đã hoàn tất. Các mục lỗi từ lần
+cấu hình ban đầu vẫn còn trong lịch sử; đọc lượt chạy mới nhất.
