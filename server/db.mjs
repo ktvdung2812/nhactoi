@@ -4,6 +4,8 @@ import { EVENTS_SCHEMA } from "./calendar-events.mjs";
 import { COLLABORATION_SCHEMA } from "./collaboration.mjs";
 import { SERVICES_SCHEMA } from "./services.mjs";
 import { AUTOMATION_SCHEMA } from "./automations.mjs";
+import { MOBILE_SCHEMA, MOBILE_DELIVERY_SCHEMA } from "./mobile.mjs";
+import { SERVICE_RENEWAL_SCHEMA } from "../shared/service-renewal.mjs";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -632,6 +634,28 @@ const migrations = [
   {version:15,sql:EXTRAS_SCHEMA},
   {version:16,sql:EVENTS_SCHEMA},
   {version:17,sql:GOOGLE_SCHEMA},
+  {
+    version: 18,
+    // Columns are added by migrateDatabase with an existence check.  A few
+    // legacy migration fixtures intentionally delete only migration markers
+    // before replaying the latest migrations, so this version must remain
+    // safe when its additive columns are already present.
+    sql: MOBILE_SCHEMA,
+  },
+  {
+    // Renewal fields are deliberately separate from migration 13. Existing
+    // service rows are expanded and backfilled without rewriting the applied
+    // baseline schema.
+    version: 19,
+    sql: SERVICE_RENEWAL_SCHEMA,
+  },
+  {
+    // Existing v18 databases already have the main mobile schema. Keep the
+    // per-installation delivery state as a separate additive migration so
+    // retries can be upgraded without recreating any notification rows.
+    version: 20,
+    sql: MOBILE_DELIVERY_SCHEMA,
+  },
 ];
 
 export const SCHEMA_VERSION = migrations.at(-1).version;
@@ -681,7 +705,43 @@ export function migrateDatabase(db) {
     if (has.get(migration.version)) continue;
     db.exec("BEGIN IMMEDIATE");
     try {
-      db.exec(migration.sql);
+      if (migration.version === 18) {
+        const hasColumn = (table, column) =>
+          db
+            .prepare(`PRAGMA table_info(${table})`)
+            .all()
+            .some((entry) => entry.name === column);
+        if (!hasColumn("sessions", "kind")) {
+          db.exec(
+            "ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'web' CHECK(kind IN ('web', 'mobile'))",
+          );
+        }
+        if (!hasColumn("notifications", "entity_type"))
+          db.exec("ALTER TABLE notifications ADD COLUMN entity_type TEXT");
+        if (!hasColumn("notifications", "entity_id"))
+          db.exec("ALTER TABLE notifications ADD COLUMN entity_id TEXT");
+      }
+      if (migration.version === 19) {
+        // The service migration is additive, but old test/backup fixtures can
+        // retain a column after removing only the migration marker. Replay
+        // each statement and skip only an already-present ALTER column.
+        const hasColumn = (table, column) =>
+          db
+            .prepare(`PRAGMA table_info(${table})`)
+            .all()
+            .some((entry) => entry.name === column);
+        for (const rawStatement of migration.sql.split(/;\s*(?:\r?\n|$)/)) {
+          const statement = rawStatement
+            .replace(/^\s*(?:--[^\r\n]*(?:\r?\n|$))+/, "")
+            .trim();
+          if (!statement) continue;
+          const addColumn = /^ALTER TABLE\s+(service_contracts|notifications)\s+ADD COLUMN\s+(\w+)/i.exec(statement);
+          if (addColumn && hasColumn(addColumn[1], addColumn[2])) continue;
+          db.exec(statement);
+        }
+      } else {
+        db.exec(migration.sql);
+      }
       insert.run(migration.version, new Date().toISOString());
       db.exec("COMMIT");
     } catch (error) {

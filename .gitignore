@@ -9,3 +9,9 @@ artifacts/
 # Local reference repository and oversized export archive.
 demo/
 *.tar.gz
+
+# Next.js build output and local environment overrides.
+.next/
+out/
+.env.*
+!.env.example

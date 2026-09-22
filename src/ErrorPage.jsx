@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ArrowLeft,
   RefreshCw,
@@ -258,9 +258,10 @@ export default function ErrorPage({
         : primary[1] === onBilling
           ? CreditCard
           : ArrowLeft;
-  const [paused, setPaused] = useState(
-    () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
-  );
+  const [paused, setPaused] = useState(false);
+  useEffect(() => {
+    setPaused(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  }, []);
   return (
     <main
       className={`no-entry error-theme-${theme} ${paused ? "motion-paused" : ""}`}

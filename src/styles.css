@@ -2807,7 +2807,8 @@ progress::-moz-progress-bar {
 }
 
 /* Contextual trash actions stay available in compact rows. */
-.modal-actions > .modal-trash-menu { margin-right: auto; }
+.modal-actions > .modal-trash-button { margin-right: auto; color: #b54c3b; border-color: #e7c6c0; }
+.modal-trash-button:not(:disabled):hover { background: #fff3f0; border-color: #b54c3b; }
 .transaction-row > span.action-menu { display: inline-flex; margin-right: 0; }
 
 /* Small screens use an agenda so task titles remain readable and tappable. */
@@ -2831,4 +2832,27 @@ progress::-moz-progress-bar {
     border-radius: 5px; padding: 2px 8px; background: #edf2f7; color: #476883;
   }
   .calendar-agenda-task .status-done { background: #eaf3eb; color: #42765a; }
+}
+
+/* Customer details: related work beside the contact form. */
+.customer-detail-modal { width: 960px; }
+.customer-detail-layout { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); }
+.customer-detail-layout > form { min-width: 0; }
+.customer-related-tasks { padding: 24px; background: #f7faf8; border-left: 1px solid var(--line); min-width: 0; }
+.customer-tasks-heading { display: flex; align-items: center; gap: 10px; }
+.customer-tasks-heading h3 { margin: 0; font-size: var(--font-card-title); }
+.customer-tasks-hint { margin: 10px 0 20px; color: var(--muted); font-size: var(--text-xs); }
+.customer-tasks-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; max-height: 480px; overflow-y: auto; }
+.customer-task-link { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-card); background: white; color: var(--ink); text-decoration: none; overflow-wrap: anywhere; }
+.customer-task-link:hover { border-color: var(--green); }
+.customer-task-link:focus-visible { outline: 2px solid var(--green); outline-offset: -2px; }
+.customer-task-link strong { font-size: var(--text-base); }
+.customer-task-meta, .customer-task-open { display: flex; align-items: center; gap: 6px; font-size: var(--text-xs); color: var(--muted); }
+.customer-task-meta svg, .customer-task-open svg { flex-shrink: 0; }
+.customer-task-open { color: var(--green); }
+.customer-tasks-empty { color: var(--muted); font-size: var(--text-sm); padding: 20px 0; }
+@media (max-width: 700px) {
+  .customer-detail-layout { grid-template-columns: minmax(0, 1fr); }
+  .customer-related-tasks { padding: 20px; border-left: 0; border-top: 1px solid var(--line); }
+  .customer-tasks-list { max-height: 260px; }
 }

@@ -30,8 +30,8 @@ export function notifyTaskAudience(db, { taskId, actorUserId, summary, createdAt
     if (!id || id === actorUserId) continue;
     const user = db.prepare('SELECT u.id FROM users u JOIN workspace_members m ON m.user_id=u.id WHERE u.id=? AND m.workspace_id=? AND u.disabled_at IS NULL').get(id,task.workspace_id);
     if (!user || !canAccessTeamTask(db,task.workspace_id,id,task.team_id)) continue;
-    db.prepare('INSERT INTO notifications(id,workspace_id,user_id,task_id,type,title,message,created_at) VALUES (?,?,?,?,?,?,?,?)')
-      .run(createId('notice_'),task.workspace_id,id,taskId,type,task.title,summary,createdAt);
+    db.prepare('INSERT INTO notifications(id,workspace_id,user_id,task_id,type,title,message,entity_type,entity_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+      .run(createId('notice_'),task.workspace_id,id,taskId,type,task.title,summary,'task',taskId,createdAt);
   }
 }
 

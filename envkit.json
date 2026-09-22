@@ -1,12 +1,5 @@
 {
   "schema": 1,
   "name": "nhactoi",
-  "processes": [
-    {
-      "label": "Nhac Toi API",
-      "command": "\"/Users/ledung/Library/Application Support/envkit/services/nodejs/26.2.0/bin/node\" --watch --env-file-if-exists=.env server/index.mjs",
-      "enabled": true,
-      "restart": "always"
-    }
-  ]
+  "processes": []
 }

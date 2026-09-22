@@ -1,5 +1,13 @@
 # Vận hành Nhắc tôi
 
+## Máy chủ Next.js
+
+Chạy `npm run build` rồi `npm start` trên Node 24 trở lên. Giao diện và API cùng tiến trình/cổng; không chạy Vite hay `server/index.mjs` bên cạnh Next. `PORT` trong `.env` chọn cổng (mặc định 3000). Reverse proxy HTTPS phải chuyển cả trang, `/_next/*` và `/api/*` tới cùng cổng. Với EnvKit, chọn framework Next.js, bật Dev server với script `dev`, cổng 5170; tắt tiến trình API cũ. `envkit.json` không khai báo worker riêng.
+
+Chỉ vận hành một tiến trình dùng cùng database: instrumentation khởi động worker cho lịch nhắc, thông báo mobile, sao lưu và dọn tệp. Không dùng cluster nhiều worker hoặc triển khai serverless cho cấu hình SQLite/tệp hiện tại. Build không mở database; mỗi lần khởi động server chạy migration hiện có. Sao lưu trước khi cập nhật và giữ nguyên thư mục dữ liệu cùng khóa mã hóa.
+
+Khi phát triển, thay đổi module backend cần khởi động lại Next để nạp lại runtime singleton. Sau cập nhật, chạy `npm test`, `npm run build`, `npm run test:next` trước khi khởi động bản production.
+
 ## Sao lưu và khôi phục
 
 Admin SaaS → Cấu hình → Sao lưu hệ thống cho phép tạo bản sao ngay và đặt lịch 6/12/24 giờ hoặc hằng tuần. Lịch chạy khi dịch vụ Node đang hoạt động. Bản sao gồm SQLite bằng `VACUUM INTO`, các tệp đính kèm trên máy chủ và kho ngoài và SHA-256 kiểm tra toàn vẹn. Bản sao đang chạy dùng thư mục `.pending`; nếu lỗi, dữ liệu tạm được dọn và không được liệt kê là bản sao hoàn chỉnh. Chưa tự xóa bản sao cũ; cần theo dõi dung lượng đĩa.

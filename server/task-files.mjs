@@ -15,12 +15,11 @@ import {
 import * as fs from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { createId } from "./auth.mjs";
 
-const SERVER_DIR = fileURLToPath(new URL(".", import.meta.url));
-const PROJECT_DIR = resolve(SERVER_DIR, "..");
+// Next bundles server modules into .next; storage policy is rooted at the project.
+const PROJECT_DIR = resolve(/* turbopackIgnore: true */ process.cwd());
 const PROJECT_DATA_DIR = resolve(PROJECT_DIR, "data");
 const DEFAULT_MAX_FILE_SIZE_MB = 10;
 const MIN_MAX_FILE_SIZE_MB = 1;
@@ -128,7 +127,7 @@ function assertNoSymlink(pathname, HttpError) {
   for (let index = 1; index < parts.length; index += 1) {
     current = current === requirePathSeparator()
       ? `${current}${parts[index]}`
-      : join(current, parts[index]);
+      : join(/* turbopackIgnore: true */ current, parts[index]);
     let stat;
     try {
       stat = lstatSync(current);

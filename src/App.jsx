@@ -3,6 +3,7 @@ import {GoogleAccount} from "./OperationsSettings.jsx";
 import CalendarEvents from "./CalendarEvents.jsx";
 import BoardTransfer from "./BoardTransfer.jsx";
 import React, { useEffect, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Bell,
   LayoutDashboard,
@@ -41,12 +42,7 @@ import {
   LifeBuoy,
   Trash2,
 } from "lucide-react";
-import "@fontsource/be-vietnam-pro/400.css";
-import "@fontsource/be-vietnam-pro/500.css";
-import "@fontsource/be-vietnam-pro/600.css";
-import "@fontsource/be-vietnam-pro/700.css";
-import "./styles.css";
-import Admin, { adminRoutes } from "./Admin.jsx";
+import Admin from "./Admin.jsx";
 import AccessDenied from "./AccessDenied.jsx";
 import ErrorPage from "./ErrorPage.jsx";
 import ErrorGallery from "./ErrorGallery.jsx";
@@ -59,6 +55,7 @@ import Automations from "./Automations.jsx";
 import ActionMenu from "./ActionMenu.jsx";
 import Trash, { MoveToTrashDialog } from "./Trash.jsx";
 import TaskDetail from "./TaskDetail.jsx";
+import { readRoute } from "./routes.js";
 
 const money = (n) =>
   new Intl.NumberFormat("vi-VN", {
@@ -85,7 +82,7 @@ const navItems = [
   ["teams", "Teams", Users],
   ["team", "Thành viên", Users],
   ["tickets", "Hỗ trợ", LifeBuoy],
-  ["services", "Dịch vụ định kỳ", CalendarDays],
+  ["services", "Quản lý gia hạn", CalendarDays],
   ["automations", "Tự động hóa", Sparkles],
   ["events", "Lịch hẹn", CalendarDays],
   ["transfer", "Nhập / xuất bảng", Copy],
@@ -93,42 +90,13 @@ const navItems = [
   ["templates", "Mẫu công việc", Copy],
   ["trash", "Thùng rác cấp 2", Trash2],
 ];
-function readRoute() {
-  const current = location.pathname.replace(/^\/+|\/+$/g, "");
-  if (!current || current === "index.html") return "dashboard";
-  if (current === "admin") return "admin/overview";
-  const query = location.search.replace(/^\?/, "");
-  if (
-    current === "admin/tickets" &&
-    /^(workspaceId|userId)=[A-Za-z0-9_-]+$/.test(query)
-  )
-    return `${current}?${query}`;
-  if (
-    [
-      ...navItems.map(([id]) => id),
-      "billing",
-      "errors",
-      ...adminRoutes,
-    ].includes(current) ||
-    /^errors\/[45]\d{2}$/.test(current) ||
-    /^admin\/(users|workspaces|tickets)\/[A-Za-z0-9_-]+$/.test(current) ||
-    /^tickets\/[A-Za-z0-9_-]+$/.test(current) ||
-    /^tasks\/[A-Za-z0-9_-]+$/.test(current) ||
-    /^teams\/[A-Za-z0-9_-]+$/.test(current)
-  )
-    return current;
-  return "not-found";
-}
-
 function migrateLegacyHashRoute() {
   if (!["/", "/index.html"].includes(location.pathname)) return;
   const legacy = location.hash.match(/^#\/(.+)$/)?.[1];
-  if (!legacy) return;
+  if (!legacy) return null;
   const search = legacy.includes("?") ? "" : location.search;
-  history.replaceState(history.state, "", `/${legacy}${search}`);
+  return `/${legacy}${search}`;
 }
-
-migrateLegacyHashRoute();
 async function api(path, options = {}) {
   const r = await fetch(`/api${path}`, {
     ...options,
@@ -282,6 +250,9 @@ function Field({ label, children }) {
   );
 }
 export default function App() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [me, setMe] = useState(null),
     [loading, setLoading] = useState(true),
     [data, setData] = useState({
@@ -309,10 +280,21 @@ export default function App() {
     [bootError, setBootError] = useState(null),
     [previewToast, setPreviewToast] = useState("");
   const [trashTarget, setTrashTarget] = useState(null);
+  const [selectedServiceId, setSelectedServiceId] = useState(() => new URLSearchParams(location.search).get("service"));
   const [teamsRevision, setTeamsRevision] = useState(0);
   const [taskTeamFilter, setTaskTeamFilter] = useState("all");
   const [taskTeamId, setTaskTeamId] = useState("");
   const [taskReturnPage, setTaskReturnPage] = useState(null);
+  useEffect(() => {
+    const query = searchParams?.toString();
+    setPage(readRoute(pathname, query ? `?${query}` : ""));
+  }, [pathname, searchParams]);
+  useEffect(() => {
+    const legacyTarget = migrateLegacyHashRoute();
+    if (!legacyTarget) return;
+    router.replace(legacyTarget);
+    setPage(readRoute());
+  }, [router]);
   useEffect(() => {
     if (modal?.type === "task")
       setTaskTeamId(modal.item?.teamId || modal.teamId || "");
@@ -322,6 +304,7 @@ export default function App() {
     setModal(null);
     setTrashTarget(null);
     setTaskReturnPage(null);
+    setSelectedServiceId(new URLSearchParams(location.search).get("service"));
   }, [me?.workspace?.id]);
   useEffect(() => {
     if (
@@ -358,11 +341,6 @@ export default function App() {
     const timer = setTimeout(() => setPreviewToast(""), 3000);
     return () => clearTimeout(timer);
   }, [previewToast]);
-  useEffect(() => {
-    const onPopState = () => setPage(readRoute());
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
-  }, []);
   useEffect(() => {
     if (!me) return;
     let canceled = false;
@@ -443,6 +421,9 @@ export default function App() {
     members = data.members || [],
     transactions = data.transactions || [],
     notifications = data.notifications || [];
+  const customerTasks = modal?.type === "customer" && modal.item
+    ? tasks.filter((task) => task.customerId === modal.item.id)
+    : [];
   const now = new Date(),
     today = localDay(),
     isToday = (d) => d && localDay(new Date(d)) === today;
@@ -609,8 +590,9 @@ export default function App() {
     }
     const target = `/${p.replace(/^\/+/, "")}`;
     if (`${location.pathname}${location.search}` !== target)
-      history.pushState({}, "", target);
-    setPage(readRoute());
+      router.push(target);
+    const nextUrl = new URL(target, location.origin);
+    setPage(readRoute(nextUrl.pathname, nextUrl.search));
     setSearch("");
     setFilter("all");
     setMobile(false);
@@ -996,7 +978,7 @@ export default function App() {
           {page === "events" && <CalendarEvents key={me.workspace.id} api={api} teams={teams}/>}
           {page === "transfer" && <><PageHeading title="Nhập / xuất bảng" subtitle="Di chuyển dữ liệu công việc giữa các bảng."/><BoardTransfer key={me.workspace.id} api={api} teams={teams} onChanged={refresh}/></>}
           {page === "automations" && <Automations api={api} me={me} teams={teams} tasks={tasks} members={members} onChanged={refresh}/>}
-          {page === "services" && <Services key={me.workspace.id} api={api} me={me} members={members} customers={customers} teams={teams} />}
+          {page === "services" && <Services key={me.workspace.id} api={api} me={me} members={members} customers={customers} teams={teams} selectedServiceId={selectedServiceId} onSelectedServiceOpened={() => setSelectedServiceId(null)} />}
           {page === "trash" && (
             <Trash key={me.workspace.id} api={api} me={me} onChanged={refresh} />
           )}
@@ -2149,8 +2131,14 @@ export default function App() {
                     await action(() =>
                       api(`/notifications/${n.id}/read`, { method: "PATCH" }),
                     );
-                    const t = tasks.find((t) => t.id === n.taskId);
-                    if (t) openTaskDetail(t);
+                    if (n.serviceId || n.type === "service_renewal") {
+                      setSelectedServiceId(n.serviceId || null);
+                      setNoticeOpen(false);
+                      go("services");
+                    } else {
+                      const t = tasks.find((t) => t.id === n.taskId);
+                      if (t) openTaskDetail(t);
+                    }
                   }}
                 >
                   <Bell size={19} />
@@ -2189,7 +2177,7 @@ export default function App() {
           }}
         >
           <section
-            className="modal"
+            className={`modal ${modal.type === "customer" && modal.item ? "customer-detail-modal" : ""}`}
             role="dialog"
             aria-modal="true"
             aria-labelledby="modal-title"
@@ -2219,6 +2207,7 @@ export default function App() {
                 <X size={21} />
               </button>
             </div>
+            <div className={modal.type === "customer" && modal.item ? "customer-detail-layout" : undefined}>
             <form onSubmit={submitModal}>
               {modal.type === "task" && (
                 <fieldset
@@ -2509,9 +2498,15 @@ export default function App() {
               )}
               <div className="modal-actions">
                 {modal.item && !modal.readOnly && !me.workspace.suspendedAt && (modal.type === "task" || (modal.type === "customer" && canManage)) && (
-                  <ActionMenu className="modal-trash-menu" label="Thao tác bản ghi" disabled={busy} items={[
-                    { label: "Chuyển vào thùng rác", icon: Trash2, danger: true, onSelect: () => requestTrash(modal.type, modal.item) },
-                  ]} />
+                  <Button
+                    className="button secondary modal-trash-button"
+                    icon={Trash2}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => requestTrash(modal.type, modal.item)}
+                  >
+                    Xóa
+                  </Button>
                 )}
                 <Button
                   secondary
@@ -2536,6 +2531,31 @@ export default function App() {
                 )}
               </div>
             </form>
+              {modal.type === "customer" && modal.item && (
+                <aside className="customer-related-tasks" aria-label="Công việc liên quan đến khách hàng">
+                  <div className="customer-tasks-heading">
+                    <h3>Công việc liên quan</h3>
+                    <span className="count-pill">{customerTasks.length}</span>
+                  </div>
+                  <p className="customer-tasks-hint">Các công việc bạn có quyền xem, bao gồm việc đã hoàn thành.</p>
+                  {customerTasks.length ? (
+                    <ul className="customer-tasks-list">
+                      {customerTasks.map((task) => (
+                        <li key={task.id}>
+                          <a className="customer-task-link" href={`/tasks/${encodeURIComponent(task.id)}`} target="_blank" rel="noopener noreferrer">
+                            <span className={`status ${task.status}`}>{statuses[task.status] || task.status}</span>
+                            <strong>{task.title}</strong>
+                            <span className="customer-task-meta"><CalendarDays size={14} />{task.dueAt ? dateLabel(task.dueAt) : "Chưa có hạn hoàn thành"}</span>
+                            <span className="customer-task-meta"><Users size={14} />{person(task.assigneeId)?.name || "Chưa phân công"}</span>
+                            <span className="customer-task-open">Mở công việc <ExternalLink size={13} /><span className="sr-only"> trong tab mới</span></span>
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : <p className="customer-tasks-empty">Chưa có công việc liên quan đến khách hàng này.</p>}
+                </aside>
+              )}
+            </div>
           </section>
         </div>
       )}
@@ -2601,6 +2621,7 @@ function SearchBox({ value, setValue, placeholder }) {
   );
 }
 function Auth({ onLogin, notify, toast }) {
+  const router = useRouter();
   const [googleEnabled,setGoogleEnabled]=useState(false);
   useEffect(()=>{api("/auth/google/config").then(d=>setGoogleEnabled(d.enabled)).catch(()=>{});},[]);
   const token = new URLSearchParams(location.search).get("invite");
@@ -2618,7 +2639,7 @@ function Auth({ onLogin, notify, toast }) {
         body: JSON.stringify({ ...body, ...(token ? { token } : {}) }),
       });
       if (token && mode === "invite")
-        history.replaceState({}, "", location.pathname);
+        router.replace(location.pathname);
       await onLogin();
     } catch (e) {
       setError(e.message);
@@ -2629,7 +2650,14 @@ function Auth({ onLogin, notify, toast }) {
   return (
     <div className="auth-page">
       <section className="auth-story">
-        <a className="brand" href="/">
+        <a
+          className="brand"
+          href="/"
+          onClick={(event) => {
+            event.preventDefault();
+            router.push("/");
+          }}
+        >
           <span className="brand-mark">
             <Bell size={24} />
             <i />
@@ -2811,6 +2839,7 @@ function Auth({ onLogin, notify, toast }) {
 }
 
 function AcceptInvitation({ token, me, onAccepted, onLogout }) {
+  const router = useRouter();
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   async function accept() {
@@ -2821,7 +2850,7 @@ function AcceptInvitation({ token, me, onAccepted, onLogout }) {
         method: "POST",
         body: JSON.stringify({ token }),
       });
-      history.replaceState({}, "", location.pathname);
+      router.replace(location.pathname);
       await onAccepted();
     } catch (e) {
       setError(e.message);
@@ -2869,7 +2898,7 @@ function AcceptInvitation({ token, me, onAccepted, onLogout }) {
         <button
           className="text-button"
           onClick={() => {
-            history.replaceState({}, "", location.pathname);
+            router.replace(location.pathname);
             onAccepted();
           }}
         >

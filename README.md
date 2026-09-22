@@ -8,12 +8,11 @@ Nhập/xuất JSON của bảng hỗ trợ tối đa **500 công việc, 40 cộ
 
 Website trên máy này: **https://nhactoi.test**.
 
-Trong EnvKit → Sites → nhactoi:
-
-- Giao diện React/Vite chạy tại `127.0.0.1:5170`, được nginx của EnvKit chuyển tiếp qua HTTPS.
-- Process **Nhac Toi API** chạy API và bộ xử lý nhắc việc tại `127.0.0.1:3100` bằng Node 26 của EnvKit. Process được đặt tự khởi động lại.
-- `envkit.json` lưu cấu hình tiến trình. Đường dẫn Node trong file là đường dẫn trên máy hiện tại; chọn lại runtime nếu chuyển máy.
-- `.env` chứa tên miền và danh sách origin dùng thử. `.env.example` liệt kê các biến cấu hình; không đưa `.env` vào Git.
+- Next.js phục vụ giao diện và toàn bộ `/api/*` trong **một tiến trình**, tại `127.0.0.1:5170` qua Dev server của EnvKit (`npm run dev`).
+- nginx của EnvKit chuyển tiếp toàn bộ website tới cổng này. Không còn Vite hay API riêng tại cổng 3100.
+- Trong Configuration chọn framework **Next.js**; trong Overview bật Dev server, dùng script `dev`, cổng `5170`. Tắt tiến trình **Nhac Toi API** cũ; `envkit.json` không khai báo worker riêng vì worker đã nằm trong Next. Máy hiện tại đã được chuyển theo cấu hình này.
+- Chọn runtime Node 24 trở lên trong EnvKit. Đặt `PUBLIC_APP_URL=https://nhactoi.test` và thêm tên miền vào `FRONTEND_ORIGIN` trong `.env`.
+- `.env.example` liệt kê các biến cấu hình; không đưa `.env` vào Git.
 
 Tài khoản dữ liệu mẫu sau khi chạy `npm run seed`:
 
@@ -36,15 +35,27 @@ npm run seed
 npm run dev
 ```
 
-Trước khi chạy trực tiếp, dừng tiến trình API của dự án trong EnvKit để tránh trùng cổng. Giao diện ở `http://127.0.0.1:5173`; API ở `http://127.0.0.1:3100`. Nếu chỉ chạy bằng localhost, đặt `PUBLIC_APP_URL=http://127.0.0.1:5173` để liên kết mời đúng địa chỉ.
+Trước khi chạy trực tiếp, dừng tiến trình Nhắc tôi trong EnvKit để tránh chạy trùng worker/database. Với `.env.example`, ứng dụng và API cùng ở `http://localhost:3000`. Biến `PORT` trong `.env` hoặc `npm run dev -- --port 5170` chọn cổng khác; cập nhật `PUBLIC_APP_URL` và `FRONTEND_ORIGIN` tương ứng.
 
 ```sh
 npm test
 npm run build
+npm run test:next
 npm start
 ```
 
-`npm start` phục vụ cả bản build và API trên cổng 3100. Khi triển khai, đặt HTTPS reverse proxy phía trước, `PUBLIC_APP_URL` và `FRONTEND_ORIGIN` theo tên miền thật. Cookie production có cờ Secure nên không dùng HTTP trực tiếp để đăng nhập production.
+`npm start` phục vụ bản build Next.js và API trên cùng cổng (`PORT`, mặc định 3000). Production cần HTTPS reverse proxy; đặt `PUBLIC_APP_URL` và `FRONTEND_ORIGIN` theo tên miền thật. Cookie production có cờ Secure nên không dùng HTTP trực tiếp để đăng nhập production.
+
+## Kiến trúc Next.js full stack
+
+- `app/`: App Router, layout tiếng Việt, trang ứng dụng, trang lỗi và HTTP 404 cho URL không được hỗ trợ. Các màn hình nghiệp vụ hiện có trong `src/` là Client Components, điều hướng bằng Next.js.
+- `pages/api/[[...path]].js`: Next API Route xử lý mọi `/api/*` trong cùng máy chủ. Router Express trong `server/index.mjs` giữ hợp đồng API, middleware phân quyền và nghiệp vụ; không mở cổng API riêng, không proxy tới dịch vụ khác.
+- API tắt bộ đọc body mặc định của Next để giữ đúng byte webhook HMAC và stream tải tệp. Giới hạn JSON/tệp tiếp tục được kiểm tra trong tầng API.
+- `server/runtime.mjs` giữ một kết nối SQLite và một worker cho mỗi tiến trình. `instrumentation.js` khởi động worker khi Next server sẵn sàng, kể cả khi chưa có request; build không khởi tạo DB hay worker.
+- `server/`, `shared/`: nghiệp vụ, database, tích hợp và hợp đồng chung với mobile. Các lệnh seed, admin và restore vẫn chạy ngoại tuyến bằng Node.
+- `npm test`: bộ kiểm thử nghiệp vụ với DB tạm. `npm run test:next`: kiểm thử tích hợp qua máy chủ Next production sau `npm run build`, dùng DB riêng.
+
+Triển khai trên một Node server chạy liên tục, có volume lưu `data/` và các kho tệp đã cấu hình. SQLite, tệp riêng và lịch chạy nền hiện tại cần môi trường này; không triển khai bằng static export, Edge runtime hoặc hàm serverless tạm thời. Sau khi thay đổi mã nghiệp vụ backend trong lúc phát triển, khởi động lại `npm run dev` để nạp lại singleton và worker.
 
 ## Các luồng đã có
 
@@ -56,6 +67,18 @@ npm start
 - Email nhắc việc là tùy chọn, chỉ hoạt động khi cấu hình SMTP. Lời mời nhóm được tạo thành liên kết để tự gửi; ứng dụng không tự gửi email mời.
 - Hồ sơ khách hàng và dịch vụ. Sổ thu–chi VND với danh mục, khách hàng liên quan và tổng theo tháng. Đây là sổ quản lý nội bộ.
 - Gói Starter, Team, Business với giới hạn 3/10/50 thành viên. Giá mẫu sửa trong quản trị SaaS hoặc qua biến môi trường khi chưa có cấu hình lưu; giá năm là tổng cho 12 tháng. Quyền ghi dữ liệu được chặn khi thuê bao hết hạn; vẫn có thể đọc dữ liệu và gia hạn.
+
+## Quản lý gia hạn dịch vụ và giấy phép
+
+Mở **Quản lý gia hạn** (`/services`) để theo dõi thuê bao, tên miền/SSL, giấy phép vĩnh viễn, dùng thử và bảo trì. Dữ liệu dịch vụ cũ được giữ lại khi nâng cấp.
+
+- Hồ sơ gồm nhà cung cấp, ngày mua/hết hạn, chu kỳ tháng/năm, số lượng, đơn giá, thành tiền, thực chi, tài khoản sử dụng/thanh toán, cổng quản lý, hợp đồng/chứng từ, khách hàng, team và người nhận nhắc. Chỉ lưu thông tin nhận diện tài khoản, không lưu mật khẩu hoặc mã bảo mật thẻ.
+- Lọc theo trạng thái còn hạn, sắp hết hạn, quá hạn hoặc tắt theo dõi; tìm kiếm và lọc team. Có xem chi tiết, sao chép và lịch sử gia hạn.
+- **Ghi nhận gia hạn** chuyển đến kỳ tiếp theo còn hạn theo lịch Việt Nam, chặn ngày cuối tháng theo tháng đích. Có thể nhập ngày kế tiếp và thực chi; đây là ghi nhận nội bộ, không chuyển tiền. Gia hạn hàng loạt dùng chu kỳ và thành tiền riêng của từng dịch vụ.
+- Nhắc **mỗi ngày một lần cho từng người nhận** từ số ngày đã đặt trước hạn và tiếp tục khi quá hạn, cho đến khi gia hạn, tắt theo dõi hoặc lưu trữ. Người nhận là người phụ trách; khi chưa chọn thì gửi chủ sở hữu/quản trị doanh nghiệp có quyền truy cập. Máy chủ xử lý lịch khi đang chạy, không cần mở trình duyệt. Thông báo mở đúng dịch vụ; email tùy thuộc cấu hình SMTP. Email lỗi không làm mất thông báo trong ứng dụng.
+- Bật **Hiển thị ngày gia hạn trong Lịch hẹn** để đưa kỳ hiện tại lên lịch lúc 08:00 giờ Việt Nam. Lịch tự cập nhật khi sửa hoặc gia hạn; tắt nhắc vẫn có thể giữ mục lịch. Thông tin thanh toán và tài khoản không đưa vào nội dung lịch.
+- Lưu trữ dừng nhắc và ẩn mục lịch, giữ lại hồ sơ/lịch sử để khôi phục. Trong danh sách đã lưu trữ có xóa vĩnh viễn, yêu cầu nhập đúng tên dịch vụ. Gia hạn/lưu trữ/khôi phục hàng loạt tối đa 100 mục mỗi lần, xử lý nguyên khối.
+- Quyền truy cập theo không gian và team; team lưu trữ, doanh nghiệp tạm ngưng hoặc thuê bao hết hạn không cho ghi dữ liệu. Lời nhắc cũ không còn hiển thị khi người nhận mất quyền với team của dịch vụ.
 
 ## Làm việc theo team
 
@@ -183,8 +206,12 @@ BillGateway không nhận callback localhost/IP riêng. `nhactoi.test` chỉ ph�
 
 ## Dữ liệu và phạm vi bản đầu
 
-Stack: React + Vite, Express 5, SQLite (`node:sqlite`), Nodemailer tùy chọn. Font tiếng Việt được đóng gói cùng app. Không cần MySQL để chạy bản thử nghiệm này.
+Stack: Next.js 16 + React 19 (App Router), Next API Routes với router nghiệp vụ Express 5, SQLite (`node:sqlite`), Nodemailer tùy chọn. Font tiếng Việt được đóng gói cùng app. Không cần MySQL để chạy bản thử nghiệm này.
 
 Dữ liệu mặc định ở `data/nhactoi.sqlite`. Migration theo phiên bản chạy khi mở DB. Kiểm thử dùng DB tạm, không dùng DB đang chạy. Khóa kết nối lưu trong DB được mã hóa AES-256-GCM. Mặc định khóa mã hóa được tạo tại `data/.nhactoi-settings.key` với quyền `0600`; có thể dùng `NHACTOI_SETTINGS_KEY` hoặc `NHACTOI_SETTINGS_KEY_FILE` trên máy chủ. Khi sao lưu thủ công, dừng API rồi sao lưu toàn bộ thư mục `data/`, bao gồm tệp khóa ẩn; nếu dùng khóa từ môi trường hoặc đường dẫn riêng, lưu bản sao khóa đó an toàn cùng quy trình sao lưu. Cần đúng khóa để giải mã khi phục hồi; không đổi hoặc xóa khóa nếu đã lưu thông tin kết nối. Phục hồi khi API đang dừng. Không xóa DB để cập nhật phiên bản.
 
-Đây là bản MVP chạy local cho các luồng cốt lõi. Chưa có Web Push/SMS/Zalo, khôi phục mật khẩu qua email, hóa đơn điện tử hay hệ thống vận hành production nhiều máy. Dữ liệu, thư mục `demo/` và tệp nén tham khảo không được phục vụ qua Express production; chỉ thư mục `dist/` được phục vụ công khai.
+Đây là bản MVP chạy local cho các luồng cốt lõi. Chưa có Web Push/SMS/Zalo, khôi phục mật khẩu qua email, hóa đơn điện tử hay hệ thống vận hành production nhiều máy. Dữ liệu, thư mục `demo/` và tệp nén tham khảo không được phục vụ công khai. Next.js chỉ phục vụ các trang, tài nguyên build và tài nguyên chủ động đặt trong `public/`; tệp đính kèm luôn đi qua API có xác thực.
+
+## Ứng dụng Android
+
+Mã nguồn React Native/Expo ở `mobile/`, dùng chung API và quyền truy cập với web. Có bố cục điện thoại, màn hình lớn và thiết bị gập; cache ngoại tuyến chỉ đọc được mã hóa. Xem [hướng dẫn build, chạy và kiểm thử Android](docs/ANDROID.md). Bản local là development APK cần Metro; cấu hình Firebase và phát hành store là bước riêng.

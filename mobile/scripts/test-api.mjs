@@ -1,0 +1,11 @@
+import {mkdtempSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createApp} from '../../server/index.mjs';
+import {seedDemo} from '../../server/seed.mjs';
+const directory=mkdtempSync(join(tmpdir(),'nhactoi-android-'));
+const dbPath=join(directory,'test.sqlite');
+seedDemo({dbPath});
+const app=createApp({dbPath,startWorker:true,env:{NODE_ENV:'test',PUBLIC_APP_URL:'http://127.0.0.1:3101',FRONTEND_ORIGIN:'http://localhost:8081'}});
+const server=app.listen(3101,'127.0.0.1',()=>console.log('Isolated Android test API http://127.0.0.1:3101 · demo@nhactoi.local / NhacToi2026!'));
+process.on('SIGTERM',()=>server.close(()=>{app.locals.close();process.exit(0);}));

@@ -135,7 +135,7 @@ export default function CalendarEvents({ api, teams = [] }) {
       <header className="services-heading">
         <div>
           <h1>Lịch hẹn</h1>
-          <p>Lịch sự kiện độc lập với công việc. Nhắc lịch được gửi cho người tạo.</p>
+          <p>Lịch hẹn và các kỳ gia hạn dịch vụ. Nhắc lịch hẹn được gửi cho người tạo.</p>
         </div>
         <button type="button" className="button" onClick={openCreate}>
           <Plus size={18} />Tạo lịch hẹn
@@ -160,6 +160,7 @@ export default function CalendarEvents({ api, teams = [] }) {
             </div>
             <p>{new Date(event.starts_at).toLocaleString("vi-VN")} → {new Date(event.ends_at).toLocaleString("vi-VN")}</p>
             <p className="service-card-description">{event.description}</p>
+            {event.service_id && <a className="button secondary" href={`/services?service=${encodeURIComponent(event.service_id)}`}>Xem dịch vụ gia hạn</a>}
             <small>
               {teams.find(team => team.id === event.team_id)?.name || "Toàn doanh nghiệp"}
               {event.remind_at ? ` · Nhắc ${new Date(event.remind_at).toLocaleString("vi-VN")}` : ""}
