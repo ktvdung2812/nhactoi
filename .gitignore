@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+data/
+*.log
+.DS_Store
+artifacts/
+
+# Local reference repository and oversized export archive.
+demo/
+*.tar.gz

@@ -1,0 +1,155 @@
+/* Shared visual contract. Feature styles consume these tokens; this file is
+   imported last so shared components have the same appearance on every route. */
+:root {
+  --font-sans: "Be Vietnam Pro", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-lg: 1rem;
+  --text-xl: 1.125rem;
+  --text-2xl: 1.25rem;
+  --text-3xl: 1.5rem;
+  --text-4xl: 1.75rem;
+  --text-5xl: 2rem;
+  --text-6xl: 2.5rem;
+  --font-page-title: var(--text-4xl);
+  --font-section-title: var(--text-xl);
+  --font-card-title: var(--text-lg);
+  --font-control: var(--text-base);
+  --leading-body: 1.6;
+  --leading-heading: 1.35;
+  --control-height: 40px;
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-dialog: 16px;
+  --space-section: 24px;
+  --space-field: 16px;
+  --green: #176b59;
+  --ink: #283c38;
+  --muted: #65786f;
+  --line: #dfe8e2;
+  font-family: var(--font-sans);
+  font-size: 100%;
+}
+body { font-size: var(--text-base); line-height: var(--leading-body); }
+.teams-page {
+  --teams-ink: var(--ink);
+  --teams-muted: var(--muted);
+  --teams-line: var(--line);
+  --teams-green: var(--green);
+}
+.tickets { --ticket-border: var(--line); --ticket-muted: var(--muted); }
+button, input, select, textarea { font-family: var(--font-sans); }
+code, pre { font-family: var(--font-mono); }
+h1, h2, h3 { font-weight: 600; line-height: var(--leading-heading); }
+h1 { font-size: var(--font-page-title); }
+h2 { font-size: var(--font-section-title); }
+h3 { font-size: var(--font-card-title); }
+small { font-size: var(--text-xs); }
+.calendar-agenda-task strong { font-size: var(--text-base); }
+
+/* Page hierarchy is shared by tenant, platform admin and feature modules. */
+body :is(.page-heading, .teams-page-heading, .teams-detail-head, .td-title,
+  .trash-heading, .services-heading, .task-templates-heading, .admin-details-heading) h1 {
+  font-size: var(--font-page-title);
+  font-weight: 700;
+  line-height: var(--leading-heading);
+  letter-spacing: -0.5px;
+}
+body :is(.page-heading, .teams-page-heading, .teams-detail-head,
+  .trash-heading, .services-heading, .task-templates-heading, .admin-details-heading) p {
+  font-size: var(--text-base);
+  line-height: var(--leading-body);
+  color: var(--muted);
+}
+body :is(.panel-head, .td-section-heading, .settings-card-heading,
+  .modal-heading, .service-modal, .services-modal, .teams-modal, .ticket-create) h2 {
+  font-size: var(--font-section-title);
+  font-weight: 600;
+  line-height: var(--leading-heading);
+}
+.eyebrow, .teams-eyebrow, .nav-caption {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+body .sidebar nav button { font-size: var(--text-base); line-height: 1.5; }
+.overview-strip button { text-align: left; }
+.overview-strip button > span { min-width: 0; }
+.overview-strip b { white-space: nowrap; }
+
+/* Controls keep their text size when a layout wraps; only the layout changes. */
+body :is(.button, .teams-button, .workflow-board-button, .task-extras-button, .action-menu-item) {
+  font-size: var(--font-control);
+  font-weight: 500;
+  line-height: 1.5;
+  min-height: var(--control-height);
+  border-radius: var(--radius-control);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+body :is(.button, .teams-button, .workflow-board-button, .task-extras-button) { padding: 9px 16px; gap: 8px; }
+.task-board-open strong { font-size: var(--text-base); }
+.task-board-add { font-size: var(--font-control); }
+.teams-section-toolbar { flex-wrap: wrap; }
+.teams-section-toolbar > .teams-toolbar-actions { flex-shrink: 0; margin-left: auto; }
+body :is(.icon-button, .icon-btn, .action-menu-trigger, .teams-icon-button,
+  .workflow-board-modal-close, .task-extras-modal-close, .admin-details-close),
+body .app-shell :is(.icon-button, .icon-btn, .action-menu-trigger, .teams-icon-button,
+  .workflow-board-modal-close, .task-extras-modal-close, .admin-details-close) {
+  width: var(--control-height);
+  height: var(--control-height);
+  min-width: var(--control-height);
+  flex-shrink: 0;
+  border-radius: var(--radius-control);
+}
+body :is(.app-shell, .modal, .teams-modal, .ticket-create, .auth-form, .invite-page)
+  :is(input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=file]), select, textarea) {
+  font-family: var(--font-sans);
+  font-size: var(--font-control);
+  line-height: 1.5;
+  min-height: var(--control-height);
+  border-radius: var(--radius-control);
+  min-width: 0;
+  max-width: 100%;
+}
+body :is(.field > span, .field > label, .service-modal label, .services-modal .field,
+  .teams-modal label, .ticket-create label) {
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+  font-weight: 500;
+}
+body :is(.panel, .td-panel, .customer-card, .service-card, .services-card,
+  .settings-card, .ticket-list-panel, .teams-card) { border-radius: var(--radius-card); }
+body :is(.modal, .teams-modal, .ticket-create, .workflow-board-modal,
+  .task-extras-modal, .admin-details-modal) { border-radius: var(--radius-dialog); }
+body :is(.td-panel, .service-card, .services-card, .services-panel) { padding: 20px; }
+.form-error, .form-success, .hint { font-size: var(--text-sm); line-height: var(--leading-body); }
+body :is(.button, .teams-button, .icon-button, .icon-btn, .action-menu-trigger,
+  .action-menu-item):focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 3px;
+}
+
+@media (max-width: 1000px) {
+  :root { --font-page-title: var(--text-3xl); }
+}
+@media (max-width: 600px) {
+  :root { --control-height: 44px; }
+  body :is(.td-panel, .service-card, .services-card, .services-panel) { padding: 16px; }
+  .teams-filter-tabs { flex-wrap: nowrap; overflow-x: auto; max-width: 100%; }
+  .teams-filter-tabs button { flex: 0 0 auto; min-height: var(--control-height); }
+  .settings-card-heading:has(> .settings-card-icon) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+  .settings-card-heading > .settings-card-icon { display: none; }
+  .settings-card-heading > .action-menu { margin-left: 0; }
+  /* 16px text avoids browser auto-zoom when editing a form on a phone. */
+  body :is(.app-shell, .modal, .teams-modal, .ticket-create, .auth-form, .invite-page)
+    :is(input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=file]), select, textarea) {
+    font-size: var(--text-lg);
+  }
+}
