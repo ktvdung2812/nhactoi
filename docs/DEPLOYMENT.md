@@ -69,9 +69,10 @@ exec 8>/www/wwwroot/nhactoi.ktvdung.io.vn/shared/git-manager.lock
 flock -x 8
 cd /www/wwwroot/nhactoi.ktvdung.io.vn/nhactoi
 export GIT_SSH_COMMAND='ssh -i /root/.ssh/aapanel/163061073068_95627 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes'
-git fetch origin main
-git checkout main
-git merge --ff-only origin/main
+source_git() { git -c safe.directory=/www/wwwroot/nhactoi.ktvdung.io.vn/nhactoi "$@"; }
+source_git fetch origin main
+source_git checkout main
+source_git merge --ff-only origin/main
 bash scripts/deploy-aapanel.sh 8>&-
 ```
 

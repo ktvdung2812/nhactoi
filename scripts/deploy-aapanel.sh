@@ -46,8 +46,9 @@ done
 id "$RUN_USER" >/dev/null 2>&1 || die "runtime user is missing: $RUN_USER"
 
 cd "$APP_ROOT"
+source_git() { git -c "safe.directory=$APP_ROOT" "$@"; }
 APP_ROOT_REAL=$(pwd -P)
-GIT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || die 'source directory is not a Git worktree'
+GIT_ROOT=$(source_git rev-parse --show-toplevel 2>/dev/null) || die 'source directory is not a Git worktree'
 GIT_ROOT_REAL=$(cd "$GIT_ROOT" && pwd -P)
 [[ "$GIT_ROOT_REAL" == "$APP_ROOT_REAL" ]] || die "Git root is not $APP_ROOT_REAL"
 
@@ -58,7 +59,7 @@ chown "$RUN_USER:$RUN_GROUP" "$SHARED_ROOT/data" "$RELEASES_ROOT" "$NPM_CACHE"
 exec 9>"$LOCK_FILE"
 flock -x 9
 
-COMMIT=$(git rev-parse --verify HEAD) || die 'cannot resolve HEAD'
+COMMIT=$(source_git rev-parse --verify HEAD) || die 'cannot resolve HEAD'
 STAMP=$(date -u +%Y%m%d%H%M%S)
 RELEASE="$RELEASES_ROOT/${STAMP}-${COMMIT:0:12}"
 [[ ! -e "$RELEASE" ]] || RELEASE="${RELEASE}-$$"
@@ -91,7 +92,7 @@ trap on_exit EXIT
 
 log "archiving commit ${COMMIT:0:12}"
 mkdir -p "$RELEASE"
-git archive --format=tar "$COMMIT" | tar -xf - -C "$RELEASE"
+source_git archive --format=tar "$COMMIT" | tar -xf - -C "$RELEASE"
 ln -s "$ENV_FILE" "$RELEASE/.env"
 chown -R "$RUN_USER:$RUN_GROUP" "$RELEASE"
 
