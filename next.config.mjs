@@ -1,8 +1,20 @@
 /** @type {import('next').NextConfig} */
+const lowMemoryBuild = process.env.NHACTOI_LOW_MEMORY_BUILD === "1";
+const distDir = process.env.NHACTOI_DIST_DIR || ".next";
+
 const nextConfig = {
+  distDir,
   poweredByHeader: false,
   allowedDevOrigins: ["nhactoi.test"],
   serverExternalPackages: ["express", "nodemailer", "google-auth-library", "@aws-sdk/client-s3"],
+  ...(lowMemoryBuild
+    ? {
+        experimental: {
+          cpus: 1,
+          webpackMemoryOptimizations: true,
+        },
+      }
+    : {}),
   // Runtime data and credentials are mounted separately, never build assets.
   outputFileTracingExcludes: {
     "/*": ["./data/**/*", "./demo/**/*", "./mobile/**/*", "./artifacts/**/*", "./.env*", "./*.tar.gz"],
