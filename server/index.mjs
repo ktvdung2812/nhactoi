@@ -2852,6 +2852,42 @@ function createApp(options = {}) {
     }
   });
 
+  app.patch("/api/me", requireAuth, (req, res, next) => {
+    try {
+      const body = req.body;
+      if (
+        !body || typeof body !== "object" || Array.isArray(body) ||
+        !Object.keys(body).length ||
+        Object.keys(body).some((key) => !["name", "email"].includes(key))
+      ) {
+        throw new HttpError(400, "Chỉ có thể cập nhật họ tên và email.");
+      }
+      for (const key of Object.keys(body)) {
+        if (typeof body[key] !== "string")
+          throw new HttpError(400, "Họ tên và email phải là văn bản.");
+      }
+      const name = body.name === undefined
+        ? req.auth.user.name
+        : cleanString(body.name, { required: true, max: 120, field: "name" });
+      const email = body.email === undefined
+        ? req.auth.user.email
+        : emailValue(body.email);
+      withTransaction(db, () => {
+        const duplicate = db
+          .prepare("SELECT id FROM users WHERE email = ? AND id != ?")
+          .get(email, req.auth.userId);
+        if (duplicate) {
+          throw new HttpError(409, "email is already registered");
+        }
+        db.prepare("UPDATE users SET name = ?, email = ? WHERE id = ?")
+          .run(name, email, req.auth.userId);
+      });
+      return res.json({ user: { ...req.auth.user, name, email } });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
   app.get("/api/admin/overview", requirePlatformAdmin, (req, res, next) => {
     try {
       return res.json(adminOverviewData(db, config, clock));

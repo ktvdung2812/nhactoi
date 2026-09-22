@@ -1,5 +1,6 @@
 import TaskTemplates from "./TaskTemplates.jsx";
 import {GoogleAccount} from "./OperationsSettings.jsx";
+import Account from "./Account.jsx";
 import CalendarEvents from "./CalendarEvents.jsx";
 import BoardTransfer from "./BoardTransfer.jsx";
 import React, { useEffect, useState } from "react";
@@ -129,7 +130,7 @@ async function api(path, options = {}) {
       "localPath cannot be inspected": "Máy chủ không đọc được thông tin thư mục. Kiểm tra đường dẫn và quyền truy cập.",
       "localPath must be a directory": "Đường dẫn phải trỏ tới thư mục lưu tệp.",
       "email or password is incorrect": "Email hoặc mật khẩu chưa đúng.",
-      "email is already registered": path.startsWith("/admin/")
+      "email is already registered": path.startsWith("/admin/") || path === "/me"
         ? "Email này đã được sử dụng bởi tài khoản khác."
         : "Email đã có tài khoản. Vui lòng đăng nhập.",
       "email is already a workspace member":
@@ -163,6 +164,11 @@ async function api(path, options = {}) {
       "smtp.from": "Địa chỉ người gửi",
     };
     const fieldError = raw.match(/^([\w.]+) is (required|invalid|too long)$/);
+    const profileValidation =
+      path === "/me" && fieldError &&
+      { name: "Họ và tên", email: "Email" }[fieldError[1]]
+        ? `${{ name: "Họ và tên", email: "Email" }[fieldError[1]]} ${fieldError[2] === "required" ? "không được để trống" : fieldError[2] === "too long" ? "vượt quá độ dài cho phép" : "không hợp lệ"}.`
+        : null;
     const adminValidation =
       path.startsWith("/admin/") && fieldError && adminFieldNames[fieldError[1]]
         ? `${adminFieldNames[fieldError[1]]} ${fieldError[2] === "required" ? "không được để trống" : fieldError[2] === "too long" ? "vượt quá độ dài cho phép" : "không hợp lệ"}.`
@@ -184,6 +190,7 @@ async function api(path, options = {}) {
     };
     const error = new Error(
       known[raw] ||
+        profileValidation ||
         adminValidation ||
         ((path.startsWith("/admin/") ||
           path.startsWith("/tickets") ||
@@ -974,7 +981,20 @@ export default function App() {
             />
           )}
           {page === "templates" && <TaskTemplates key={me.workspace.id} api={api} teams={teams} tasks={tasks} onOpen={openTaskDetail} onChanged={refresh}/>}
-          {page === "account" && <><PageHeading title="Tài khoản" subtitle="Quản lý các phương thức đăng nhập của bạn."/><GoogleAccount api={api}/></>}
+          {page === "account" && <>
+            <PageHeading title="Tài khoản" subtitle="Quản lý thông tin cá nhân và các phương thức đăng nhập của bạn." />
+            <div className="account-sections">
+              <Account key={me.user.id} api={api} user={me.user} onSaved={(user) => {
+                setMe((current) => current ? { ...current, user } : current);
+                setData((current) => ({
+                  ...current,
+                  members: (current.members || []).map((member) => member.id === user.id
+                    ? { ...member, name: user.name, email: user.email } : member),
+                }));
+              }} />
+              <GoogleAccount api={api} />
+            </div>
+          </>}
           {page === "events" && <CalendarEvents key={me.workspace.id} api={api} teams={teams}/>}
           {page === "transfer" && <><PageHeading title="Nhập / xuất bảng" subtitle="Di chuyển dữ liệu công việc giữa các bảng."/><BoardTransfer key={me.workspace.id} api={api} teams={teams} onChanged={refresh}/></>}
           {page === "automations" && <Automations api={api} me={me} teams={teams} tasks={tasks} members={members} onChanged={refresh}/>}

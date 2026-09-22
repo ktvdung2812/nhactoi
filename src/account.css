@@ -1,0 +1,27 @@
+.account-sections {
+  display: grid;
+  gap: 22px;
+}
+.account-profile-panel fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.account-profile-panel h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.account-profile-panel .field {
+  min-width: 0;
+}
+.account-profile-panel input {
+  width: 100%;
+  min-width: 0;
+}
+.account-help {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
