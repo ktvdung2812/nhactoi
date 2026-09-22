@@ -75,6 +75,7 @@ export type CalendarEvent = {
   id: string;
   title: string;
   description: string;
+  status?: Task["status"] | null;
   starts_at: string;
   ends_at: string;
   remind_at: string | null;

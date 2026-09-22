@@ -3,7 +3,7 @@ import {GoogleAccount} from "./OperationsSettings.jsx";
 import Account from "./Account.jsx";
 import CalendarEvents from "./CalendarEvents.jsx";
 import BoardTransfer from "./BoardTransfer.jsx";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Bell,
@@ -18,15 +18,12 @@ import {
   ArrowUpRight,
   ArrowDownLeft,
   ArrowRight,
-  ChevronLeft,
   ChevronRight,
   ChevronDown,
   X,
   Check,
   Clock3,
   LogOut,
-  List,
-  LayoutGrid,
   Building2,
   Mail,
   Phone,
@@ -77,7 +74,6 @@ const priorities = { low: "Thấp", medium: "Trung bình", high: "Cao" };
 const navItems = [
   ["dashboard", "Tổng quan", LayoutDashboard],
   ["tasks", "Công việc", CheckCheck],
-  ["calendar", "Lịch nhắc", CalendarDays],
   ["customers", "Khách hàng", Users],
   ["finance", "Thu & chi", Wallet],
   ["teams", "Teams", Users],
@@ -85,7 +81,6 @@ const navItems = [
   ["tickets", "Hỗ trợ", LifeBuoy],
   ["services", "Quản lý gia hạn", CalendarDays],
   ["automations", "Tự động hóa", Sparkles],
-  ["events", "Lịch hẹn", CalendarDays],
   ["transfer", "Nhập / xuất bảng", Copy],
   ["account", "Tài khoản", ShieldCheck],
   ["templates", "Mẫu công việc", Copy],
@@ -303,7 +298,6 @@ export default function App() {
   const [page, setPage] = useState(readRoute),
     [search, setSearch] = useState(""),
     [filter, setFilter] = useState("all"),
-    [view, setView] = useState("board"),
     [modal, setModal] = useState(null),
     [toast, setToast] = useState(null),
     [noticeOpen, setNoticeOpen] = useState(false),
@@ -311,18 +305,23 @@ export default function App() {
     [busy, setBusy] = useState(false),
     [billing, setBilling] = useState(null),
     [cycle, setCycle] = useState("yearly"),
-    [calendar, setCalendar] = useState(new Date()),
     [financeType, setFinanceType] = useState("all"),
     [invitation, setInvitation] = useState(null),
     [workspaces, setWorkspaces] = useState(null),
     [bootError, setBootError] = useState(null),
     [previewToast, setPreviewToast] = useState("");
   const [trashTarget, setTrashTarget] = useState(null);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [calendarEvents, setCalendarEvents] = useState([]);
+  const [eventToOpen, setEventToOpen] = useState(null);
+  const [eventCreateRequest, setEventCreateRequest] = useState(0);
   const [selectedServiceId, setSelectedServiceId] = useState(() => new URLSearchParams(location.search).get("service"));
   const [teamsRevision, setTeamsRevision] = useState(0);
   const [taskTeamFilter, setTaskTeamFilter] = useState("all");
   const [taskTeamId, setTaskTeamId] = useState("");
   const [taskReturnPage, setTaskReturnPage] = useState(null);
+  const workspaceRef = useRef(null);
+  workspaceRef.current = me?.workspace?.id || null;
   useEffect(() => {
     const query = searchParams?.toString();
     setPage(readRoute(pathname, query ? `?${query}` : ""));
@@ -342,6 +341,8 @@ export default function App() {
     setModal(null);
     setTrashTarget(null);
     setTaskReturnPage(null);
+    setCalendarEvents([]);
+    setEventToOpen(null);
     setSelectedServiceId(new URLSearchParams(location.search).get("service"));
   }, [me?.workspace?.id]);
   useEffect(() => {
@@ -359,6 +360,12 @@ export default function App() {
     setTeamsRevision((v) => v + 1);
     setBootError(null);
   }
+  async function loadCalendarEvents() {
+    const workspaceId = workspaceRef.current;
+    const result = await api("/calendar-events");
+    if (workspaceRef.current === workspaceId) setCalendarEvents(result.events || []);
+    return result;
+  }
   async function loadSession() {
     setLoading(true);
     setBootError(null);
@@ -375,12 +382,37 @@ export default function App() {
     loadSession();
   }, []);
   useEffect(() => {
+    if (!me || page !== "tasks") return undefined;
+    let canceled = false;
+    const load = () => {
+      const workspaceId = workspaceRef.current;
+      Promise.all([api("/dashboard"), api("/calendar-events")])
+        .then(([dashboard, calendarResult]) => {
+          if (canceled || workspaceRef.current !== workspaceId) return;
+          setData(dashboard);
+          setMe((current) => current ? { ...current, workspace: dashboard.workspace, subscription: dashboard.subscription } : current);
+          setCalendarEvents(calendarResult.events || []);
+        })
+        .catch(error => {
+          if (!canceled && error.status === 401) setMe(null);
+        });
+    };
+    load();
+    const timer = setInterval(load, 30000);
+    window.addEventListener("focus", load);
+    return () => {
+      canceled = true;
+      clearInterval(timer);
+      window.removeEventListener("focus", load);
+    };
+  }, [me?.workspace?.id, page]);
+  useEffect(() => {
     if (!previewToast) return;
     const timer = setTimeout(() => setPreviewToast(""), 3000);
     return () => clearTimeout(timer);
   }, [previewToast]);
   useEffect(() => {
-    if (!me) return;
+    if (!me || page === "tasks") return;
     let canceled = false;
     const timer = setInterval(
       () =>
@@ -408,7 +440,7 @@ export default function App() {
       canceled = true;
       clearInterval(timer);
     };
-  }, [me?.workspace?.id]);
+  }, [me?.workspace?.id, page]);
   useEffect(() => {
     if (toast) {
       const t = setTimeout(() => setToast(null), 5000);
@@ -425,6 +457,8 @@ export default function App() {
     const fn = (e) => {
       if (e.key === "Escape") {
         setModal(null);
+        setEventToOpen(null);
+        setAddMenuOpen(false);
         setNoticeOpen(false);
         setMobile(false);
         setWorkspaces(null);
@@ -484,30 +518,44 @@ export default function App() {
   useEffect(() => {
     if (me && page === "finance" && !canManage) go("dashboard");
   }, [me?.user?.role, page]);
-  const teamScopedTasks = tasks.filter(
-    (t) =>
+  const eventItems = calendarEvents.map((event) => ({
+    ...event,
+    id: event.id,
+    kind: event.service_id ? "renewal" : "event",
+    priority: "medium",
+    status: event.status || "todo",
+    dueAt: event.starts_at,
+    endsAt: event.ends_at,
+    remindAt: event.remind_at,
+    teamId: event.team_id || null,
+    teamName: teams.find((team) => team.id === event.team_id)?.name || null,
+    category: event.service_id ? "Gia hạn dịch vụ" : "Lịch hẹn",
+  }));
+  const unifiedItems = [
+    ...tasks.map((task) => ({ ...task, kind: "task" })),
+    ...eventItems,
+  ];
+  const teamScopedItems = unifiedItems.filter(
+    (item) =>
       taskTeamFilter === "all" ||
-      (taskTeamFilter === "common" ? !t.teamId : t.teamId === taskTeamFilter),
+      (taskTeamFilter === "common" ? !item.teamId : item.teamId === taskTeamFilter),
   );
-  const filteredTasks = teamScopedTasks.filter(
-    (t) =>
+  const filteredItems = teamScopedItems.filter(
+    (item) =>
       (filter === "all" ||
         (filter === "overdue"
-          ? t.status !== "done" && new Date(t.dueAt) < now
+          ? item.status !== "done" && item.dueAt && new Date(item.dueAt) < now
           : filter === "today"
-            ? isToday(t.dueAt)
-            : t.status === filter)) &&
-      `${t.title} ${t.description || ""} ${t.category || ""}`
+            ? isToday(item.dueAt)
+            : item.status === filter)) &&
+      `${item.title} ${item.description || ""} ${item.category || ""} ${item.teamName || ""} ${item.kind === "event" ? "lịch hẹn" : item.kind === "renewal" ? "gia hạn" : "công việc"}`
         .toLowerCase()
         .includes(search.toLowerCase()),
   );
-  const calendarMonthTasks = teamScopedTasks
-    .filter((task) => {
-      const due = new Date(task.dueAt);
-      return task.dueAt && due.getFullYear() === calendar.getFullYear()
-        && due.getMonth() === calendar.getMonth();
-    })
-    .sort((a, b) => new Date(a.dueAt) - new Date(b.dueAt));
+  const upcomingReminders = unifiedItems
+    .filter((item) => item.status !== "done" && item.remindAt && new Date(item.remindAt) >= now)
+    .sort((a, b) => new Date(a.remindAt) - new Date(b.remindAt))
+    .slice(0, 4);
   const person = (id) => members.find((m) => m.id === id),
     client = (id) => customers.find((c) => c.id === id);
   const selectedTaskTeam = teams.find((t) => t.id === taskTeamId);
@@ -556,6 +604,25 @@ export default function App() {
             ))}
         </select>
       </label>
+    );
+  }
+  function renderUnifiedAdd() {
+    return (
+      <div className="unified-add-menu">
+        <Button aria-expanded={addMenuOpen} onClick={() => setAddMenuOpen((open) => !open)}>
+          Thêm
+        </Button>
+        {addMenuOpen && (
+          <div className="unified-add-options" role="menu">
+            <button type="button" role="menuitem" onClick={() => { setAddMenuOpen(false); createFilteredTask(); }}>
+              <CheckCheck size={16} /> Công việc
+            </button>
+            <button type="button" role="menuitem" onClick={() => { setAddMenuOpen(false); setEventCreateRequest((value) => value + 1); }}>
+              <CalendarDays size={16} /> Lịch hẹn
+            </button>
+          </div>
+        )}
+      </div>
     );
   }
   async function openTeamTask(options) {
@@ -607,6 +674,25 @@ export default function App() {
     }));
     return result;
   }
+  async function moveBoardItem(item, status) {
+    if (item.kind === "event") {
+      const workspaceId = workspaceRef.current;
+      const result = await api(`/calendar-events/${encodeURIComponent(item.id)}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      });
+      if (result.event && workspaceRef.current === workspaceId) {
+        setCalendarEvents((current) => current.map((event) =>
+          event.id === result.event.id
+            ? { ...event, ...result.event }
+            : event,
+        ));
+      }
+      return result;
+    }
+    if (item.kind === "renewal") throw new Error("Kỳ gia hạn chỉ được xem từ trang Quản lý gia hạn.");
+    return moveBoardTask(item, status);
+  }
   async function complete(t) {
     await action(
       () =>
@@ -641,6 +727,21 @@ export default function App() {
     setModal(null);
     setNoticeOpen(false);
     go(`tasks/${task.id}`);
+  }
+  function openUnifiedItem(item) {
+    setNoticeOpen(false);
+    if (item.kind === "renewal") {
+      setSelectedServiceId(item.service_id || null);
+      go("services");
+      return;
+    }
+    if (item.kind === "event") {
+      setModal(null);
+      setEventToOpen(item.id);
+      if (page !== "tasks") go("tasks");
+      return;
+    }
+    openTaskDetail(item);
   }
   async function submitModal(e) {
     e.preventDefault();
@@ -899,10 +1000,7 @@ export default function App() {
               >
                 <Icon size={19} />
                 <span>{label}</span>
-                {id === "tasks" && <b>{openTasks.length}</b>}
-                {id === "calendar" && unread.length > 0 && (
-                  <i className="nav-dot" />
-                )}
+                {id === "tasks" && <b>{openTasks.length + calendarEvents.filter((event) => (event.status || "todo") !== "done").length}</b>}
               </button>
             ))}
         </nav>
@@ -1028,7 +1126,23 @@ export default function App() {
               <GoogleAccount api={api} />
             </div>
           </>}
-          {page === "events" && <CalendarEvents key={me.workspace.id} api={api} teams={teams}/>}
+          {page === "tasks" && (
+            <CalendarEvents
+              key={me.workspace.id}
+              api={api}
+              teams={teams}
+              events={calendarEvents}
+              embedded
+              openEventId={eventToOpen}
+              createRequest={eventCreateRequest}
+              onEventOpened={() => setEventToOpen(null)}
+              onOpenService={(serviceId) => {
+                setSelectedServiceId(serviceId);
+                go("services");
+              }}
+              onChanged={loadCalendarEvents}
+            />
+          )}
           {page === "transfer" && <><PageHeading title="Nhập / xuất bảng" subtitle="Di chuyển dữ liệu công việc giữa các bảng."/><BoardTransfer key={me.workspace.id} api={api} teams={teams} onChanged={refresh}/></>}
           {page === "automations" && <Automations api={api} me={me} teams={teams} tasks={tasks} members={members} onChanged={refresh}/>}
           {page === "services" && <Services key={me.workspace.id} api={api} me={me} members={members} customers={customers} teams={teams} selectedServiceId={selectedServiceId} onSelectedServiceOpened={() => setSelectedServiceId(null)} />}
@@ -1234,36 +1348,30 @@ export default function App() {
                     </span>
                   </div>
                   <div className="reminder-timeline">
-                    {openTasks
-                      .filter((t) => t.remindAt && new Date(t.remindAt) >= now)
-                      .sort(
-                        (a, b) => new Date(a.remindAt) - new Date(b.remindAt),
-                      )
-                      .slice(0, 4)
-                      .map((t, i) => (
+                    {upcomingReminders.map((item, i) => (
                         <button
-                          key={t.id}
+                          key={`${item.kind}:${item.id}`}
                           className="timeline-item"
-                          onClick={() => openTaskDetail(t)}
+                          onClick={() => openUnifiedItem(item)}
                         >
                           <span className={`timeline-dot dot-${i % 3}`} />
                           <div>
                             <small>
-                              {isToday(t.remindAt)
+                              {isToday(item.remindAt)
                                 ? "HÔM NAY"
-                                : dateLabel(t.remindAt)}{" "}
+                                : dateLabel(item.remindAt)}{" "}
                               <span>
                                 ·{" "}
-                                {new Date(t.remindAt).toLocaleTimeString(
+                                {new Date(item.remindAt).toLocaleTimeString(
                                   "vi-VN",
                                   { hour: "2-digit", minute: "2-digit" },
                                 )}
                               </span>
                             </small>
-                            <strong>{t.title}</strong>
+                            <strong>{item.title}</strong>
                             <span className="timeline-category">
-                              {t.category || "Công việc"}
-                              {t.recurrence !== "none" && t.recurrence && (
+                              {item.category || (item.kind === "event" ? "Lịch hẹn" : "Công việc")}
+                              {item.kind === "task" && item.recurrence !== "none" && item.recurrence && (
                                 <Repeat2 size={12} />
                               )}
                             </span>
@@ -1271,20 +1379,18 @@ export default function App() {
                           <ChevronRight size={14} />
                         </button>
                       ))}
-                    {!openTasks.some(
-                      (t) => t.remindAt && new Date(t.remindAt) >= now,
-                    ) && (
+                    {!upcomingReminders.length && (
                       <Empty
                         title="Chưa có lịch nhắc"
-                        text="Đặt thời điểm nhắc khi tạo công việc."
+                        text="Đặt thời điểm nhắc khi tạo công việc hoặc lịch hẹn."
                       />
                     )}
                   </div>
                   <button
                     className="reminder-footer"
-                    onClick={() => go("calendar")}
+                    onClick={() => go("tasks")}
                   >
-                    Mở lịch của bạn <ArrowUpRight size={16} />
+                    Mở bảng công việc <ArrowUpRight size={16} />
                   </button>
                 </section>
                 <section className="panel cash-panel">
@@ -1433,12 +1539,8 @@ export default function App() {
             <>
               <PageHeading
                 title="Công việc"
-                subtitle="Mọi việc trong tầm mắt. Mọi người cùng một nhịp."
-                action={
-                  <Button onClick={() => createFilteredTask()}>
-                    Tạo công việc
-                  </Button>
-                }
+                subtitle="Công việc, lịch hẹn và lịch nhắc trên cùng một bảng."
+                action={renderUnifiedAdd()}
               />
               <div className="toolbar">
                 <div className="filter-tabs">
@@ -1447,6 +1549,7 @@ export default function App() {
                     ["todo", "Cần làm"],
                     ["doing", "Đang làm"],
                     ["done", "Hoàn thành"],
+                    ["today", "Hôm nay"],
                     ["overdue", "Quá hạn"],
                   ].map(([id, label]) => (
                     <button
@@ -1458,230 +1561,27 @@ export default function App() {
                     </button>
                   ))}
                 </div>
-                <div className="view-toggle">
-                  <button
-                    className={view === "list" ? "active" : ""}
-                    onClick={() => setView("list")}
-                    aria-label="Danh sách"
-                  >
-                    <List size={17} />
-                  </button>
-                  <button
-                    className={view === "board" ? "active" : ""}
-                    onClick={() => setView("board")}
-                    aria-label="Bảng công việc"
-                  >
-                    <LayoutGrid size={17} />
-                  </button>
-                </div>
               </div>
               <div className="task-search-toolbar">
                 <SearchBox
                   value={search}
                   setValue={setSearch}
-                  placeholder="Tìm tên công việc, mô tả, nhóm dịch vụ…"
+                  placeholder="Tìm công việc, lịch hẹn, nhóm dịch vụ…"
                 />
                 {renderTaskTeamFilter()}
               </div>
-              {view === "list" ? (
-                <section className="panel task-list">
-                  <div className="table-labels">
-                    <span>CÔNG VIỆC</span>
-                    <span>ƯU TIÊN</span>
-                    <span>HẠN HOÀN THÀNH</span>
-                    <span>GIAO CHO</span>
-                    <span>TRẠNG THÁI</span>
-                  </div>
-                  {filteredTasks.map((t) => (
-                    <TaskRow key={t.id} task={t} />
-                  ))}
-                  {!filteredTasks.length && (
-                    <Empty
-                      title="Không có công việc phù hợp"
-                      action={
-                        <Button onClick={() => createFilteredTask()}>
-                          Tạo công việc
-                        </Button>
-                      }
-                    />
-                  )}
-                </section>
-              ) : taskTeamFilter !== "all" ? (
-                <WorkflowBoard api={api} teamId={taskTeamFilter === "common" ? null : taskTeamFilter}
-                  scopeKey={`${me.workspace.id}/${taskTeamFilter}`} tasks={filteredTasks} members={members}
-                  readOnly={Boolean(me.workspace.suspendedAt)} revision={teamsRevision}
-                  onOpen={openTaskDetail} onCreate={createFilteredTask} onChanged={refresh}
-                  onTrash={(task) => requestTrash("task", task)} />
-              ) : (
-                <TaskBoard
-                  scopeKey={`${me.workspace.id}/${taskTeamFilter}`}
-                  tasks={filteredTasks}
-                  members={members}
-                  readOnly={Boolean(me.workspace.suspendedAt)}
-                  onOpen={openTaskDetail}
-                  onCreate={createFilteredTask}
-                  onMove={moveBoardTask}
-                  onTrash={(task) => requestTrash("task", task)}
-                />
-              )}
-            </>
-          )}
-          {page === "calendar" && (
-            <>
-              <PageHeading
-                title="Lịch nhắc"
-                subtitle="Một lịch chung cho lịch hẹn, công việc và các kỳ gia hạn."
-                action={
-                  <Button onClick={() => createFilteredTask()}>
-                    Thêm lịch nhắc
-                  </Button>
-                }
+              <TaskBoard
+                scopeKey={`${me.workspace.id}/${taskTeamFilter}`}
+                tasks={filteredItems}
+                members={members}
+                readOnly={Boolean(me.workspace.suspendedAt)}
+                onOpen={openUnifiedItem}
+                onCreate={createFilteredTask}
+                onMove={moveBoardItem}
+                canMove={(item) => item.kind === "task" ? !item.teamArchived : item.kind === "event" && item.canEdit}
+                onTrash={(item) => requestTrash("task", item)}
+                canTrash={(item) => item.kind === "task"}
               />
-              {renderTaskTeamFilter()}
-              <div className="calendar-layout">
-                <section className="panel calendar-panel">
-                  <div className="calendar-header">
-                    <h2>
-                      Tháng {calendar.getMonth() + 1}, {calendar.getFullYear()}
-                    </h2>
-                    <div>
-                      <button
-                        className="text-button"
-                        onClick={() => setCalendar(new Date())}
-                      >
-                        Hôm nay
-                      </button>
-                      <button
-                        className="icon-button"
-                        aria-label="Tháng trước"
-                        onClick={() =>
-                          setCalendar(
-                            new Date(
-                              calendar.getFullYear(),
-                              calendar.getMonth() - 1,
-                              1,
-                            ),
-                          )
-                        }
-                      >
-                        <ChevronLeft size={19} />
-                      </button>
-                      <button
-                        className="icon-button"
-                        aria-label="Tháng sau"
-                        onClick={() =>
-                          setCalendar(
-                            new Date(
-                              calendar.getFullYear(),
-                              calendar.getMonth() + 1,
-                              1,
-                            ),
-                          )
-                        }
-                      >
-                        <ChevronRight size={19} />
-                      </button>
-                    </div>
-                  </div>
-                  <div className="calendar-agenda" aria-label="Công việc trong tháng">
-                    <p className="calendar-agenda-hint">Lịch theo ngày · Chạm vào công việc để xem chi tiết.</p>
-                    {calendarMonthTasks.length === 0 && (
-                      <p className="calendar-agenda-empty">Chưa có công việc trong tháng này.</p>
-                    )}
-                    {calendarMonthTasks.map((task, index) => (
-                      <React.Fragment key={task.id}>
-                        {(index === 0 || localDay(new Date(task.dueAt)) !== localDay(new Date(calendarMonthTasks[index - 1].dueAt))) && (
-                          <h3 className="calendar-agenda-date">
-                            {dateLabel(task.dueAt, { weekday: "long", day: "2-digit", month: "2-digit" })}
-                          </h3>
-                        )}
-                        <button className="calendar-agenda-task" onClick={() => openTaskDetail(task)}>
-                          <strong>{task.title}</strong>
-                          <span>{new Date(task.dueAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })} · {task.teamName || "Việc chung"}</span>
-                          <span className={`calendar-agenda-status status-${task.status}`}>{statuses[task.status] || task.status}</span>
-                        </button>
-                      </React.Fragment>
-                    ))}
-                  </div>
-                  <div className="calendar-grid">
-                    {[
-                      "Thứ 2",
-                      "Thứ 3",
-                      "Thứ 4",
-                      "Thứ 5",
-                      "Thứ 6",
-                      "Thứ 7",
-                      "Chủ nhật",
-                    ].map((x) => (
-                      <div className="weekday" key={x}>
-                        {x}
-                      </div>
-                    ))}
-                    {Array.from({ length: 42 }, (_, i) => {
-                      const offset =
-                          (new Date(
-                            calendar.getFullYear(),
-                            calendar.getMonth(),
-                            1,
-                          ).getDay() +
-                            6) %
-                          7,
-                        d = new Date(
-                          calendar.getFullYear(),
-                          calendar.getMonth(),
-                          i - offset + 1,
-                        ),
-                        day = localDay(d),
-                        dayTasks = teamScopedTasks.filter(
-                          (t) => t.dueAt && localDay(new Date(t.dueAt)) === day,
-                        );
-                      return (
-                        <div
-                          key={i}
-                          className={`calendar-cell ${d.getMonth() !== calendar.getMonth() ? "muted" : ""} ${day === today ? "current" : ""}`}
-                        >
-                          <button
-                            className="day-number"
-                            aria-label={`Thêm việc ngày ${dateLabel(d)}`}
-                            onClick={() =>
-                              setModal({
-                                type: "task",
-                                date: day,
-                                teamId: ["all", "common"].includes(
-                                  taskTeamFilter,
-                                )
-                                  ? null
-                                  : taskTeamFilter,
-                              })
-                            }
-                          >
-                            {d.getDate()}
-                          </button>
-                          {dayTasks.slice(0, 3).map((t) => (
-                            <button
-                              key={t.id}
-                              className={`calendar-task status-${t.status}`}
-                              title={`${t.teamName || "Việc chung"} · ${t.title}`}
-                              onClick={() =>
-                                openTaskDetail(t)
-                              }
-                            >
-                              {t.title}
-                            </button>
-                          ))}
-                          {dayTasks.length > 3 && (
-                            <small>+{dayTasks.length - 3} công việc</small>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </section>
-              </div>
-              <p className="hint">
-                <Bell size={14} /> Lịch hiển thị theo giờ trên thiết bị. Nhắc
-                việc được lưu và xử lý trên máy chủ.
-              </p>
             </>
           )}
           {page === "customers" && (
@@ -2184,10 +2084,13 @@ export default function App() {
                     await action(() =>
                       api(`/notifications/${n.id}/read`, { method: "PATCH" }),
                     );
+                    setNoticeOpen(false);
                     if (n.serviceId || n.type === "service_renewal") {
                       setSelectedServiceId(n.serviceId || null);
-                      setNoticeOpen(false);
                       go("services");
+                    } else if (n.entityType === "calendar_event" && n.entityId) {
+                      setEventToOpen(n.entityId);
+                      go("tasks");
                     } else {
                       const t = tasks.find((t) => t.id === n.taskId);
                       if (t) openTaskDetail(t);

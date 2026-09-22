@@ -63,7 +63,7 @@ Triển khai trên một Node server chạy liên tục, có volume lưu `data/`
 
 - Đăng ký doanh nghiệp, đăng nhập/đăng xuất, phiên làm việc lưu bằng cookie HttpOnly. Mật khẩu băm bằng scrypt, token phiên chỉ lưu hash trong DB.
 - Dữ liệu tách theo không gian; vai trò chủ không gian, quản trị viên và thành viên. Có thể chuyển giữa các không gian đã được tham gia từ bộ chọn ở góc trên bên trái.
-- Công việc có khách hàng, người phụ trách, ưu tiên, trạng thái, hạn và thời điểm nhắc. Xem danh sách, bảng trạng thái hoặc lịch tháng; tìm kiếm và lọc.
+- Mục **Công việc** là một bảng cho công việc, lịch hẹn và mốc nhắc, theo cột **Cần làm → Đang làm → Hoàn thành**. Lịch hẹn vẫn giữ giờ bắt đầu/kết thúc và lời nhắc; hoàn thành lịch hẹn sẽ dừng nhắc. Đường dẫn cũ `/calendar` và `/events` mở cùng bảng này. Dữ liệu cũ được giữ nguyên.
 - Hoàn thành một việc lặp theo ngày/tuần/tháng sẽ tạo kỳ tiếp theo một lần. Lịch lặp theo tháng sử dụng ngày lịch Việt Nam (Asia/Ho_Chi_Minh); ngày cuối tháng được chặn theo số ngày thực tế của tháng sau.
 - Lịch nhắc tạo thông báo trong ứng dụng ở phía máy chủ; giao diện cập nhật khoảng 30 giây/lần. **Máy chủ phải đang chạy**. Đóng trình duyệt không làm mất lịch; tắt máy hoặc tắt EnvKit thì lịch được xử lý khi máy chủ chạy lại. Đây chưa phải Web Push đến điện thoại khi ứng dụng đã đóng.
 - Email nhắc việc là tùy chọn, chỉ hoạt động khi cấu hình SMTP. Lời mời nhóm được tạo thành liên kết để tự gửi; ứng dụng không tự gửi email mời.
@@ -85,7 +85,7 @@ Mở **Quản lý gia hạn** (`/services`) để theo dõi thuê bao, tên mi�
 - Lọc theo trạng thái còn hạn, sắp hết hạn, quá hạn hoặc tắt theo dõi; tìm kiếm và lọc team. Có xem chi tiết, sao chép và lịch sử gia hạn.
 - **Ghi nhận gia hạn** chuyển đến kỳ tiếp theo còn hạn theo lịch Việt Nam, chặn ngày cuối tháng theo tháng đích. Có thể nhập ngày kế tiếp và thực chi; đây là ghi nhận nội bộ, không chuyển tiền. Gia hạn hàng loạt dùng chu kỳ và thành tiền riêng của từng dịch vụ.
 - Nhắc **mỗi ngày một lần cho từng người nhận** từ số ngày đã đặt trước hạn và tiếp tục khi quá hạn, cho đến khi gia hạn, tắt theo dõi hoặc lưu trữ. Người nhận là người phụ trách; khi chưa chọn thì gửi chủ sở hữu/quản trị doanh nghiệp có quyền truy cập. Máy chủ xử lý lịch khi đang chạy, không cần mở trình duyệt. Thông báo mở đúng dịch vụ; email tùy thuộc cấu hình SMTP. Email lỗi không làm mất thông báo trong ứng dụng.
-- Bật **Hiển thị ngày gia hạn trong Lịch hẹn** để đưa kỳ hiện tại lên lịch lúc 08:00 giờ Việt Nam. Lịch tự cập nhật khi sửa hoặc gia hạn; tắt nhắc vẫn có thể giữ mục lịch. Thông tin thanh toán và tài khoản không đưa vào nội dung lịch.
+- Bật **Hiển thị ngày gia hạn trên board Công việc** để đưa kỳ hiện tại lên lịch lúc 08:00 giờ Việt Nam. Lịch tự cập nhật khi sửa hoặc gia hạn; tắt nhắc vẫn có thể giữ mục lịch. Thông tin thanh toán và tài khoản không đưa vào nội dung lịch.
 - Lưu trữ dừng nhắc và ẩn mục lịch, giữ lại hồ sơ/lịch sử để khôi phục. Trong danh sách đã lưu trữ có xóa vĩnh viễn, yêu cầu nhập đúng tên dịch vụ. Gia hạn/lưu trữ/khôi phục hàng loạt tối đa 100 mục mỗi lần, xử lý nguyên khối.
 - Quyền truy cập theo không gian và team; team lưu trữ, doanh nghiệp tạm ngưng hoặc thuê bao hết hạn không cho ghi dữ liệu. Lời nhắc cũ không còn hiển thị khi người nhận mất quyền với team của dịch vụ.
 
@@ -100,7 +100,7 @@ Mở **Quản lý gia hạn** (`/services`) để theo dõi thuê bao, tên mi�
 
 ## Bảng công việc theo cột
 
-- Trang Công việc mặc định mở bảng cột; Teams dùng cùng một thành phần `TaskBoard` để giữ giao diện và thao tác nhất quán.
+- Trang Công việc chỉ có bảng cột; Teams dùng cùng một thành phần `TaskBoard` để giữ giao diện và thao tác nhất quán.
 - Ba cột trạng thái hiện tại: Cần làm, Đang làm, Hoàn thành. Mỗi cột có số lượng, vùng thẻ cuộn riêng và nút thêm ở đáy; bảng cuộn ngang trên màn hình nhỏ.
 - Kéo thẻ giữa các cột trên desktop hoặc dùng menu **⋮** của thẻ để chuyển trạng thái bằng chuột, cảm ứng hay bàn phím. Trạng thái chỉ cập nhật sau khi máy chủ lưu thành công; công việc lặp lại tiếp tục dùng quy tắc hiện có.
 - Menu cột cho phép thu gọn và đổi thứ tự hiển thị trong phiên xem. Đây là thiết lập hiển thị, không đổi quy trình hay trạng thái công việc.

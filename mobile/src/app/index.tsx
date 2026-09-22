@@ -7,7 +7,6 @@ import { useSession, refreshData } from "../core/session";
 import { notificationTarget, registerPush, pushConfigured } from "../core/push";
 import { TaskList } from "../features/TaskList";
 import { TaskDetail } from "../features/TaskDetail";
-import { Calendar } from "../features/Calendar";
 import { Notifications } from "../features/Notifications";
 import { Account } from "../features/Account";
 import { Login } from "../features/Login";
@@ -16,7 +15,6 @@ import { useMeasuredWindow, position } from "../ui/frames";
 import { errorMessage, API_URL } from "../core/api";
 const tabs = [
   { id: "tasks", label: "Công việc", icon: "✓" },
-  { id: "calendar", label: "Lịch", icon: "▦" },
   { id: "notifications", label: "Thông báo", icon: "♧" },
   { id: "account", label: "Tài khoản", icon: "◎" },
 ] as const;
@@ -255,9 +253,7 @@ export default function Home() {
             { display: tab === "tasks" ? "none" : "flex" },
           ]}
         >
-          {tab === "calendar" ? (
-            <Calendar onTask={openTask} />
-          ) : tab === "notifications" ? (
+          {tab === "notifications" ? (
             <Notifications onTask={openTask} />
           ) : tab === "account" ? (
             <Account />

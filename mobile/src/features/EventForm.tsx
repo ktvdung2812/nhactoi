@@ -3,6 +3,7 @@ import { Alert } from "react-native";
 import { router } from "expo-router";
 import { useResource, useSession, refreshData } from "../core/session";
 import type { CalendarEvent, Team } from "../core/types";
+import { statuses } from "../core/policy";
 import { errorMessage } from "../core/api";
 import {
   FormPage,
@@ -31,6 +32,7 @@ export function EventForm({ id }: { id?: string }) {
       new Date(Date.now() + 7200000).toISOString(),
     ),
     [remindAt, setRemindAt] = useState<string | null>(null),
+    [status, setStatus] = useState<"todo" | "doing" | "done">("todo"),
     [teamId, setTeamId] = useState(""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -44,6 +46,7 @@ export function EventForm({ id }: { id?: string }) {
       setStartsAt(e.starts_at);
       setEndsAt(e.ends_at);
       setRemindAt(e.remind_at);
+      setStatus(e.status || "todo");
       setTeamId(e.team_id || "");
     }
   }, [result.data]);
@@ -73,6 +76,7 @@ export function EventForm({ id }: { id?: string }) {
           startsAt,
           endsAt,
           remindAt,
+          status,
           teamId: teamId || null,
         }),
       });
@@ -144,6 +148,16 @@ export function EventForm({ id }: { id?: string }) {
             onChange={setRemindAt}
             disabled={!allowed}
             optional
+          />
+          <Select
+            label="Trạng thái"
+            value={status}
+            onChange={(value) => setStatus(value as "todo" | "doing" | "done")}
+            disabled={!allowed}
+            options={Object.entries(statuses).map(([value, label]) => ({
+              value,
+              label,
+            }))}
           />
           <Text style={s.muted}>
             Lời nhắc gửi đến người tạo lịch, theo quy tắc hiện tại.

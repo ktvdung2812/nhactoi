@@ -45,6 +45,7 @@ export default function TaskBoard({
   onTaskMove,
   getTaskColumn,
   onTrash,
+  canTrash = () => true,
   readOnly = false,
   canMove = task => !task.teamArchived,
   scopeKey = "default",
@@ -168,7 +169,7 @@ export default function TaskBoard({
   return (
     <div className="task-board-shell">
       <div className="task-board-caption">
-        {showSummary && <span>{tasks.length} công việc · {columns.length} cột</span>}
+        {showSummary && <span>{tasks.length} mục · {columns.length} cột</span>}
         <span id={helpId}>{readOnly ? "Chế độ chỉ xem" : "Kéo thẻ hoặc dùng menu ⋮ để chuyển cột"}</span>
       </div>
       {error && <div className="task-board-error" role="alert">{error}</div>}
@@ -192,7 +193,7 @@ export default function TaskBoard({
               key={column.id}
               data-column={column.id}
               className={`task-board-column tone-${column.tone || "blue"}${collapsed ? " is-collapsed" : ""}${over?.columnId === column.id ? " is-drop-target" : ""}`}
-              aria-label={`${column.label}: ${cards.length} công việc`}
+              aria-label={`${column.label}: ${cards.length} mục`}
               onDragOver={event => {
                 if (acceptDrop) {
                   event.preventDefault();
@@ -228,8 +229,10 @@ export default function TaskBoard({
                     } else {
                       statuses.filter(status => status.id !== task.status && movable(task)).forEach(status => taskActions.push({ label: `Chuyển sang ${status.label || STATUS_LABELS[status.id] || status.id}`, icon: status.id === "done" ? Check : ArrowRight, onSelect: () => move(task, status.id) }));
                     }
-                    if (onTrash && movable(task)) taskActions.push({ label: "Chuyển vào thùng rác", icon: Trash2, danger: true, onSelect: () => onTrash(task) });
+                    if (onTrash && canTrash(task) && movable(task)) taskActions.push({ label: "Chuyển vào thùng rác", icon: Trash2, danger: true, onSelect: () => onTrash(task) });
                     const done = column.status === "done" || task.status === "done";
+                    const kindLabel = task.kind === "event" ? "Lịch hẹn" : task.kind === "renewal" ? "Gia hạn" : "Công việc";
+                    const kindClass = task.kind === "event" ? "event" : task.kind === "renewal" ? "renewal" : "task";
                     return (
                       <article
                         key={task.id}
@@ -254,6 +257,7 @@ export default function TaskBoard({
                         onDragEnd={() => { setDragged(null); setOver(null); }}
                       >
                         <div className="task-board-card-top">
+                          <span className={`task-board-kind kind-${kindClass}`}>{kindLabel}</span>
                           <span className={`task-board-priority priority-${task.priority}`}>{priorities[task.priority] || "Trung bình"}</span>
                           <ActionMenu label={`Thao tác công việc ${task.title}`} disabled={!!pending} items={taskActions} />
                         </div>
@@ -263,13 +267,14 @@ export default function TaskBoard({
                         </button>
                         <span className="task-board-category">{task.teamName || "Việc chung"}{task.category ? ` · ${task.category}` : ""}</span>
                         <footer className="task-board-card-footer">
-                          <span className={late ? "is-overdue" : ""}><CalendarDays size={13} />{task.dueAt ? new Date(task.dueAt).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" }) : "Chưa đặt hạn"}</span>
-                          {name ? <span className="task-board-person" title={name}><span className="task-board-avatar" aria-hidden="true">{name.split(/\s+/).filter(Boolean).slice(-2).map(part => part[0]).join("").toUpperCase()}</span><span>{name}</span></span> : <span>Chưa giao</span>}
+                          <span className={late ? "is-overdue" : ""}><CalendarDays size={13} />{task.dueAt ? new Date(task.dueAt).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" }) : "Chưa đặt hạn"}{task.kind === "event" && task.endsAt && <small> {new Date(task.dueAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}–{new Date(task.endsAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</small>}</span>
+                          {task.remindAt && <span className="task-board-reminder" title={`Nhắc ${new Date(task.remindAt).toLocaleString("vi-VN")}`}>Nhắc {new Date(task.remindAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</span>}
+                          {name ? <span className="task-board-person" title={name}><span className="task-board-avatar" aria-hidden="true">{name.split(/\s+/).filter(Boolean).slice(-2).map(part => part[0]).join("").toUpperCase()}</span><span>{name}</span></span> : <span>{task.kind === "renewal" ? "Theo dõi dịch vụ" : "Chưa giao"}</span>}
                         </footer>
                       </article>
                     );
                   })}
-                  {!cards.length && <div className="task-board-empty">{readOnly ? "Chưa có công việc" : "Thả công việc vào đây"}</div>}
+                  {!cards.length && <div className="task-board-empty">{readOnly ? "Chưa có mục" : "Thả mục vào đây"}</div>}
                 </div>
                 {!readOnly && onCreate && <button className="task-board-add" type="button" onClick={() => onCreate(column.status || column.id, column.id)} disabled={!!pending} aria-label={`Thêm công việc vào ${column.label}`}><Plus size={17} />Thêm công việc</button>}
               </>}

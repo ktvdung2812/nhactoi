@@ -658,6 +658,10 @@ const migrations = [
     sql: MOBILE_DELIVERY_SCHEMA,
   },
   { version: 21, sql: PASSWORD_RESET_SCHEMA },
+  {
+    version: 22,
+    sql: "ALTER TABLE calendar_events ADD COLUMN status TEXT NOT NULL DEFAULT 'todo' CHECK(status IN ('todo', 'doing', 'done'));",
+  },
 ];
 
 export const SCHEMA_VERSION = migrations.at(-1).version;
@@ -723,7 +727,10 @@ export function migrateDatabase(db) {
         if (!hasColumn("notifications", "entity_id"))
           db.exec("ALTER TABLE notifications ADD COLUMN entity_id TEXT");
       }
-      if (migration.version === 19) {
+      if (migration.version === 22) {
+        if (!db.prepare("PRAGMA table_info(calendar_events)").all().some((column) => column.name === "status"))
+          db.exec(migration.sql);
+      } else if (migration.version === 19) {
         // The service migration is additive, but old test/backup fixtures can
         // retain a column after removing only the migration marker. Replay
         // each statement and skip only an already-present ALTER column.

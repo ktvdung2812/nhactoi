@@ -25,12 +25,67 @@ Mở Nhắc tôi và chọn development server. Khi có nhiều emulator, thêm 
 
 Kiểm thử bằng DB riêng: từ thư mục gốc chạy `node mobile/scripts/test-api.mjs`. Đặt `EXPO_PUBLIC_API_URL=http://127.0.0.1:3101`, chạy `adb reverse tcp:3101 tcp:3101`, khởi động Metro với biến môi trường này. Tài khoản `demo@nhactoi.local` / `NhacToi2026!` chỉ được tạo trong DB tạm của tiến trình kiểm thử.
 
+## Kết nối máy chủ đã triển khai
+
+Trong `mobile/.env.local`, đặt origin của máy chủ (không thêm `/api`):
+
+```dotenv
+EXPO_PUBLIC_API_URL=https://nhactoi.ktvdung.io.vn
+```
+
+Chạy Metro từ `mobile/` bằng `npx expo start --dev-client --localhost`, rồi
+reload toàn bộ ứng dụng. APK phát triển vẫn cần Metro và `adb reverse
+tcp:8081 tcp:8081`; API HTTPS đi trực tiếp tới máy chủ, không cần reverse cổng
+3100/3101. Nếu Metro đang được chạy với biến `EXPO_PUBLIC_API_URL` truyền từ
+shell, dừng rồi chạy lại để tránh biến cũ ghi đè file `.env.local`.
+
+Nếu Metro chỉ lắng nghe `[::1]:8081` trên macOS và emulator không tải được bundle,
+chạy CLI với IPv4 trước: `node --dns-result-order=ipv4first
+node_modules/expo/bin/cli start --dev-client --localhost --port 8081`.
+
+Dùng tài khoản đã đăng ký tại `https://nhactoi.ktvdung.io.vn`; tài khoản demo
+local không có trên máy chủ này. Đây là database production dùng chung với web,
+chỉ tạo dữ liệu thử trong workspace dành riêng cho kiểm thử. File `.env.local`
+không đưa vào Git. Xem [cách Expo nạp biến môi trường](https://docs.expo.dev/guides/environment-variables/).
+
+Đã xác minh ngày 22/09/2026 trên `NhactoiPhoneApi36`: module API trong tiến trình
+Android nhận đúng origin HTTPS trên; gọi `/api/auth/google/config` thành công,
+`/api/me` không có token và `/api/mobile/auth/login` với thông tin rỗng trả 401
+đúng dự kiến. TypeScript và lint đạt. Chưa kiểm tra đăng nhập thành công bằng
+tài khoản máy chủ; không tạo tài khoản hay dữ liệu mẫu trên production.
+
+## Bản cài thử độc lập trên điện thoại
+
+APK `mobile/artifacts/nhactoi-android-test-arm64.apk` đóng gói sẵn JavaScript,
+trỏ tới `https://nhactoi.ktvdung.io.vn` và không cần Metro hoặc cáp USB để chạy.
+Bản này được tạo bằng `assembleRelease -PreactNativeArchitectures=arm64-v8a`
+từ native project đã generate, với `EXPO_PUBLIC_API_URL` truyền khi build.
+Package vẫn là `com.nhactoi.app.dev`, phiên bản `0.1.0`, ký bằng debug key
+hiện có để cài thử nội bộ; chưa phải bản ký phát hành Google Play.
+
+Ngày 22/09/2026 đã kiểm tra chữ ký APK, bundle và endpoint; cài thành công qua
+USB lên Pixel 7 (Android API 37). Android báo khởi động thành công, activity ở
+foreground và không ghi lỗi React Native/AndroidRuntime trong lượt kiểm tra.
+Chưa kiểm tra đăng nhập bằng tài khoản thật trên điện thoại.
+
+Thông báo 401 khi đăng nhập được tách khỏi 401 của phiên đã đăng nhập:
+email/mật khẩu sai hiện “Email hoặc mật khẩu chưa đúng.”, còn token hết hạn
+vẫn hiện “Phiên đăng nhập đã hết hạn.” Ba kiểm thử hồi quy bao phủ hai trường
+hợp này và lỗi máy chủ khi đăng nhập.
+
+Màn hình đăng nhập và các biểu mẫu dùng `KeyboardAvoidingView` với `padding`
+trên Android, đặt ngoài vùng đo kích thước tránh bản lề. Khi bàn phím mở,
+vùng cuộn được thu nhỏ theo phần màn hình còn lại. Bản APK đã cài lên Pixel 7
+ngày 22/09/2026: ô mật khẩu và nút đăng nhập hiện phía trên Gboard; nhập thử,
+đóng/mở lại bàn phím và xoay ngang rồi về dọc đều giữ nội dung và bố cục.
+Ở chế độ ngang, Gboard dùng giao diện nhập toàn màn hình của hệ thống.
+
 ## Phạm vi
 
 - Tài khoản có sẵn, chuyển doanh nghiệp, phiên riêng với web.
 - Công việc, người phụ trách/team, trạng thái/cột, lịch lặp và lời nhắc.
 - Checklist, bình luận/nhắc tên/phản ứng, tệp và liên kết, lịch sử.
-- Lịch công việc và lịch hẹn, hộp thư thông báo.
+- Công việc và lịch hẹn trên cùng một bảng, hộp thư thông báo.
 - Bản lưu chỉ đọc, mã hóa SQLCipher, tối đa 24 giờ sau lần xác minh quyền; hết hạn phiên thì đăng nhập lại. Đăng xuất xóa cache.
 
 Đăng ký/Google login, thanh toán, quản trị doanh nghiệp và SaaS chưa có giao diện mobile. Các quy tắc hạn thuê bao, team lưu trữ và quyền API vẫn áp dụng.

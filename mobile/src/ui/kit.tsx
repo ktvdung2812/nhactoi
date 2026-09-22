@@ -11,7 +11,6 @@ import {
   type TextProps,
   type TextInputProps,
   KeyboardAvoidingView,
-  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import DateTimePicker from "@react-native-community/datetimepicker";
@@ -284,11 +283,9 @@ export function FormPage({
 }) {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
-      <HingeSafe>
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-        >
+      {/* Measure the hinge-safe region after reserving space for the keyboard. */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+        <HingeSafe>
           <ScrollView
             keyboardShouldPersistTaps="handled"
             contentContainerStyle={[
@@ -300,8 +297,8 @@ export function FormPage({
             <Heading>{title}</Heading>
             {children}
           </ScrollView>
-        </KeyboardAvoidingView>
-      </HingeSafe>
+        </HingeSafe>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

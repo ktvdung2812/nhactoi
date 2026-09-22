@@ -22,6 +22,10 @@
 .service-history-item { overflow-wrap: anywhere; }
 .services-due { min-width: 0; overflow-wrap: anywhere; }
 .service-modal header h2 { flex: 1; }
+.service-card-title{flex:1;min-width:0;padding:0;border:0;background:transparent;color:var(--text,#315945);font:inherit;font-size:var(--font-card-title);font-weight:600;line-height:1.5;text-align:left;overflow-wrap:anywhere;cursor:pointer}
+.service-card-title:hover{color:#22674e}
+.calendar-event-detail{display:grid;gap:8px;margin-bottom:20px}
+.calendar-event-detail p{margin:0;white-space:pre-wrap}
 .service-modal header > .icon-btn { flex: 0 0 auto; }
 .service-modal :is(input, select, textarea) {
   width: 100%;

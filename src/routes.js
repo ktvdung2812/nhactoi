@@ -62,6 +62,9 @@ export function readRoute(
   if (!current || current === "index.html") return "dashboard";
   if (current === "admin") return "admin/overview";
 
+  // Old Lịch nhắc and Lịch hẹn bookmarks open the single work board.
+  if (current === "calendar" || current === "events") return "tasks";
+
   const query = String(search || "").replace(/^\?/, "");
   if (
     current === "admin/tickets" &&
