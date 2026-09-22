@@ -61,13 +61,13 @@ export default function ActionMenu({ label = "Thao tác", items = [], className 
     document.addEventListener("focusin", dismissOutside);
     window.addEventListener("scroll", dismissScroll, true);
     window.addEventListener("resize", dismiss);
-    window.addEventListener("hashchange", dismiss);
+    window.addEventListener("popstate", dismiss);
     return () => {
       document.removeEventListener("pointerdown", dismissOutside);
       document.removeEventListener("focusin", dismissOutside);
       window.removeEventListener("scroll", dismissScroll, true);
       window.removeEventListener("resize", dismiss);
-      window.removeEventListener("hashchange", dismiss);
+      window.removeEventListener("popstate", dismiss);
     };
   }, [open]);
 

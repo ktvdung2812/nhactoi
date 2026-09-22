@@ -370,7 +370,14 @@ export default function Admin({ page, me, api, go }) {
   return (
     <div className="app-shell admin-shell">
       <aside className={`sidebar admin-sidebar ${mobile ? "open" : ""}`}>
-        <a href="#/admin/overview" className="brand">
+        <a
+          href="/admin/overview"
+          className="brand"
+          onClick={(event) => {
+            event.preventDefault();
+            navigate("overview");
+          }}
+        >
           <span className="brand-mark">
             <Bell size={22} />
             <i />
@@ -646,7 +653,11 @@ export default function Admin({ page, me, api, go }) {
                                     <td>
                                       <a
                                         className="admin-identity-link"
-                                        href={`#/admin/workspaces/${encodeURIComponent(item.id)}`}
+                                        href={`/admin/workspaces/${encodeURIComponent(item.id)}`}
+                                        onClick={(event) => {
+                                          event.preventDefault();
+                                          go(`admin/workspaces/${encodeURIComponent(item.id)}`);
+                                        }}
                                       >
                                         <Identity
                                           name={item.name}
@@ -701,7 +712,11 @@ export default function Admin({ page, me, api, go }) {
                                     <td>
                                       <a
                                         className="admin-identity-link"
-                                        href={`#/admin/users/${encodeURIComponent(item.id)}`}
+                                        href={`/admin/users/${encodeURIComponent(item.id)}`}
+                                        onClick={(event) => {
+                                          event.preventDefault();
+                                          go(`admin/users/${encodeURIComponent(item.id)}`);
+                                        }}
                                       >
                                         <Identity
                                           name={item.name}

@@ -76,7 +76,7 @@ npm start
 
 ## Chi tiết công việc
 
-- Mở từ thẻ Kanban, danh sách, lịch hoặc thông báo tại `#/tasks/:id`; liên kết có thể mở trực tiếp.
+- Mở từ thẻ Kanban, danh sách, lịch hoặc thông báo tại `/tasks/:id`; liên kết có thể mở trực tiếp.
 - Bố cục hai vùng: nội dung công việc, checklist và liên kết đính kèm; bình luận và lịch sử thao tác. Màn hình nhỏ tự chuyển thành một cột.
 - Cập nhật trạng thái, ưu tiên và thông tin công việc; thêm checklist, đánh dấu từng mục và theo dõi tiến độ.
 - Bình luận, checklist, tệp, liên kết và lịch sử được lưu trên máy chủ. Liên kết đính kèm chỉ chấp nhận HTTP/HTTPS.
@@ -94,7 +94,7 @@ npm start
 
 ## Thùng rác cấp 2
 
-- Trang `#/trash` quản lý công việc, khách hàng và khoản thu/chi đã xóa trong doanh nghiệp hiện tại. Xóa thông thường giữ lại dữ liệu để khôi phục; chỉ thao tác xóa vĩnh viễn trong thùng rác mới loại bỏ bản ghi.
+- Trang `/trash` quản lý công việc, khách hàng và khoản thu/chi đã xóa trong doanh nghiệp hiện tại. Xóa thông thường giữ lại dữ liệu để khôi phục; chỉ thao tác xóa vĩnh viễn trong thùng rác mới loại bỏ bản ghi.
 - Tìm kiếm, lọc loại, phân trang và chọn nhiều mục. Các thao tác khôi phục/xóa hàng loạt chỉ áp dụng cho danh sách mục đã xác nhận, không tự chọn dữ liệu ẩn ở trang khác.
 - Chủ doanh nghiệp/quản trị viên quản lý toàn bộ thùng rác trong doanh nghiệp. Thành viên chỉ thấy công việc do mình xóa và vẫn có quyền truy cập team; quyền quản trị SaaS không cho phép truy cập thùng rác nội bộ.
 - Khôi phục kiểm tra lại team, người phụ trách và khách hàng liên quan. Khi có xung đột, dữ liệu vẫn nằm trong thùng rác và giao diện hiển thị lý do. Thao tác hàng loạt là nguyên khối: một mục không hợp lệ thì không mục nào bị thay đổi.
@@ -112,7 +112,7 @@ npm start
 
 ## Quyền quản trị SaaS
 
-Truy cập **https://nhactoi.test/#/admin/overview** hoặc chọn **Quản trị SaaS** trong menu sau khi tài khoản được cấp quyền. Quyền này độc lập với vai trò chủ không gian/quản trị viên của một doanh nghiệp; đăng ký thông thường không cấp quyền admin SaaS.
+Truy cập **https://nhactoi.test/admin/overview** hoặc chọn **Quản trị SaaS** trong menu sau khi tài khoản được cấp quyền. Quyền này độc lập với vai trò chủ không gian/quản trị viên của một doanh nghiệp; đăng ký thông thường không cấp quyền admin SaaS.
 
 Phạm vi quản trị SaaS là **thanh toán, thông tin liên hệ và nhật ký hỗ trợ**. API quản trị không trả thống kê công việc, khách hàng, thu–chi nội bộ hoặc danh sách nhân sự doanh nghiệp. Số chỗ sử dụng được giữ trong thông tin thuê bao để đối chiếu giới hạn gói. Các nghiệp vụ nội bộ thuộc không gian riêng của khách hàng.
 
@@ -150,9 +150,9 @@ Quyền được kiểm tra lại từ DB ở mỗi yêu cầu API. Không có A
 
 ## Bộ trang lỗi Gen Z
 
-Mở **https://nhactoi.test/#/errors** để xem bộ thiết kế. Từ admin có thể vào **Cấu hình → Xem bộ thiết kế**. Mỗi bản xem thử có nhãn rõ ràng và không tạo lỗi hoặc giao dịch thật.
+Mở **https://nhactoi.test/errors** để xem bộ thiết kế. Từ admin có thể vào **Cấu hình → Xem bộ thiết kế**. Mỗi bản xem thử có nhãn rõ ràng và không tạo lỗi hoặc giao dịch thật.
 
-Có thiết kế riêng cho **400, 401, 402, 403, 404, 408, 409, 410, 422, 423, 429, 500, 502, 503, 504**; các mã 4xx/5xx khác dùng nội dung dự phòng phù hợp. Đường dẫn mẫu: `#/errors/404`, `#/errors/500`. Minh họa SVG chuyển động được đóng gói cùng ứng dụng, có nút dừng/bật và mặc định dừng nếu thiết bị yêu cầu giảm chuyển động.
+Có thiết kế riêng cho **400, 401, 402, 403, 404, 408, 409, 410, 422, 423, 429, 500, 502, 503, 504**; các mã 4xx/5xx khác dùng nội dung dự phòng phù hợp. Đường dẫn mẫu: `/errors/404`, `/errors/500`. Minh họa SVG chuyển động được đóng gói cùng ứng dụng, có nút dừng/bật và mặc định dừng nếu thiết bị yêu cầu giảm chuyển động.
 
 Đã kết nối với các trường hợp thực tế:
 

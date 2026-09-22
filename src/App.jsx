@@ -94,10 +94,15 @@ const navItems = [
   ["trash", "Thùng rác cấp 2", Trash2],
 ];
 function readRoute() {
-  if (!["/", "/index.html"].includes(location.pathname)) return "not-found";
-  const current = location.hash.replace(/^#\/?/, "");
-  if (!current) return "dashboard";
+  const current = location.pathname.replace(/^\/+|\/+$/g, "");
+  if (!current || current === "index.html") return "dashboard";
   if (current === "admin") return "admin/overview";
+  const query = location.search.replace(/^\?/, "");
+  if (
+    current === "admin/tickets" &&
+    /^(workspaceId|userId)=[A-Za-z0-9_-]+$/.test(query)
+  )
+    return `${current}?${query}`;
   if (
     [
       ...navItems.map(([id]) => id),
@@ -109,12 +114,21 @@ function readRoute() {
     /^admin\/(users|workspaces|tickets)\/[A-Za-z0-9_-]+$/.test(current) ||
     /^tickets\/[A-Za-z0-9_-]+$/.test(current) ||
     /^tasks\/[A-Za-z0-9_-]+$/.test(current) ||
-    /^teams\/[A-Za-z0-9_-]+$/.test(current) ||
-    /^admin\/tickets\?(workspaceId|userId)=[A-Za-z0-9_-]+$/.test(current)
+    /^teams\/[A-Za-z0-9_-]+$/.test(current)
   )
     return current;
   return "not-found";
 }
+
+function migrateLegacyHashRoute() {
+  if (!["/", "/index.html"].includes(location.pathname)) return;
+  const legacy = location.hash.match(/^#\/(.+)$/)?.[1];
+  if (!legacy) return;
+  const search = legacy.includes("?") ? "" : location.search;
+  history.replaceState(history.state, "", `/${legacy}${search}`);
+}
+
+migrateLegacyHashRoute();
 async function api(path, options = {}) {
   const r = await fetch(`/api${path}`, {
     ...options,
@@ -345,9 +359,9 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [previewToast]);
   useEffect(() => {
-    const onHashChange = () => setPage(readRoute());
-    window.addEventListener("hashchange", onHashChange);
-    return () => window.removeEventListener("hashchange", onHashChange);
+    const onPopState = () => setPage(readRoute());
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
   }, []);
   useEffect(() => {
     if (!me) return;
@@ -587,18 +601,16 @@ export default function App() {
     );
   }
   function go(p) {
-    if (!["/", "/index.html"].includes(location.pathname)) {
-      location.assign(`/#/${p}`);
-      return;
-    }
     if (page.startsWith("admin/") && !p.startsWith("admin/")) {
       refresh().catch((e) => {
         if (e.status === 401) setMe(null);
         else notify(e.message, true);
       });
     }
-    location.hash = `/${p}`;
-    setPage(p);
+    const target = `/${p.replace(/^\/+/, "")}`;
+    if (`${location.pathname}${location.search}` !== target)
+      history.pushState({}, "", target);
+    setPage(readRoute());
     setSearch("");
     setFilter("all");
     setMobile(false);
@@ -786,7 +798,7 @@ export default function App() {
     <div className="app-shell">
       <aside className={`sidebar ${mobile ? "open" : ""}`}>
         <a
-          href="#"
+          href="/dashboard"
           className="brand"
           onClick={(e) => {
             e.preventDefault();

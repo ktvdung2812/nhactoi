@@ -4566,9 +4566,7 @@ function createApp(options = {}) {
         if (req.path.startsWith("/api/")) return next();
         const indexPath = join(distDir, "index.html");
         if (existsSync(indexPath))
-          return res
-            .status(req.path === "/" || req.path === "/index.html" ? 200 : 404)
-            .sendFile(indexPath);
+          return res.status(200).sendFile(indexPath);
         return next();
       });
     }

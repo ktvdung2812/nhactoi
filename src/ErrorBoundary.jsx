@@ -14,7 +14,7 @@ export default class ErrorBoundary extends React.Component {
         <ErrorPage
           code={500}
           onRetry={() => window.location.reload()}
-          onBack={() => window.location.assign("/#/dashboard")}
+          onBack={() => window.location.assign("/dashboard")}
         />
       );
     return this.props.children;
