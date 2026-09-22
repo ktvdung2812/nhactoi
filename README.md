@@ -46,6 +46,8 @@ npm start
 
 `npm start` phục vụ bản build Next.js và API trên cùng cổng (`PORT`, mặc định 3000). Production cần HTTPS reverse proxy; đặt `PUBLIC_APP_URL` và `FRONTEND_ORIGIN` theo tên miền thật. Cookie production có cờ Secure nên không dùng HTTP trực tiếp để đăng nhập production.
 
+Quy trình Git Manager, webhook và vận hành `nhactoi.ktvdung.io.vn`: [Triển khai trên aaPanel](docs/DEPLOYMENT.md).
+
 ## Kiến trúc Next.js full stack
 
 - `app/`: App Router, layout tiếng Việt, trang ứng dụng, trang lỗi và HTTP 404 cho URL không được hỗ trợ. Các màn hình nghiệp vụ hiện có trong `src/` là Client Components, điều hướng bằng Next.js.
