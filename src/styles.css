@@ -2090,6 +2090,19 @@ progress::-moz-progress-bar {
 .auth-form .field input {
   padding: 13px 14px;
 }
+.auth-form .form-success {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+  margin-bottom: 18px;
+  border-radius: 8px;
+  color: var(--green);
+  background: #edf6ef;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+.auth-form .form-success svg { flex-shrink: 0; margin-top: 3px; }
 .auth-form form > .button {
   width: 100%;
   padding: 13px;

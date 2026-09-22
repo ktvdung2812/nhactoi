@@ -56,6 +56,13 @@ type Context = {
   scope: string;
   error: string;
   login: (email: string, password: string) => Promise<void>;
+  register: (input: {
+    name: string;
+    email: string;
+    password: string;
+    workspaceName: string;
+    industry?: string;
+  }) => Promise<void>;
   logout: () => Promise<void>;
   switchWorkspace: (id: string) => Promise<void>;
   refresh: () => Promise<void>;
@@ -274,6 +281,26 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setOnline(true);
     setError("");
   };
+  const register = async (input: {
+    name: string;
+    email: string;
+    password: string;
+    workspaceName: string;
+    industry?: string;
+  }) => {
+    cancel();
+    const version = epoch.current;
+    await cacheClear();
+    const value = await request<Session>("/mobile/auth/register", undefined, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    if (version !== epoch.current)
+      throw new ApiError(499, "Yêu cầu đăng ký đã hủy.");
+    await update({ ...value, verifiedAt: Date.now() });
+    setOnline(true);
+    setError("");
+  };
   const logout = async () => {
     const token = current.current?.token;
     if (token) {
@@ -341,6 +368,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         scope,
         error,
         login,
+        register,
         logout,
         switchWorkspace,
         refresh,

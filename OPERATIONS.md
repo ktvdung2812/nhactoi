@@ -6,6 +6,8 @@ Chạy `npm run build` rồi `npm start` trên Node 24 trở lên. Giao diện v
 
 Chỉ vận hành một tiến trình dùng cùng database: instrumentation khởi động worker cho lịch nhắc, thông báo mobile, sao lưu và dọn tệp. Không dùng cluster nhiều worker hoặc triển khai serverless cho cấu hình SQLite/tệp hiện tại. Build không mở database; mỗi lần khởi động server chạy migration hiện có. Sao lưu trước khi cập nhật và giữ nguyên thư mục dữ liệu cùng khóa mã hóa.
 
+Giới hạn đăng ký và khôi phục mật khẩu được lưu trong SQLite. Ứng dụng chỉ tin header IP chuyển tiếp từ proxy kết nối qua loopback (`127.0.0.1` / `::1`); reverse proxy cần đặt `X-Forwarded-For` theo địa chỉ client thực để mỗi người dùng có giới hạn riêng. SMTP phải được bật để gửi mã khôi phục. Lỗi gửi email được ghi dưới dạng thông báo chung, không ghi email hoặc mã vào log.
+
 Khi phát triển, thay đổi module backend cần khởi động lại Next để nạp lại runtime singleton. Sau cập nhật, chạy `npm test`, `npm run build`, `npm run test:next` trước khi khởi động bản production.
 
 ## Sao lưu và khôi phục

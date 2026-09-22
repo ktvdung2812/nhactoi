@@ -5,6 +5,7 @@ import { COLLABORATION_SCHEMA } from "./collaboration.mjs";
 import { SERVICES_SCHEMA } from "./services.mjs";
 import { AUTOMATION_SCHEMA } from "./automations.mjs";
 import { MOBILE_SCHEMA, MOBILE_DELIVERY_SCHEMA } from "./mobile.mjs";
+import { PASSWORD_RESET_SCHEMA } from "./password-reset.mjs";
 import { SERVICE_RENEWAL_SCHEMA } from "../shared/service-renewal.mjs";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -656,6 +657,7 @@ const migrations = [
     version: 20,
     sql: MOBILE_DELIVERY_SCHEMA,
   },
+  { version: 21, sql: PASSWORD_RESET_SCHEMA },
 ];
 
 export const SCHEMA_VERSION = migrations.at(-1).version;

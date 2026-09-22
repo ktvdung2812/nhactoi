@@ -23,6 +23,12 @@ const messages: Record<number, string> = {
   500: "Máy chủ gặp lỗi. Hãy thử lại.",
   503: "Chưa kết nối được máy chủ.",
 };
+const authMessages: Record<string, string> = {
+  "email is already registered": "Email này đã được sử dụng. Hãy đăng nhập hoặc khôi phục mật khẩu.",
+  "email is invalid": "Địa chỉ email không hợp lệ.",
+  "password must be between 8 and 256 characters": "Mật khẩu phải có từ 8 đến 256 ký tự.",
+  "user account is disabled": "Tài khoản đã bị khóa. Vui lòng liên hệ quản trị viên.",
+};
 export function errorMessage(error: unknown) {
   return error instanceof Error
     ? error.message
@@ -50,10 +56,19 @@ export async function request<T>(
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       const raw = data.error?.message || data.error || data.message;
+      const fallbackMessage =
+        res.status === 401 && path === "/mobile/auth/login"
+          ? "Email hoặc mật khẩu chưa đúng."
+          : res.status === 404 && ["/mobile/auth/register", "/auth/forgot-password", "/auth/reset-password"].includes(path)
+          ? "Máy chủ chưa hỗ trợ chức năng này. Vui lòng liên hệ quản trị viên để cập nhật hệ thống."
+          : messages[res.status];
+      const authMessage = typeof raw === "string" &&
+        (path.startsWith("/auth/") || path.startsWith("/mobile/auth/"))
+        ? authMessages[raw] : undefined;
       const message =
         typeof raw === "string" && /[À-ỹ]/.test(raw)
           ? raw
-          : messages[res.status] ||
+          : authMessage || fallbackMessage ||
             "Thông tin chưa hợp lệ. Vui lòng kiểm tra và thử lại.";
       throw new ApiError(res.status, message);
     }

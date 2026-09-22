@@ -8,7 +8,7 @@ import { join } from "node:path";
 import net from "node:net";
 
 const projectRoot = process.cwd();
-const nextBuildId = join(projectRoot, ".next", "BUILD_ID");
+const nextBuildId = join(projectRoot, process.env.NHACTOI_DIST_DIR || ".next", "BUILD_ID");
 
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -164,6 +164,12 @@ test(
     const deepLink = await request(base, "/tasks/direct-deep-link");
     assert.equal(deepLink.status, 200);
     assert.match(await deepLink.text(), /Đang mở không gian làm việc/);
+
+    for (const path of ["/login", "/register", "/forgot-password", "/reset-password"]) {
+      const authPage = await request(base, path);
+      assert.equal(authPage.status, 200, path);
+      assert.match(await authPage.text(), /Đang mở không gian làm việc/);
+    }
 
     const unknownPage = await request(base, "/this-page-does-not-exist");
     assert.equal(unknownPage.status, 404);

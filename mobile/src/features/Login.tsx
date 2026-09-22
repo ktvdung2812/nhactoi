@@ -1,9 +1,10 @@
 import React, { useState } from "react";
-import { KeyboardAvoidingView, Platform, ScrollView, View } from "react-native";
+import { KeyboardAvoidingView, ScrollView, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { HingeSafe } from "../ui/frames";
 import { useSession } from "../core/session";
 import { errorMessage } from "../core/api";
+import { PasswordRecovery, RegisterForm } from "./AuthForms";
 import {
   Text,
   Heading,
@@ -19,8 +20,32 @@ export function Login() {
   const [email, setEmail] = useState(""),
     [password, setPassword] = useState(""),
     [error, setError] = useState(""),
+    [success, setSuccess] = useState(""),
+    [mode, setMode] = useState<"login" | "register" | "recovery">("login"),
     [busy, setBusy] = useState(false);
+  const switchMode = (next: "login" | "register" | "recovery") => {
+    if (busy) return;
+    setPassword("");
+    setError("");
+    setSuccess("");
+    setMode(next);
+  };
+
+  if (mode === "register")
+    return <RegisterForm onBack={() => switchMode("login")} />;
+  if (mode === "recovery")
+    return (
+      <PasswordRecovery
+        onBack={() => switchMode("login")}
+        onComplete={(message) => {
+          setPassword("");
+          setSuccess(message);
+          setMode("login");
+        }}
+      />
+    );
   async function submit() {
+    if (busy) return;
     setBusy(true);
     setError("");
     try {
@@ -33,11 +58,9 @@ export function Login() {
   }
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
-      <HingeSafe>
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-        >
+      {/* Measure the hinge-safe region after reserving space for the keyboard. */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+        <HingeSafe>
           <ScrollView
             keyboardShouldPersistTaps="handled"
             contentContainerStyle={{
@@ -71,12 +94,14 @@ export function Login() {
               </View>
               <Card>
                 <Text style={s.cardTitle}>Chào bạn trở lại</Text>
+                {success ? <Text style={{ color: colors.green }}>{success}</Text> : null}
                 <ErrorNotice message={error || sessionError} />
                 <Field
                   label="Email"
                   testID="login-email"
                   value={email}
                   onChangeText={setEmail}
+                  editable={!busy}
                   keyboardType="email-address"
                   autoCapitalize="none"
                   autoComplete="email"
@@ -87,6 +112,7 @@ export function Login() {
                   testID="login-password"
                   value={password}
                   onChangeText={setPassword}
+                  editable={!busy}
                   secureTextEntry
                   autoComplete="current-password"
                   textContentType="password"
@@ -98,6 +124,22 @@ export function Login() {
                   disabled={busy || !email.trim() || !password}
                   onPress={() => void submit()}
                 />
+                <View style={{ gap: 8 }}>
+                  <Button
+                    testID="login-forgot"
+                    label="Quên mật khẩu?"
+                    secondary
+                    disabled={busy}
+                    onPress={() => switchMode("recovery")}
+                  />
+                  <Button
+                    testID="login-register"
+                    label="Tạo tài khoản mới"
+                    secondary
+                    disabled={busy}
+                    onPress={() => switchMode("register")}
+                  />
+                </View>
                 <Text style={[s.muted, { fontSize: 13 }]}>
                   Dùng tài khoản doanh nghiệp Nhắc tôi đã có.
                 </Text>
@@ -107,8 +149,8 @@ export function Login() {
               </Text>
             </View>
           </ScrollView>
-        </KeyboardAvoidingView>
-      </HingeSafe>
+        </HingeSafe>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

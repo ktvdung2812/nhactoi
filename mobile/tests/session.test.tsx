@@ -76,6 +76,44 @@ async function signedIn() {
   transport.mockResolvedValueOnce(fixture);
   await act(async () => context.login("user", "password"));
 }
+
+test("mobile registration stores the returned bearer session", async () => {
+  await render(
+    <Providers>
+      <Probe />
+    </Providers>,
+  );
+  await waitFor(() => expect(context.loading).toBe(false));
+  const registered = { ...fixture, token: "registered-bearer" };
+  transport.mockResolvedValueOnce(registered);
+
+  await act(async () =>
+    context.register({
+      name: "Người dùng mới",
+      email: "new@example.local",
+      password: "password123",
+      workspaceName: "Không gian mới",
+      industry: "Dịch vụ",
+    }),
+  );
+
+  expect(transport).toHaveBeenCalledWith("/mobile/auth/register", undefined, {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Người dùng mới",
+      email: "new@example.local",
+      password: "password123",
+      workspaceName: "Không gian mới",
+      industry: "Dịch vụ",
+    }),
+  });
+  expect(context.session?.token).toBe("registered-bearer");
+  expect(SecureStore.setItemAsync).toHaveBeenCalledWith(
+    "nhactoi.session",
+    expect.stringContaining('"token":"registered-bearer"'),
+  );
+});
+
 test("workspace transition blocks new reads and ignores an old /me response", async () => {
   await signedIn();
   const oldMe = deferred<Session>(),

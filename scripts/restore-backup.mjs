@@ -22,7 +22,7 @@ try{
   const changed=target.prepare("UPDATE task_attachments SET storage_root=?,storage_key=? WHERE id=? AND kind='file'").run(fileRoot,name,entry.id);
   if(changed.changes!==1)throw new Error('Bản sao không khớp bản ghi tệp đính kèm');
  }
- target.exec('DELETE FROM sessions');if(target.prepare("SELECT 1 FROM sqlite_master WHERE name='google_oauth_states'").get())target.exec('DELETE FROM google_oauth_states');target.exec("DELETE FROM app_settings WHERE key='backupSchedule'");target.exec('COMMIT');transactionOpen=false;target.close();target=null;
+ target.exec('DELETE FROM sessions');if(target.prepare("SELECT 1 FROM sqlite_master WHERE name='password_reset_codes'").get())target.exec('DELETE FROM password_reset_codes');if(target.prepare("SELECT 1 FROM sqlite_master WHERE name='google_oauth_states'").get())target.exec('DELETE FROM google_oauth_states');target.exec("DELETE FROM app_settings WHERE key='backupSchedule'");target.exec('COMMIT');transactionOpen=false;target.close();target=null;
  // Preserve the previous DB and its referenced local files as a rollback point.
  if(existsSync(dbPath)){previousPath=dbPath+'.before-restore-'+Date.now()+'-'+randomUUID();renameSync(dbPath,previousPath)}
  renameSync(stagedPath,dbPath);stagedPath=null;

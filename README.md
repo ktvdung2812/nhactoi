@@ -70,6 +70,13 @@ Triển khai trên một Node server chạy liên tục, có volume lưu `data/`
 - Hồ sơ khách hàng và dịch vụ. Sổ thu–chi VND với danh mục, khách hàng liên quan và tổng theo tháng. Đây là sổ quản lý nội bộ.
 - Gói Starter, Team, Business với giới hạn 3/10/50 thành viên. Giá mẫu sửa trong quản trị SaaS hoặc qua biến môi trường khi chưa có cấu hình lưu; giá năm là tổng cho 12 tháng. Quyền ghi dữ liệu được chặn khi thuê bao hết hạn; vẫn có thể đọc dữ liệu và gia hạn.
 
+## Đăng ký và khôi phục mật khẩu
+
+- Web và app mobile đều có **Đăng ký** và **Quên mật khẩu** ở màn hình đăng nhập. Đăng ký tạo không gian dùng thử 14 ngày; web dùng cookie, mobile dùng phiên bearer lưu trong SecureStore.
+- Quên mật khẩu gửi mã 6 chữ số qua email. Nhập email, mã và mật khẩu mới trên web hoặc app. Mã dùng một lần, hết hạn sau 15 phút và không còn dùng được sau 5 lần nhập sai. Có thể yêu cầu mã mới sau 60 giây, tối đa 5 lần/giờ cho mỗi email.
+- Sau khi đặt lại mật khẩu, mọi phiên web/mobile cũ bị thu hồi; người dùng đăng nhập lại bằng mật khẩu mới. Liên kết Google được giữ nguyên.
+- Cần bật SMTP trong cấu hình quản trị SaaS hoặc qua `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`. Khi chưa có SMTP, màn hình báo chức năng chưa được cấu hình. Phản hồi yêu cầu mã không tiết lộ email đã có tài khoản hay chưa; khi SMTP gửi lỗi, người dùng có thể yêu cầu lại sau thời gian chờ.
+
 ## Quản lý gia hạn dịch vụ và giấy phép
 
 Mở **Quản lý gia hạn** (`/services`) để theo dõi thuê bao, tên miền/SSL, giấy phép vĩnh viễn, dùng thử và bảo trì. Dữ liệu dịch vụ cũ được giữ lại khi nâng cấp.
@@ -212,7 +219,7 @@ Stack: Next.js 16 + React 19 (App Router), Next API Routes với router nghiệp
 
 Dữ liệu mặc định ở `data/nhactoi.sqlite`. Migration theo phiên bản chạy khi mở DB. Kiểm thử dùng DB tạm, không dùng DB đang chạy. Khóa kết nối lưu trong DB được mã hóa AES-256-GCM. Mặc định khóa mã hóa được tạo tại `data/.nhactoi-settings.key` với quyền `0600`; có thể dùng `NHACTOI_SETTINGS_KEY` hoặc `NHACTOI_SETTINGS_KEY_FILE` trên máy chủ. Khi sao lưu thủ công, dừng API rồi sao lưu toàn bộ thư mục `data/`, bao gồm tệp khóa ẩn; nếu dùng khóa từ môi trường hoặc đường dẫn riêng, lưu bản sao khóa đó an toàn cùng quy trình sao lưu. Cần đúng khóa để giải mã khi phục hồi; không đổi hoặc xóa khóa nếu đã lưu thông tin kết nối. Phục hồi khi API đang dừng. Không xóa DB để cập nhật phiên bản.
 
-Đây là bản MVP chạy local cho các luồng cốt lõi. Chưa có Web Push/SMS/Zalo, khôi phục mật khẩu qua email, hóa đơn điện tử hay hệ thống vận hành production nhiều máy. Dữ liệu, thư mục `demo/` và tệp nén tham khảo không được phục vụ công khai. Next.js chỉ phục vụ các trang, tài nguyên build và tài nguyên chủ động đặt trong `public/`; tệp đính kèm luôn đi qua API có xác thực.
+Đây là bản MVP chạy local cho các luồng cốt lõi. Chưa có Web Push/SMS/Zalo, hóa đơn điện tử hay hệ thống vận hành production nhiều máy. Dữ liệu, thư mục `demo/` và tệp nén tham khảo không được phục vụ công khai. Next.js chỉ phục vụ các trang, tài nguyên build và tài nguyên chủ động đặt trong `public/`; tệp đính kèm luôn đi qua API có xác thực.
 
 ## Ứng dụng Android
 

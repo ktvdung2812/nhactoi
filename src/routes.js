@@ -31,8 +31,16 @@ export const adminRouteIds = [
   "settings",
 ].map((id) => `admin/${id}`);
 
+export const authRouteIds = [
+  "login",
+  "register",
+  "forgot-password",
+  "reset-password",
+];
+
 const staticRouteIds = new Set([
   ...navRouteIds,
+  ...authRouteIds,
   "billing",
   "errors",
   ...adminRouteIds,

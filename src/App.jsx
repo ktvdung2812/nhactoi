@@ -140,6 +140,9 @@ async function api(path, options = {}) {
       "authenticate as the invited email to accept this invitation":
         "Vui lòng đăng nhập bằng đúng email được mời.",
       "email is invalid": "Địa chỉ email không hợp lệ.",
+      "password must be between 8 and 256 characters":
+        "Mật khẩu phải có từ 8 đến 256 ký tự.",
+      "user account is disabled": "Tài khoản đã bị khóa.",
       "workspace is suspended; contact support":
         "Không gian đang tạm ngưng. Vui lòng liên hệ quản trị viên SaaS.",
     };
@@ -164,6 +167,31 @@ async function api(path, options = {}) {
       "smtp.from": "Địa chỉ người gửi",
     };
     const fieldError = raw.match(/^([\w.]+) is (required|invalid|too long)$/);
+    const authFieldNames = {
+      name: "Họ và tên",
+      email: "Email",
+      password: "Mật khẩu",
+      workspaceName: "Tên không gian / doanh nghiệp",
+      code: "Mã xác nhận",
+    };
+    const authValidation =
+      [
+        "/auth/login",
+        "/auth/register",
+        "/auth/forgot-password",
+        "/auth/reset-password",
+        "/invitations/accept",
+      ].includes(path) &&
+      fieldError &&
+      authFieldNames[fieldError[1]]
+        ? `${authFieldNames[fieldError[1]]} ${
+            fieldError[2] === "required"
+              ? "không được để trống"
+              : fieldError[2] === "too long"
+                ? "vượt quá độ dài cho phép"
+                : "không hợp lệ"
+          }.`
+        : null;
     const profileValidation =
       path === "/me" && fieldError &&
       { name: "Họ và tên", email: "Email" }[fieldError[1]]
@@ -190,6 +218,8 @@ async function api(path, options = {}) {
     };
     const error = new Error(
       known[raw] ||
+        (path.startsWith("/auth/") && [400, 403, 409, 429, 503].includes(r.status) && /[^\x00-\x7F]/.test(raw) ? raw : null) ||
+        authValidation ||
         profileValidation ||
         adminValidation ||
         ((path.startsWith("/admin/") ||
@@ -208,6 +238,7 @@ async function api(path, options = {}) {
         "Không thể thực hiện. Vui lòng thử lại.",
     );
     error.status = r.status;
+    error.retryAfterSeconds = Number(r.headers.get("Retry-After")) || 0;
     throw error;
   }
   return data;
@@ -764,8 +795,8 @@ export default function App() {
         onRetry={loadSession}
       />
     );
-  if (!me) return <Auth onLogin={refresh} notify={notify} toast={toast} />;
   const inviteToken = new URLSearchParams(location.search).get("invite");
+  if (!me) return <Auth onLogin={refresh} onReset={() => setMe(null)} />;
   if (inviteToken)
     return (
       <AcceptInvitation
@@ -775,6 +806,8 @@ export default function App() {
         onLogout={() => setMe(null)}
       />
     );
+  if (["login", "register", "forgot-password", "reset-password"].includes(page))
+    return <Auth onLogin={refresh} onReset={() => setMe(null)} />;
   if (page.startsWith("admin/")) {
     if (me.user.isPlatformAdmin)
       return <Admin page={page} me={me} api={api} go={go} />;
@@ -2640,33 +2673,164 @@ function SearchBox({ value, setValue, placeholder }) {
     </label>
   );
 }
-function Auth({ onLogin, notify, toast }) {
+function authModeForPath(pathname, token) {
+  if (token && pathname === "/") return "invite";
+  if (pathname === "/register") return "register";
+  if (pathname === "/forgot-password") return "forgot";
+  if (pathname === "/reset-password") return "reset";
+  return "login";
+}
+
+function Auth({ onLogin, onReset }) {
   const router = useRouter();
-  const [googleEnabled,setGoogleEnabled]=useState(false);
-  useEffect(()=>{api("/auth/google/config").then(d=>setGoogleEnabled(d.enabled)).catch(()=>{});},[]);
+  const pathname = usePathname();
   const token = new URLSearchParams(location.search).get("invite");
-  const [mode, setMode] = useState(token ? "invite" : "login"),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
-  async function submit(e) {
-    e.preventDefault();
+  const routeMode = authModeForPath(pathname, token);
+  const [googleEnabled, setGoogleEnabled] = useState(false);
+  const [mode, setMode] = useState(routeMode);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [resetEmail, setResetEmail] = useState("");
+  const [loginEmail, setLoginEmail] = useState("");
+  const [cooldown, setCooldown] = useState(0);
+
+  useEffect(() => {
+    api("/auth/google/config")
+      .then((data) => setGoogleEnabled(data.enabled))
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    setMode(routeMode);
     setError("");
+  }, [routeMode]);
+  useEffect(() => {
+    if (!cooldown) return undefined;
+    const timer = setTimeout(() => setCooldown((value) => Math.max(0, value - 1)), 1000);
+    return () => clearTimeout(timer);
+  }, [cooldown]);
+
+  function navigateMode(nextMode) {
+    if (busy) return;
+    setMode(nextMode);
+    setError("");
+    setNotice("");
+    if (token && (nextMode === "login" || nextMode === "invite")) return;
+    router.push({ login: "/login", register: "/register", forgot: "/forgot-password", reset: "/reset-password", invite: "/" }[nextMode]);
+  }
+
+  function validateEmail(value) {
+    const email = String(value || "").trim().toLowerCase();
+    if (!email) return "Email không được để trống.";
+    if (email.length > 320) return "Email vượt quá độ dài cho phép.";
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+      return "Địa chỉ email không hợp lệ.";
+    return "";
+  }
+
+  async function resendCode() {
+    const email = resetEmail.trim().toLowerCase();
+    const emailError = validateEmail(email);
+    if (emailError) return setError(emailError);
+    if (busy || cooldown > 0) return;
     setBusy(true);
+    setError("");
     try {
-      const body = Object.fromEntries(new FormData(e.currentTarget));
-      await api(mode === "invite" ? "/invitations/accept" : `/auth/${mode}`, {
+      const result = await api("/auth/forgot-password", {
         method: "POST",
-        body: JSON.stringify({ ...body, ...(token ? { token } : {}) }),
+        body: JSON.stringify({ email }),
       });
-      if (token && mode === "invite")
-        router.replace(location.pathname);
-      await onLogin();
-    } catch (e) {
-      setError(e.message);
+      setResetEmail(email);
+      setCooldown(Number(result.retryAfterSeconds) || 60);
+      setNotice(result.message || "Nếu email thuộc tài khoản đang hoạt động, bạn sẽ nhận được mã xác nhận.");
+    } catch (reason) {
+      setError(reason.message);
+      if (reason.status === 429) setCooldown(Number(reason.retryAfterSeconds) || 60);
     } finally {
       setBusy(false);
     }
   }
+
+  async function submit(event) {
+    event.preventDefault();
+    if (busy) return;
+    setError("");
+    setBusy(true);
+    try {
+      const body = Object.fromEntries(new FormData(event.currentTarget));
+      if (mode === "forgot") {
+        const email = String(body.email || "").trim().toLowerCase();
+        const emailError = validateEmail(email);
+        if (emailError) throw new Error(emailError);
+        const result = await api("/auth/forgot-password", {
+          method: "POST",
+          body: JSON.stringify({ email }),
+        });
+        setResetEmail(email);
+        setCooldown(Number(result.retryAfterSeconds) || 60);
+        setNotice(result.message || "Nếu email thuộc tài khoản đang hoạt động, bạn sẽ nhận được mã xác nhận.");
+        router.replace("/reset-password");
+        return;
+      }
+      if (mode === "reset") {
+        const email = String(body.email || "").trim().toLowerCase();
+        const emailError = validateEmail(email);
+        if (emailError) throw new Error(emailError);
+        if (!/^\d{6}$/.test(String(body.code || "").trim()))
+          throw new Error("Mã xác nhận phải gồm 6 chữ số.");
+        if (String(body.password || "") !== String(body.confirmPassword || ""))
+          throw new Error("Mật khẩu nhập lại không khớp.");
+        await api("/auth/reset-password", {
+          method: "POST",
+          body: JSON.stringify({
+            email,
+            code: String(body.code || "").trim(),
+            password: body.password,
+          }),
+        });
+        onReset();
+        setLoginEmail(email);
+        setResetEmail(email);
+        setNotice("Đặt lại mật khẩu thành công. Đăng nhập bằng mật khẩu mới.");
+        router.replace("/login");
+        return;
+      }
+      if (mode === "register" && body.password !== body.confirmPassword)
+        throw new Error("Mật khẩu nhập lại không khớp.");
+      await api(mode === "invite" ? "/invitations/accept" : `/auth/${mode}`, {
+        method: "POST",
+        body: JSON.stringify({ ...body, ...(token ? { token } : {}) }),
+      });
+      if (!token || mode === "invite") router.replace("/dashboard");
+      await onLogin();
+    } catch (reason) {
+      setError(reason.message || "Không thể thực hiện. Vui lòng thử lại.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const title =
+    mode === "login"
+      ? "Chào mừng bạn trở lại"
+      : mode === "register"
+        ? "Khởi đầu một ngày ngăn nắp"
+        : mode === "invite"
+          ? "Gia nhập đội ngũ"
+          : mode === "forgot"
+            ? "Khôi phục mật khẩu"
+            : "Đặt mật khẩu mới";
+  const description =
+    mode === "login"
+      ? "Đăng nhập để tiếp tục những việc đang làm."
+      : mode === "register"
+        ? "Tạo không gian riêng và dùng thử trong 14 ngày."
+        : mode === "invite"
+          ? "Tạo tài khoản để nhận lời mời vào không gian."
+          : mode === "forgot"
+            ? "Nhập email để nhận mã xác nhận đặt lại mật khẩu."
+            : "Nhập mã trong email và chọn một mật khẩu mới.";
+
   return (
     <div className="auth-page">
       <section className="auth-story">
@@ -2675,6 +2839,7 @@ function Auth({ onLogin, notify, toast }) {
           href="/"
           onClick={(event) => {
             event.preventDefault();
+            if (busy) return;
             router.push("/");
           }}
         >
@@ -2727,69 +2892,140 @@ function Auth({ onLogin, notify, toast }) {
           <span className="welcome-icon">
             <Bell size={25} />
           </span>
-          <h2>
-            {mode === "login"
-              ? "Chào mừng bạn trở lại"
-              : mode === "invite"
-                ? "Gia nhập đội ngũ"
-                : "Khởi đầu một ngày ngăn nắp"}
-          </h2>
-          <p>
-            {mode === "login"
-              ? "Đăng nhập để tiếp tục những việc đang làm."
-              : mode === "invite"
-                ? "Tạo tài khoản để nhận lời mời vào không gian."
-                : "Tạo không gian riêng và dùng thử trong 14 ngày."}
-          </p>
-          <form onSubmit={submit}>
-            {mode !== "login" && (
-              <Field label="Họ và tên">
-                <input
-                  name="name"
-                  required
-                  autoComplete="name"
-                  placeholder="Tên của bạn"
-                  maxLength={100}
-                />
-              </Field>
-            )}
-            {mode !== "invite" && (
+          <h2>{title}</h2>
+          <p>{description}</p>
+          {notice && (
+            <div className="form-success" role="status">
+              <CheckCircle2 size={16} /> {notice}
+            </div>
+          )}
+          <form key={mode} onSubmit={submit}>
+            {mode === "forgot" && (
               <Field label="Email">
-                <input
+                <input disabled={busy}
                   name="email"
                   type="email"
                   required
                   autoComplete="email"
                   placeholder="ban@congty.vn"
+                  maxLength={320}
                 />
               </Field>
             )}
-            <Field label="Mật khẩu">
-              <input
-                name="password"
-                type="password"
-                required
-                minLength={mode === "login" ? 1 : 10}
-                autoComplete={
-                  mode === "login" ? "current-password" : "new-password"
-                }
-                placeholder={
-                  mode === "login" ? "Nhập mật khẩu" : "Ít nhất 10 ký tự"
-                }
-              />
-            </Field>
+            {mode === "reset" && (
+              <>
+                <Field label="Email">
+                  <input disabled={busy}
+                    name="email"
+                    type="email"
+                    required
+                    value={resetEmail}
+                    onChange={(event) => {
+                      setResetEmail(event.target.value);
+                      setError("");
+                    }}
+                    autoComplete="email"
+                    placeholder="ban@congty.vn"
+                    maxLength={320}
+                  />
+                </Field>
+                <Field label="Mã xác nhận">
+                  <input disabled={busy}
+                    name="code"
+                    required
+                    inputMode="numeric"
+                    pattern="[0-9]{6}"
+                    autoComplete="one-time-code"
+                    placeholder="000000"
+                    maxLength={6}
+                  />
+                </Field>
+                <Field label="Mật khẩu mới">
+                  <input disabled={busy}
+                    name="password"
+                    type="password"
+                    required
+                    minLength={8}
+                    maxLength={256}
+                    autoComplete="new-password"
+                    placeholder="Từ 8 đến 256 ký tự"
+                  />
+                </Field>
+                <Field label="Nhập lại mật khẩu mới">
+                  <input disabled={busy}
+                    name="confirmPassword"
+                    type="password"
+                    required
+                    minLength={8}
+                    maxLength={256}
+                    autoComplete="new-password"
+                    placeholder="Nhập lại mật khẩu mới"
+                  />
+                </Field>
+              </>
+            )}
+            {mode !== "login" && mode !== "forgot" && mode !== "reset" && (
+              <Field label="Họ và tên">
+                <input disabled={busy}
+                  name="name"
+                  required
+                  autoComplete="name"
+                  placeholder="Tên của bạn"
+                  maxLength={120}
+                />
+              </Field>
+            )}
+            {(mode === "login" || mode === "register") && (
+              <Field label="Email">
+                <input disabled={busy}
+                  name="email"
+                  type="email"
+                  required
+                  value={loginEmail}
+                  onChange={(event) => {
+                    setLoginEmail(event.target.value);
+                    setNotice("");
+                    setError("");
+                  }}
+                  autoComplete="email"
+                  placeholder="ban@congty.vn"
+                  maxLength={320}
+                />
+              </Field>
+            )}
+            {mode !== "forgot" && mode !== "reset" && (
+              <Field label="Mật khẩu">
+                <input disabled={busy}
+                  name="password"
+                  type="password"
+                  required
+                  minLength={mode === "login" ? 1 : 8}
+                  maxLength={256}
+                  autoComplete={
+                    mode === "login" ? "current-password" : "new-password"
+                  }
+                  placeholder={
+                    mode === "login" ? "Nhập mật khẩu" : "Từ 8 đến 256 ký tự"
+                  }
+                />
+              </Field>
+            )}
             {mode === "register" && (
               <>
+                <Field label="Nhập lại mật khẩu">
+                  <input disabled={busy} name="confirmPassword" type="password" required
+                    minLength={8} maxLength={256} autoComplete="new-password" />
+                </Field>
                 <Field label="Tên không gian / doanh nghiệp">
-                  <input
+                  <input disabled={busy}
                     name="workspaceName"
                     required
                     placeholder="Ví dụ: An Nhiên Studio"
-                    maxLength={150}
+                    maxLength={160}
                   />
                 </Field>
                 <Field label="Lĩnh vực dịch vụ">
-                  <select name="industry">
+                  <select name="industry" disabled={busy}>
                     <option>Dịch vụ tổng hợp</option>
                     <option>Kế toán & tư vấn</option>
                     <option>Spa & làm đẹp</option>
@@ -2809,19 +3045,44 @@ function Auth({ onLogin, notify, toast }) {
             )}
             <Button
               type="submit"
-              icon={busy ? LoaderCircle : ArrowRight}
+              icon={busy ? LoaderCircle : mode === "forgot" ? Mail : ArrowRight}
               disabled={busy}
             >
               {busy
                 ? "Đang xử lý…"
                 : mode === "login"
                   ? "Vào không gian làm việc"
-                  : mode === "invite"
-                    ? "Tham gia không gian"
-                    : "Tạo không gian miễn phí"}
+                  : mode === "register"
+                    ? "Tạo không gian miễn phí"
+                    : mode === "invite"
+                      ? "Tham gia không gian"
+                      : mode === "forgot"
+                        ? "Gửi mã xác nhận"
+                        : "Đặt lại mật khẩu"}
             </Button>
           </form>
-          {
+          {mode === "reset" && (
+            <p className="auth-switch">
+              <button type="button" onClick={resendCode} disabled={busy || cooldown > 0}>
+                {cooldown > 0 ? `Gửi lại mã sau ${cooldown}s` : "Gửi lại mã"}
+              </button>
+            </p>
+          )}
+          {mode === "login" && (
+            <p className="auth-switch">
+              <button type="button" disabled={busy} onClick={() => navigateMode("forgot")}>
+                Quên mật khẩu?
+              </button>
+            </p>
+          )}
+          {(mode === "forgot" || mode === "reset") && (
+            <p className="auth-switch">
+              <button type="button" disabled={busy} onClick={() => navigateMode("login")}>
+                Quay lại đăng nhập
+              </button>
+            </p>
+          )}
+          {(mode === "login" || mode === "register" || mode === "invite") && (
             <p className="auth-switch">
               {mode === "login"
                 ? token
@@ -2829,26 +3090,25 @@ function Auth({ onLogin, notify, toast }) {
                   : "Chưa có không gian riêng?"
                 : "Đã có tài khoản?"}{" "}
               <button
-                onClick={() => {
-                  setMode(
-                    mode === "login"
-                      ? token
-                        ? "invite"
-                        : "register"
-                      : "login",
-                  );
-                  setError("");
-                }}
+                type="button"
+                disabled={busy}
+                onClick={() =>
+                  navigateMode(mode === "login" ? (token ? "invite" : "register") : "login")
+                }
               >
                 {mode === "login"
                   ? token
                     ? "Tạo tài khoản từ lời mời"
-                    : "Dùng thử miễn phí"
+                    : "Đăng ký"
                   : "Đăng nhập"}
               </button>
             </p>
-          }
-          {googleEnabled && <a className="button secondary" href="/api/auth/google/start">Tiếp tục với Google</a>}
+          )}
+          {googleEnabled && !busy && ["login", "register", "invite"].includes(mode) && (
+            <a className="button secondary" href="/api/auth/google/start">
+              Tiếp tục với Google
+            </a>
+          )}
           <div className="auth-security">
             <ShieldCheck size={15} /> Dữ liệu riêng cho từng không gian làm việc
           </div>

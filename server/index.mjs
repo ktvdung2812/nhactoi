@@ -8,6 +8,7 @@ import {JSON_BODY_LIMIT_BYTES} from "../shared/board-transfer.mjs";
 import { registerCollaborationRoutes } from "./collaboration.mjs";
 import { registerServiceRoutes, processServiceReminders } from "./services.mjs";
 import { registerAutomationRoutes,emitTaskEvent } from "./automations.mjs";
+import { authRequestLimiter, registerPasswordResetRoutes } from "./password-reset.mjs";
 import {
   createFcmTransport,
   processNotificationOutbox,
@@ -737,7 +738,7 @@ function ensureWritable(req) {
 function createSession(db, userId, workspaceId, config, clock, { kind = "web" } = {}) {
   const token = createToken();
   const now = currentDate(clock);
-  const expires = addDays(now, config.sessionDays).toISOString();
+  const expires = addDays(now, kind === "mobile" ? config.mobileSessionDays : config.sessionDays).toISOString();
   db.prepare(
     `
     INSERT INTO sessions(id, token_hash, user_id, workspace_id, expires_at, created_at, kind)
@@ -2494,6 +2495,10 @@ function createApp(options = {}) {
   applyStoredSettings(config, loadStoredSettings(db, settingsKey));
   const clock = options.clock || (() => new Date());
   const app = express();
+  // The documented EnvKit/aaPanel proxy connects over loopback. Trust only
+  // that hop so public clients cannot spoof IPs and all users do not share
+  // the proxy's address for registration/recovery throttling.
+  app.set("trust proxy", "loopback");
   const authFailures = new Map();
   const mobilePushTransport =
     options.mobilePushTransport ||
@@ -2705,8 +2710,20 @@ function createApp(options = {}) {
     setSessionCookie,
   });
 
-  app.post("/api/auth/register", (req, res, next) => {
+  const limitAuthRequests = authRequestLimiter({ db, clock, settingsKey, withTransaction, HttpError });
+  registerPasswordResetRoutes(app, {
+    db, clock, config, settingsKey, withTransaction, HttpError,
+    emailValue, passwordValue, clearSessionCookie,
+    limit: limitAuthRequests,
+    transport: () => options.passwordResetTransport || smtpTransport(config),
+  });
+
+  app.post(["/api/auth/register", "/api/mobile/auth/register"],
+    limitAuthRequests("register", { ipLimit: 20, windowMs: 60 * 60_000 }), (req, res, next) => {
     try {
+      const mobile = req.path === "/api/mobile/auth/register";
+      if (["name", "email", "password", "workspaceName"].some((key) => typeof req.body?.[key] !== "string"))
+        throw new HttpError(400, "Vui lòng nhập đầy đủ họ tên, email, mật khẩu và tên không gian.");
       const name = cleanString(req.body?.name, {
         required: true,
         max: 120,
@@ -2754,10 +2771,12 @@ function createApp(options = {}) {
         created.workspaceId,
         config,
         clock,
+        { kind: mobile ? "mobile" : "web" },
       );
-      setSessionCookie(res, session.token, config);
+      if (!mobile) setSessionCookie(res, session.token, config);
       const auth = authContext(db, session.token, clock);
       return res.status(201).json({
+        ...(mobile ? { token: session.token, expiresAt: session.expires } : {}),
         user: auth.user,
         workspace: auth.workspace,
         subscription: subscriptionJson(
