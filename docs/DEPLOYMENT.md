@@ -150,3 +150,14 @@ Khi kiểm tra những lần deploy tiếp theo, cần đối chiếu symlink `c
 commit mới và log `deployment is healthy`. HTTP 200 của webhook chỉ xác nhận
 aaPanel đã nhận yêu cầu, không xác nhận build đã hoàn tất. Các mục lỗi từ lần
 cấu hình ban đầu vẫn còn trong lịch sử; đọc lượt chạy mới nhất.
+
+
+## Web Push và ứng dụng web (migration 31)
+
+Sau khi sao lưu DB, chạy `npm ci`, build và khởi động lại Next để áp dụng migration 31. Tạo VAPID một lần bằng `npm run web-push:keys`; cấu hình `WEB_PUSH_PUBLIC_KEY`, `WEB_PUSH_PRIVATE_KEY`, `WEB_PUSH_SUBJECT=mailto:...` trong môi trường máy chủ. Không commit private key hoặc thay key mỗi lần deploy. Web Push tắt nếu cấu hình thiếu/sai; không thay thế FCM hoặc SMTP.
+
+Cần HTTPS ngoài localhost, một worker Node đang chạy và outbound HTTPS đến Chrome/Firefox/Edge/Safari push services. `/sw.js` phải phục vụ JavaScript cùng origin với header `Cache-Control: no-cache`; `/manifest.webmanifest`, `/icons/*` và `/offline.html` là tài nguyên công khai. Không cache API hoặc trang đã đăng nhập tại reverse proxy. Service worker của ứng dụng chỉ cache trang mất mạng và icon.
+
+Kiểm tra thủ công sau triển khai: đăng nhập → Tài khoản → Bật thông báo → tạo lời nhắc cho mình → đóng tab → kiểm tra nhận và mở đúng nội dung/workspace. Kiểm tra cài PWA trên thiết bị mục tiêu; iOS/iPadOS cần trình duyệt/OS hỗ trợ và thêm vào Màn hình chính trước. Push phụ thuộc chính sách nền của hệ điều hành, không cam kết hoạt động khi trình duyệt bị force-stop. Đăng xuất/reset mật khẩu thu hồi đăng ký máy chủ; sau đăng nhập lại cần bật lại. Nếu xoay VAPID, người dùng phải bật lại; giữ key cũ trong secret backup cho đến khi hoàn tất chuyển đổi.
+
+Rollback mã nguồn nên giữ nguyên các bảng migration 31 (additive), không hạ schema/xóa dữ liệu đang chạy. Dừng worker mới trước khi rollback; service worker không cache dữ liệu nghiệp vụ và mọi thông báo còn trong hàng đợi chỉ chứa nội dung chung.

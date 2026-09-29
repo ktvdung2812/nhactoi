@@ -1,3 +1,4 @@
+import { reminderDeliveryAllowed, legacyReminderAllowed } from "./reminder-workflow.mjs";
 import {
   createId,
   createToken,
@@ -102,7 +103,11 @@ BEGIN
 END;
 `;
 
+export const SERVICE_MOBILE_SCHEMA = `DROP TRIGGER IF EXISTS notifications_mobile_outbox_ai;
+` + MOBILE_SCHEMA.slice(MOBILE_SCHEMA.indexOf('CREATE TRIGGER')).replace("('task_reminder', 'task_update', 'calendar_event')", "('task_reminder', 'task_update', 'calendar_event', 'service_renewal')");
+
 const MOBILE_TYPES = new Set([
+  "service_renewal",
   "task_reminder",
   "task_update",
   "calendar_event",
@@ -543,13 +548,21 @@ export async function processNotificationOutbox({
         delivery.session_id,
         now,
       );
-      if (!authorized) {
+      if (db.prepare('SELECT status FROM notification_outbox WHERE id=?').get(outbox.id)?.status !== 'pending') break;
+      const notice = db.prepare('SELECT * FROM notifications WHERE id=?').get(outbox.notification_id);
+      const access = db.prepare(`SELECT 1 FROM notifications n WHERE n.id=? AND ${notificationAccessSql(true)}`).get(outbox.notification_id,outbox.user_id);
+      const reminder = ['task_reminder','service_renewal'].includes(outbox.type);
+      if (!authorized || !access || (reminder && !reminderDeliveryAllowed(db,notice,now))) {
         db.prepare(
           `UPDATE notification_outbox_deliveries
            SET status='skipped', last_error='authorization revoked'
            WHERE outbox_id=? AND installation_id=?`,
         ).run(outbox.id, delivery.installation_id);
         continue;
+      }
+      if (outbox.type === 'task_reminder') {
+        const task = db.prepare('SELECT * FROM tasks WHERE id=?').get(notice.task_id);
+        if (task && !legacyReminderAllowed(db,task,outbox.user_id,now)) continue;
       }
       try {
         const result = await send({
@@ -594,6 +607,7 @@ export async function processNotificationOutbox({
         }
       }
     }
+    if (db.prepare('SELECT status FROM notification_outbox WHERE id=?').get(outbox.id)?.status !== 'pending') { skipped++; continue; }
     const state = db.prepare(
       `SELECT
          SUM(status='pending') AS pending,

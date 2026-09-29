@@ -56,10 +56,10 @@ const itemTeamId = (item: WorkItem) =>
   item.kind === "task" ? item.value.teamId : item.value.team_id;
 
 const itemStart = (item: WorkItem) =>
-  Date.parse(item.kind === "task" ? item.value.dueAt : item.value.starts_at);
+  Date.parse((item.kind === "task" ? item.value.dueAt : item.value.starts_at) || "");
 
 const itemEnd = (item: WorkItem) =>
-  Date.parse(item.kind === "task" ? item.value.dueAt : item.value.ends_at);
+  Date.parse((item.kind === "task" ? item.value.dueAt : item.value.ends_at) || "");
 
 /**
  * Projects tasks and appointments onto the one work board. Service renewal
@@ -109,6 +109,9 @@ export function projectWorkItems(
       );
     })
     .sort((a, b) => {
+      const aDated = Number.isFinite(itemStart(a));
+      const bDated = Number.isFinite(itemStart(b));
+      if (aDated !== bDated) return aDated ? -1 : 1;
       const difference = itemStart(a) - itemStart(b);
       return Number.isFinite(difference)
         ? difference

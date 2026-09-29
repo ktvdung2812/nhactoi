@@ -1,11 +1,20 @@
+import WebPushSettings from "./WebPushSettings.jsx";
+import RecurrenceFields from "./RecurrenceFields.jsx";
+import WeekCalendar from "./WeekCalendar.jsx";
+import PersonalTasks from "./PersonalTasks.jsx";
+import Appearance from "./Appearance.jsx";
+import { useAppearance } from "./appearance.js";
 import TaskTemplates from "./TaskTemplates.jsx";
+import AssistantChat from "./AssistantChat.jsx";
 import {GoogleAccount} from "./OperationsSettings.jsx";
-import Account from "./Account.jsx";
-import CalendarEvents from "./CalendarEvents.jsx";
+import Account, { ThemeSettings } from "./Account.jsx";
+import ThemeToggle, { ThemeToggleButton } from "./ThemeToggle.jsx";
+import { useTheme } from "./theme.js";
 import BoardTransfer from "./BoardTransfer.jsx";
 import React, { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
+  Inbox,
   Bell,
   LayoutDashboard,
   CheckCheck,
@@ -19,6 +28,7 @@ import {
   ArrowDownLeft,
   ArrowRight,
   ChevronRight,
+  ChevronLeft,
   ChevronDown,
   X,
   Check,
@@ -39,6 +49,10 @@ import {
   RefreshCw,
   LifeBuoy,
   Trash2,
+  Moon,
+  Sun,
+  Zap,
+  Palette,
 } from "lucide-react";
 import Admin from "./Admin.jsx";
 import AccessDenied from "./AccessDenied.jsx";
@@ -53,6 +67,7 @@ import Automations from "./Automations.jsx";
 import ActionMenu from "./ActionMenu.jsx";
 import Trash, { MoveToTrashDialog } from "./Trash.jsx";
 import TaskDetail from "./TaskDetail.jsx";
+import CustomerDetail from "./CustomerDetail.jsx";
 import { readRoute } from "./routes.js";
 
 const money = (n) =>
@@ -74,17 +89,43 @@ const priorities = { low: "Thấp", medium: "Trung bình", high: "Cao" };
 const navItems = [
   ["dashboard", "Tổng quan", LayoutDashboard],
   ["tasks", "Công việc", CheckCheck],
-  ["customers", "Khách hàng", Users],
-  ["finance", "Thu & chi", Wallet],
+  ["today", "Hôm nay", Sun],
+  ["upcoming", "Sắp tới", CalendarDays],
+  ["week", "Lịch tuần", CalendarDays],
+  ["inbox", "Inbox", Inbox],
   ["teams", "Teams", Users],
-  ["team", "Thành viên", Users],
-  ["tickets", "Hỗ trợ", LifeBuoy],
-  ["services", "Quản lý gia hạn", CalendarDays],
-  ["automations", "Tự động hóa", Sparkles],
+  ["customers", "Khách hàng", Users],
+  ["services", "Quản lý gia hạn", RefreshCw],
+  ["finance", "Thu & chi", Wallet],
   ["transfer", "Nhập / xuất bảng", Copy],
+  ["tickets", "Hỗ trợ", LifeBuoy],
+  ["trash", "Thùng rác", Trash2],
+  ["automations", "Tự động hóa", Sparkles],
   ["account", "Tài khoản", ShieldCheck],
   ["templates", "Mẫu công việc", Copy],
-  ["trash", "Thùng rác cấp 2", Trash2],
+];
+
+const navSections = [
+  {
+    id: "core",
+    items: ["dashboard", "tasks"],
+  },
+  {
+    id: "schedule",
+    label: "Kế hoạch",
+    items: ["today", "upcoming", "week", "inbox"],
+  },
+  {
+    id: "workspace",
+    label: "Không gian",
+    items: ["teams", "customers", "services", "finance"],
+  },
+  {
+    id: "utilities",
+    label: "Tiện ích",
+    collapsible: true,
+    items: ["transfer", "tickets", "trash"],
+  },
 ];
 function migrateLegacyHashRoute() {
   if (!["/", "/index.html"].includes(location.pathname)) return;
@@ -213,13 +254,14 @@ async function api(path, options = {}) {
     };
     const error = new Error(
       known[raw] ||
+        ((path.startsWith("/ai/") || path.startsWith("/web-push/")) && /[^\x00-\x7F]/.test(raw) ? raw : null) ||
         (path.startsWith("/auth/") && [400, 403, 409, 429, 503].includes(r.status) && /[^\x00-\x7F]/.test(raw) ? raw : null) ||
         authValidation ||
         profileValidation ||
         adminValidation ||
         ((path.startsWith("/admin/") ||
           path.startsWith("/tickets") ||
-          path.startsWith("/teams") ||
+          path.startsWith("/teams") || path.startsWith("/appearance") ||
           path.startsWith("/tasks") ||
           path.startsWith("/trash") || path.startsWith("/task-templates") || path.startsWith("/task-labels") || path.startsWith("/calendar-events") || path.startsWith("/board-transfer") || path.startsWith("/automations") || path.startsWith("/services") || path.startsWith("/boards") || path.startsWith("/customers")) &&
         [400, 403, 409, 422].includes(r.status) &&
@@ -284,6 +326,7 @@ function Field({ label, children }) {
 }
 export default function App() {
   const router = useRouter();
+  const { isDark, toggleTheme } = useTheme();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [me, setMe] = useState(null),
@@ -302,6 +345,14 @@ export default function App() {
     [toast, setToast] = useState(null),
     [noticeOpen, setNoticeOpen] = useState(false),
     [mobile, setMobile] = useState(false),
+    [sidebarHidden, setSidebarHidden] = useState(() => {
+      if (typeof window !== "undefined") {
+        try {
+          return localStorage.getItem("nhactoi_sidebar_hidden") === "true";
+        } catch {}
+      }
+      return false;
+    }),
     [busy, setBusy] = useState(false),
     [billing, setBilling] = useState(null),
     [cycle, setCycle] = useState("yearly"),
@@ -311,21 +362,70 @@ export default function App() {
     [bootError, setBootError] = useState(null),
     [previewToast, setPreviewToast] = useState("");
   const [trashTarget, setTrashTarget] = useState(null);
-  const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [calendarEvents, setCalendarEvents] = useState([]);
-  const [eventToOpen, setEventToOpen] = useState(null);
-  const [eventCreateRequest, setEventCreateRequest] = useState(0);
   const [selectedServiceId, setSelectedServiceId] = useState(() => new URLSearchParams(location.search).get("service"));
   const [teamsRevision, setTeamsRevision] = useState(0);
   const [taskTeamFilter, setTaskTeamFilter] = useState("all");
   const [taskTeamId, setTaskTeamId] = useState("");
   const [taskReturnPage, setTaskReturnPage] = useState(null);
+  const [aiTaskId, setAiTaskId] = useState(null);
+  const [selectedAiTaskId, setSelectedAiTaskId] = useState(null);
+  const [utilitiesOpen, setUtilitiesOpen] = useState(false);
+  const toggleSidebar = () => {
+    if (typeof window !== "undefined" && window.innerWidth <= 760) {
+      setMobile((prev) => !prev);
+    } else {
+      setSidebarHidden((prev) => {
+        const next = !prev;
+        try {
+          localStorage.setItem("nhactoi_sidebar_hidden", String(next));
+        } catch {}
+        return next;
+      });
+    }
+  };
+
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if ((e.metaKey || e.ctrlKey) && e.key?.toLowerCase() === "b") {
+        const target = e.target;
+        const tag = target?.tagName?.toLowerCase();
+        if (tag === "input" || tag === "textarea" || target?.isContentEditable) {
+          return;
+        }
+        e.preventDefault();
+        toggleSidebar();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   const workspaceRef = useRef(null);
   workspaceRef.current = me?.workspace?.id || null;
   useEffect(() => {
     const query = searchParams?.toString();
     setPage(readRoute(pathname, query ? `?${query}` : ""));
   }, [pathname, searchParams]);
+  const handledPush = useRef(null);
+  useEffect(() => {
+    const notificationId = searchParams.get('notification');
+    if (!me || !notificationId || handledPush.current === `${me.user.id}:${notificationId}`) return;
+    handledPush.current = `${me.user.id}:${notificationId}`;
+    (async () => {
+      try {
+        const target = await api(`/web-push/notifications/${encodeURIComponent(notificationId)}`);
+        if (target.workspaceId !== workspaceRef.current) {
+          await api('/workspaces/switch', { method: 'POST', body: JSON.stringify({ workspaceId: target.workspaceId }) });
+          await refresh();
+        }
+        router.replace(target.path);
+      } catch (error) {
+        setToast({ message: error.message || 'Thông báo không còn khả dụng.', error: true });
+        router.replace('/dashboard');
+      }
+    })();
+  }, [me?.user.id, searchParams]);
   useEffect(() => {
     const legacyTarget = migrateLegacyHashRoute();
     if (!legacyTarget) return;
@@ -341,18 +441,40 @@ export default function App() {
     setModal(null);
     setTrashTarget(null);
     setTaskReturnPage(null);
+    setAiTaskId(null);
+    setSelectedAiTaskId(null);
     setCalendarEvents([]);
-    setEventToOpen(null);
     setSelectedServiceId(new URLSearchParams(location.search).get("service"));
   }, [me?.workspace?.id]);
   useEffect(() => {
+    setSelectedServiceId(searchParams.get('service'));
+  }, [searchParams]);
+  useEffect(() => {
+    const eventId = searchParams.get('event');
+    if (!me || !eventId || page !== 'tasks') return;
+    let canceled = false;
+    api(`/calendar-events/${encodeURIComponent(eventId)}`).then(result => {
+      if (!canceled) openUnifiedItem({ ...result.event, kind: 'event' });
+    }).catch(error => { if (!canceled) setToast({ message: error.message, error: true }); });
+    return () => { canceled = true; };
+  }, [me?.workspace?.id, searchParams, page]);
+  useEffect(() => {
+    const active = (data.teams || []).filter((t) => !t.archivedAt);
     if (
-      !["all", "common"].includes(taskTeamFilter) &&
-      !(data.teams || []).some((t) => t.id === taskTeamFilter && !t.archivedAt)
-    )
+      (active.length <= 1 && taskTeamFilter !== "all") ||
+      (!["all", "common"].includes(taskTeamFilter) &&
+        !active.some((t) => t.id === taskTeamFilter))
+    ) {
       setTaskTeamFilter("all");
+    }
   }, [data.teams, taskTeamFilter]);
   const notify = (message, error = false) => setToast({ message, error });
+  const appearanceTeamId = page === "appearance" ? searchParams.get("team") || ""
+    : page.startsWith("teams/") ? page.split("/")[1]
+    : page.startsWith("tasks/") ? (data.tasks || []).find(task => task.id === page.split("/")[1])?.teamId || (taskReturnPage?.startsWith("teams/") ? taskReturnPage.split("/")[1] : "")
+    : page === "tasks" && !["all", "common"].includes(taskTeamFilter) ? taskTeamFilter : "";
+  const appearance = useAppearance({ api, userId: me?.user?.id, workspaceId: me?.workspace?.id,
+    teamId: appearanceTeamId, enabled: !!me && !page.startsWith("admin/") && !["login", "register", "forgot-password", "reset-password"].includes(page), notify });
   async function refresh() {
     const [m, d] = await Promise.all([api("/me"), api("/dashboard")]);
     setMe(m);
@@ -382,7 +504,7 @@ export default function App() {
     loadSession();
   }, []);
   useEffect(() => {
-    if (!me || page !== "tasks") return undefined;
+    if (!me || !["tasks", "inbox", "today", "upcoming", "week"].includes(page)) return undefined;
     let canceled = false;
     const load = () => {
       const workspaceId = workspaceRef.current;
@@ -454,18 +576,36 @@ export default function App() {
         .catch((e) => notify(e.message, true));
   }, [page, me]);
   useEffect(() => {
+    if (!page.startsWith("tasks/") && !aiTaskId) return undefined;
+    const previousFocus = document.activeElement;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const dialog = document.querySelector(".task-detail-modal");
+    dialog?.focus({ preventScroll: true });
+    if (dialog) dialog.scrollTop = 0;
+    function onKey(event) {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (document.querySelector(".modal-backdrop, .task-detail-modal .action-menu-popup, .task-detail-modal .td-tasklist-panel, .task-detail-modal .td-mention-list")) return;
+      closeTaskDetail();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKey);
+      requestAnimationFrame(() => { if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true }); });
+    };
+  }, [page, taskReturnPage, aiTaskId]);
+  useEffect(() => {
     const fn = (e) => {
       if (e.key === "Escape") {
         setModal(null);
-        setEventToOpen(null);
-        setAddMenuOpen(false);
         setNoticeOpen(false);
         setMobile(false);
         setWorkspaces(null);
       }
       if (e.defaultPrevented) return;
       if (e.key === "Tab") {
-        const dialog = document.querySelector('[role="dialog"]');
+        const dialog = [...document.querySelectorAll('[role="dialog"]')].at(-1);
         if (!dialog) return;
         const focusable = [
           ...dialog.querySelectorAll(
@@ -552,10 +692,11 @@ export default function App() {
         .toLowerCase()
         .includes(search.toLowerCase()),
   );
-  const upcomingReminders = unifiedItems
-    .filter((item) => item.status !== "done" && item.remindAt && new Date(item.remindAt) >= now)
-    .sort((a, b) => new Date(a.remindAt) - new Date(b.remindAt))
-    .slice(0, 4);
+  const boardItems = unifiedItems.filter((item) => item.kind !== "renewal");
+  const openBoard = boardItems.filter((item) => item.status !== "done");
+  const overdueBoard = openBoard.filter((item) => item.dueAt && new Date(item.dueAt) < now);
+  const dueTodayBoard = openBoard.filter((item) => isToday(item.dueAt));
+  const dashboardItems = filter === "overdue" ? overdueBoard : filter === "today" ? dueTodayBoard : openBoard;
   const person = (id) => members.find((m) => m.id === id),
     client = (id) => customers.find((c) => c.id === id);
   const selectedTaskTeam = teams.find((t) => t.id === taskTeamId);
@@ -584,10 +725,12 @@ export default function App() {
         : null,
     });
   function renderTaskTeamFilter() {
+    const activeTeams = teams.filter((t) => !t.archivedAt);
+    if (activeTeams.length <= 1) return null;
     return (
-      <label className="task-team-filter">
-        <Users size={16} />
-        <span>Phạm vi công việc</span>
+      <label className="task-team-filter task-team-filter-caption">
+        <Users size={14} />
+        <span>Team:</span>
         <select
           aria-label="Lọc công việc theo team"
           value={taskTeamFilter}
@@ -595,35 +738,25 @@ export default function App() {
         >
           <option value="all">Tất cả team của bạn</option>
           <option value="common">Việc chung của doanh nghiệp</option>
-          {teams
-            .filter((t) => !t.archivedAt)
-            .map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
+          {activeTeams.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
         </select>
       </label>
     );
   }
-  function renderUnifiedAdd() {
-    return (
-      <div className="unified-add-menu">
-        <Button aria-expanded={addMenuOpen} onClick={() => setAddMenuOpen((open) => !open)}>
-          Thêm
-        </Button>
-        {addMenuOpen && (
-          <div className="unified-add-options" role="menu">
-            <button type="button" role="menuitem" onClick={() => { setAddMenuOpen(false); createFilteredTask(); }}>
-              <CheckCheck size={16} /> Công việc
-            </button>
-            <button type="button" role="menuitem" onClick={() => { setAddMenuOpen(false); setEventCreateRequest((value) => value + 1); }}>
-              <CalendarDays size={16} /> Lịch hẹn
-            </button>
-          </div>
-        )}
-      </div>
-    );
+  function asBoardEvent(event) {
+    return {
+      ...event,
+      kind: "event",
+      dueAt: event.dueAt || event.starts_at,
+      endsAt: event.endsAt || event.ends_at,
+      remindAt: event.remindAt || event.remind_at || null,
+      teamId: event.teamId ?? event.team_id ?? null,
+      status: event.status || "todo",
+    };
   }
   async function openTeamTask(options) {
     try {
@@ -652,8 +785,11 @@ export default function App() {
     setTrashTarget({ entityType, item });
   }
   async function afterTrashMoved() {
+    if (trashTarget?.entityType === "task" && aiTaskId === trashTarget.item.id) setAiTaskId(null);
     if (trashTarget?.entityType === "task" && page === `tasks/${trashTarget.item.id}`)
       go(taskReturnPage || (trashTarget.item.teamId ? `teams/${trashTarget.item.teamId}` : "tasks"));
+    if (trashTarget?.entityType === "customer" && page === `customers/${trashTarget.item.id}`)
+      go("customers");
     setTrashTarget(null);
     notify("Đã chuyển vào Thùng rác cấp 2. Bạn có thể khôi phục tại đó.");
     try { await refresh(); }
@@ -723,10 +859,22 @@ export default function App() {
     setWorkspaces(null);
   }
   function openTaskDetail(task) {
-    setTaskReturnPage(page.startsWith("teams/") ? page : "tasks");
+    setTaskReturnPage(page.startsWith("teams/") || ["inbox", "today", "upcoming", "week"].includes(page) ? page : "tasks");
     setModal(null);
     setNoticeOpen(false);
     go(`tasks/${task.id}`);
+  }
+  function openAiTask(task) {
+    if (page === "dashboard" && !dashboardItems.some(item => item.id === task.id)) go("tasks");
+    if (page === "tasks" && !filteredItems.some(item => item.id === task.id)) {
+      setSearch(""); setFilter("all"); setTaskTeamFilter("all");
+    }
+    setSelectedAiTaskId(task.id);
+    setAiTaskId(task.id);
+  }
+  function closeTaskDetail(task) {
+    if (aiTaskId) setAiTaskId(null);
+    else go(taskReturnPage || (task?.teamId ? `teams/${task.teamId}` : "tasks"));
   }
   function openUnifiedItem(item) {
     setNoticeOpen(false);
@@ -736,8 +884,14 @@ export default function App() {
       return;
     }
     if (item.kind === "event") {
-      setModal(null);
-      setEventToOpen(item.id);
+      const event = asBoardEvent(item);
+      setModal({
+        type: "task",
+        appointment: true,
+        item: event,
+        teamId: event.teamId,
+        readOnly: !event.canEdit || Boolean(me.workspace.suspendedAt),
+      });
       if (page !== "tasks") go("tasks");
       return;
     }
@@ -750,11 +904,43 @@ export default function App() {
     let path,
       method = "POST",
       payload = f;
+    if (modal.type === "task" && modal.appointment) {
+      const startsAt = new Date(f.dueAt);
+      const endsAt = new Date(f.endsAt);
+      const remindAt = f.remindAt ? new Date(f.remindAt) : null;
+      if (!Number.isFinite(startsAt.getTime()) || !Number.isFinite(endsAt.getTime()) || endsAt <= startsAt) {
+        notify("Thời gian kết thúc phải sau thời gian bắt đầu.", true);
+        return;
+      }
+      if (remindAt && (!Number.isFinite(remindAt.getTime()) || remindAt > startsAt)) {
+        notify("Thời gian nhắc phải trước giờ bắt đầu.", true);
+        return;
+      }
+      const id = modal.item?.kind === "event" ? modal.item.id : null;
+      const result = await action(() => api(`/calendar-events${id ? `/${id}` : ""}`, {
+        method: id ? "PUT" : "POST",
+        body: JSON.stringify({
+          title: String(f.title || "").trim(),
+          description: f.description || "",
+          teamId: taskTeamId || null,
+          status: f.status,
+          startsAt: startsAt.toISOString(),
+          endsAt: endsAt.toISOString(),
+          remindAt: remindAt ? remindAt.toISOString() : null,
+        }),
+      }), "Đã lưu thành công");
+      if (result) {
+        setModal(null);
+        await loadCalendarEvents();
+      }
+      return;
+    }
     if (modal.type === "task") {
       path = "/tasks" + (modal.item ? `/${modal.item.id}` : "");
       method = modal.item ? "PATCH" : "POST";
       payload = {
         ...f,
+        recurrenceOptions: JSON.parse(f.recurrenceOptions || '{}'),
         dueAt: f.dueAt ? new Date(f.dueAt).toISOString() : null,
         remindAt: f.remindAt ? new Date(f.remindAt).toISOString() : null,
         assigneeId: f.assigneeId || null,
@@ -914,100 +1100,214 @@ export default function App() {
       return <Admin page={page} me={me} api={api} go={go} />;
     return <AccessDenied onBack={() => go("dashboard")} />;
   }
-  const title =
-    navItems.find((n) => n[0] === page.split("/")[0])?.[1] ||
-    (page === "billing" ? "Gói dịch vụ" : "Tổng quan");
   return (
     <div className="app-shell">
-      <aside className={`sidebar ${mobile ? "open" : ""}`}>
-        <a
-          href="/dashboard"
-          className="brand"
-          onClick={(e) => {
-            e.preventDefault();
-            go("dashboard");
-          }}
-        >
-          <span className="brand-mark">
-            <Bell size={22} />
-            <i />
-          </span>
-          nhắc tôi<span className="brand-dot">.</span>
-        </a>
-        <button
-          className="workspace-switch"
-          aria-expanded={!!workspaces}
-          onClick={async () => {
-            if (workspaces) return setWorkspaces(null);
-            try {
-              setWorkspaces((await api("/workspaces")).workspaces);
-            } catch (e) {
-              notify(e.message, true);
-            }
-          }}
-        >
-          <span className="workspace-icon">
-            <Building2 size={19} />
-          </span>
-          <span>
-            <strong>{me.workspace.name}</strong>
-            <small>Không gian làm việc</small>
-          </span>
-          <ChevronDown size={14} />
-        </button>
-        {workspaces && (
-          <div className="workspace-menu">
-            <span>CHỌN KHÔNG GIAN</span>
-            {workspaces.map((w) => (
-              <button
-                key={w.id}
-                disabled={busy}
-                onClick={async () => {
-                  if (w.id !== me.workspace.id) {
-                    const result = await action(
-                      () =>
-                        api("/workspaces/switch", {
-                          method: "POST",
-                          body: JSON.stringify({ workspaceId: w.id }),
-                        }),
-                      "Đã chuyển không gian",
-                    );
-                    if (!result) return;
-                    setInvitation(null);
-                  }
-                  go("dashboard");
-                }}
-              >
-                <Building2 size={16} />
-                <strong>{w.name}</strong>
-                {w.id === me.workspace.id && <Check size={15} />}
-              </button>
-            ))}
-            <button onClick={() => go("team")}>
-              <Users size={16} /> Quản lý thành viên
-            </button>
+      <header className="topbar">
+        <div className="topbar-left">
+          <button type="button" className="mobile-toggle icon-button" aria-label="Mở menu điều hướng" aria-expanded={mobile} onClick={() => setMobile(value => !value)}><Menu size={20} /></button>
+          <div className="brand-box">
+            <a
+              href="/dashboard"
+              className="brand"
+              aria-label="Nhắc tôi — Tổng quan"
+              onClick={(e) => {
+                e.preventDefault();
+                go("dashboard");
+              }}
+            >
+              <span className="brand-mark">
+                <Bell size={22} />
+                <i />
+              </span>
+              <span className="brand-word">nhắc tôi<span className="brand-dot">.</span></span>
+            </a>
           </div>
-        )}
-        <div className="nav-caption">KHÔNG GIAN LÀM VIỆC</div>
-        <nav>
-          {navItems
-            .filter((n) => n[0] !== "finance" || canManage)
-            .map(([id, label, Icon]) => (
-              <button
-                key={id}
-                className={page.split("/")[0] === id ? "active" : ""}
-                onClick={() => go(id)}
-              >
-                <Icon size={19} />
-                <span>{label}</span>
-                {id === "tasks" && <b>{openTasks.length + calendarEvents.filter((event) => (event.status || "todo") !== "done").length}</b>}
+        </div>
+        <div className="top-actions">
+          <span className="today-label">
+            <CalendarDays size={15} />
+            {dateLabel(now, {
+              day: "2-digit",
+              month: "2-digit",
+              year: "numeric",
+            })}
+          </span>
+          <span className="top-divider" />
+          <button className="icon-button" aria-label="Cá nhân hóa giao diện" title="Cá nhân hóa giao diện" onClick={() => go(`appearance${appearanceTeamId ? `?team=${encodeURIComponent(appearanceTeamId)}` : ""}`)}><Palette size={19} /></button>
+          <ThemeToggleButton disabledReason={appearance.themeDisabledReason} />
+          <button
+            className="notification-trigger icon-button"
+            aria-label="Thông báo"
+            onClick={() => setNoticeOpen(!noticeOpen)}
+          >
+            <Bell size={19} />
+            {unread.length > 0 && <i />}
+          </button>
+          <button
+            className="icon-button"
+            title={`Tài khoản (${me.user.name})`}
+            aria-label="Tài khoản"
+            onClick={() => go("account")}
+            style={{ display: "inline-flex", padding: 0, border: "none", background: "transparent" }}
+          >
+            <Avatar name={me.user.name} small />
+          </button>
+          <button
+            className="icon-button"
+            title="Đăng xuất"
+            aria-label="Đăng xuất"
+            onClick={async () => {
+              await api("/auth/logout", { method: "POST" });
+              setMe(null);
+            }}
+          >
+            <LogOut size={19} />
+          </button>
+        </div>
+      </header>
+
+      <aside className={`sidebar ${sidebarHidden ? "hidden" : ""} ${mobile ? "open" : ""}`}>
+        <button
+          type="button"
+          className="sidebar-edge-toggle sidebar-toggle-btn sidebar-collapse-btn"
+          onClick={toggleSidebar}
+          title={sidebarHidden ? "Phóng to menu trái (Ctrl+B)" : "Thu nhỏ menu trái (Ctrl+B)"}
+          aria-label={sidebarHidden ? "Phóng to menu trái" : "Thu nhỏ menu trái"}
+        >
+          {sidebarHidden ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+        </button>
+        <div className="sidebar-inner">
+          <div className="workspace-switch-wrap">
+          <button
+            className="workspace-switch"
+            aria-expanded={!!workspaces}
+            onClick={async () => {
+              if (workspaces) return setWorkspaces(null);
+              try {
+                setWorkspaces((await api("/workspaces")).workspaces);
+              } catch (e) {
+                notify(e.message, true);
+              }
+            }}
+          >
+            <span className="workspace-icon" title={me.workspace.name}>
+              <Building2 size={16} />
+            </span>
+            <span className="workspace-details">
+              <strong>{me.workspace.name}</strong>
+              <small>Không gian làm việc</small>
+            </span>
+            <ChevronDown size={14} className="workspace-chevron" />
+          </button>
+          {workspaces && (
+            <div className="workspace-menu">
+              <span>CHỌN KHÔNG GIAN</span>
+              {workspaces.map((w) => (
+                <button
+                  key={w.id}
+                  disabled={busy}
+                  onClick={async () => {
+                    if (w.id !== me.workspace.id) {
+                      const result = await action(
+                        () =>
+                          api("/workspaces/switch", {
+                            method: "POST",
+                            body: JSON.stringify({ workspaceId: w.id }),
+                          }),
+                        "Đã chuyển không gian",
+                      );
+                      if (!result) return;
+                      setInvitation(null);
+                    }
+                    go("dashboard");
+                  }}
+                >
+                  <Building2 size={16} />
+                  <strong>{w.name}</strong>
+                  {w.id === me.workspace.id && <Check size={15} />}
+                </button>
+              ))}
+              <button onClick={() => go("teams")}>
+                <Users size={16} /> Quản lý thành viên
               </button>
-            ))}
+            </div>
+          )}
+        </div>
+        <nav className="sidebar-nav">
+          {navSections.map((section) => {
+            const sectionItems = navItems
+              .filter(([id]) => section.items.includes(id))
+              .filter(([id]) => !appearance.preferences.hiddenNav.includes(id))
+              .filter((n) => (n[0] !== "finance" || canManage) && n[0] !== "automations" && n[0] !== "templates" && n[0] !== "account")
+              .sort(([left], [right]) => appearance.preferences.navOrder.indexOf(left) - appearance.preferences.navOrder.indexOf(right));
+
+            if (sectionItems.length === 0) return null;
+
+            if (section.collapsible) {
+              const isSectionActive = sectionItems.some(([id]) => page.split("/")[0] === id);
+              const isOpen = utilitiesOpen || isSectionActive;
+
+              return (
+                <div key={section.id} className="nav-section nav-section-collapsible">
+                  <button
+                    type="button"
+                    className="nav-caption nav-section-toggle"
+                    onClick={() => setUtilitiesOpen(!isOpen)}
+                    aria-expanded={isOpen}
+                    title={section.label}
+                  >
+                    <span className="nav-caption-text">{section.label}</span>
+                    <ChevronDown size={13} className={`nav-chevron ${isOpen ? "open" : ""}`} />
+                  </button>
+                  {isOpen && (
+                    <div className="nav-group">
+                      {sectionItems.map(([id, label, Icon]) => (
+                        <button
+                          key={id}
+                          className={page.split("/")[0] === id ? "active" : ""}
+                          title={label}
+                          onClick={() => go(id)}
+                        >
+                          <Icon size={19} />
+                          <span>{label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
+            return (
+              <div key={section.id} className="nav-section">
+                {section.label && (
+                  <div className="nav-caption">
+                    <span className="nav-caption-text">{section.label}</span>
+                  </div>
+                )}
+                <div className="nav-group">
+                  {sectionItems.map(([id, label, Icon]) => (
+                    <button
+                      key={id}
+                      className={page.split("/")[0] === id ? "active" : ""}
+                      title={label}
+                      onClick={() => go(id)}
+                    >
+                      <Icon size={19} />
+                      <span>{label}</span>
+                      {id === "tasks" && <b>{openTasks.length + calendarEvents.filter((event) => (event.status || "todo") !== "done").length}</b>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
         </nav>
         <div className="sidebar-bottom">
           {me.user.isPlatformAdmin && (
             <button
               className="billing-nav"
+              title="Quản trị SaaS"
               onClick={() => go("admin/overview")}
             >
               <ShieldCheck size={18} /> Quản trị SaaS <ArrowUpRight size={14} />
@@ -1015,92 +1315,34 @@ export default function App() {
           )}
           <div className="plan-promo">
             <span className="promo-icon">
-              <Sparkles size={18} />
+              <Sparkles size={15} />
             </span>
             <strong>Cùng nhau, làm được nhiều hơn</strong>
             <p>Một nơi cho công việc, khách hàng và đội ngũ.</p>
-            <button onClick={() => go("billing")}>
-              Khám phá gói dịch vụ <ArrowUpRight size={15} />
+            <button type="button" onClick={() => go("billing")}>
+              <span>Khám phá gói dịch vụ</span> <ArrowUpRight size={13} />
             </button>
           </div>
-          <button
-            className={`billing-nav ${page === "billing" ? "selected" : ""}`}
-            onClick={() => go("billing")}
-          >
-            <CreditCard size={18} /> Gói dịch vụ
-          </button>
-          <div className="profile">
-            <Avatar name={me.user.name} />
-            <div>
-              <strong>{me.user.name}</strong>
-              <small>
-                {role === "owner"
-                  ? "Chủ không gian"
-                  : role === "admin"
-                    ? "Quản trị viên"
-                    : "Thành viên"}
-              </small>
-            </div>
-            <button
-              className="icon-button"
-              title="Đăng xuất"
-              onClick={async () => {
-                await api("/auth/logout", { method: "POST" });
-                setMe(null);
-              }}
-            >
-              <LogOut size={17} />
-            </button>
-          </div>
+
+        </div>
         </div>
       </aside>
       {mobile && (
         <div className="sidebar-scrim" onClick={() => setMobile(false)} />
       )}
-      <main className="main">
-        <header className="topbar">
-          <div className="breadcrumb">
-            <button
-              className="icon-button mobile-toggle"
-              onClick={() => setMobile(true)}
-              aria-label="Mở menu"
-            >
-              <Menu size={20} />
-            </button>
-            <span>Không gian làm việc</span>
-            <ChevronRight size={14} />
-            <strong>{title}</strong>
-          </div>
-          <div className="top-actions">
-            <span className="today-label">
-              <CalendarDays size={15} />
-              {dateLabel(now, {
-                day: "2-digit",
-                month: "2-digit",
-                year: "numeric",
-              })}
-            </span>
-            <span className="top-divider" />
-            <button
-              className="notification-trigger icon-button"
-              aria-label="Thông báo"
-              onClick={() => setNoticeOpen(!noticeOpen)}
-            >
-              <Bell size={19} />
-              {unread.length > 0 && <i />}
-            </button>
-            <Avatar name={me.user.name} small />
-          </div>
-        </header>
+      <main className={`main ${sidebarHidden ? "sidebar-collapsed" : ""}`}>
         <div className="page-content">
-          {page.split("/")[0] === "teams" && (
+          {page === "week" && <WeekCalendar key={me.workspace.id} api={api} me={me} refreshToken={data.tasks} onOpenTask={openTaskDetail} onOpenEvent={event => openUnifiedItem({ ...event, kind: event.service_id ? "renewal" : "event", dueAt: event.starts_at, endsAt: event.ends_at, teamId: event.team_id })} onChanged={refresh} />}
+          {["inbox", "today", "upcoming"].includes(page) && <PersonalTasks key={me.workspace.id} api={api} me={me} view={page} refreshToken={data.tasks} onOpen={openTaskDetail} onChanged={refresh} />}
+          {page === "appearance" && <Appearance key={`${me.workspace.id}/${appearanceTeamId}`} appearance={appearance} teams={teams} teamId={appearanceTeamId} go={go} canManage={canManage} />}
+          {(page.split("/")[0] === "teams" || (page.startsWith("tasks/") && taskReturnPage?.startsWith("teams/"))) && (
             <Teams
-              key={`${me.workspace.id}/${page}`}
+              key={`${me.workspace.id}/${page.startsWith("tasks/") ? taskReturnPage : page}`}
               api={api}
               go={go}
               me={me}
               members={members}
-              teamId={page.split("/")[1] || null}
+              teamId={(page.startsWith("tasks/") ? taskReturnPage : page).split("/")[1] || null}
               revision={teamsRevision}
               onChanged={refresh}
               onTaskMove={moveBoardTask}
@@ -1109,6 +1351,10 @@ export default function App() {
                 openTeamTask({ teamId, status, columnId })
               }
               onTaskOpen={openTaskDetail}
+              selectedTaskId={selectedAiTaskId}
+              openTasks={openTasks}
+              onInvite={canManage ? () => setModal({ type: "invite" }) : null}
+              invitation={invitation}
             />
           )}
           {page === "templates" && <TaskTemplates key={me.workspace.id} api={api} teams={teams} tasks={tasks} onOpen={openTaskDetail} onChanged={refresh}/>}
@@ -1123,45 +1369,35 @@ export default function App() {
                     ? { ...member, name: user.name, email: user.email } : member),
                 }));
               }} />
+              <WebPushSettings key={`push-${me.user.id}`} api={api} />
+              <ThemeSettings disabledReason={appearance.themeDisabledReason} />
+              <button className="button" onClick={() => go("appearance")}><Palette size={16} /> Cá nhân hóa toàn bộ giao diện</button>
               <GoogleAccount api={api} />
             </div>
           </>}
-          {page === "tasks" && (
-            <CalendarEvents
-              key={me.workspace.id}
-              api={api}
-              teams={teams}
-              events={calendarEvents}
-              embedded
-              openEventId={eventToOpen}
-              createRequest={eventCreateRequest}
-              onEventOpened={() => setEventToOpen(null)}
-              onOpenService={(serviceId) => {
-                setSelectedServiceId(serviceId);
-                go("services");
-              }}
-              onChanged={loadCalendarEvents}
-            />
-          )}
           {page === "transfer" && <><PageHeading title="Nhập / xuất bảng" subtitle="Di chuyển dữ liệu công việc giữa các bảng."/><BoardTransfer key={me.workspace.id} api={api} teams={teams} onChanged={refresh}/></>}
           {page === "automations" && <Automations api={api} me={me} teams={teams} tasks={tasks} members={members} onChanged={refresh}/>}
           {page === "services" && <Services key={me.workspace.id} api={api} me={me} members={members} customers={customers} teams={teams} selectedServiceId={selectedServiceId} onSelectedServiceOpened={() => setSelectedServiceId(null)} />}
           {page === "trash" && (
             <Trash key={me.workspace.id} api={api} me={me} onChanged={refresh} />
           )}
-          {page.startsWith("tasks/") && (
-            <TaskDetail
+          {page.startsWith("customers/") && (
+            <CustomerDetail
               key={`${me.workspace.id}/${page}`}
-              taskId={page.split("/")[1]}
-              api={api}
-              me={me}
-              members={members}
+              customerId={page.split("/")[1]}
               customers={customers}
-              revision={teamsRevision}
-              onChanged={refresh}
-              onEdit={(task) => openTeamTask({ item: task, readOnly: task.teamArchived })}
-              onTrash={(task) => requestTrash("task", task)}
-              onBack={(task) => go(taskReturnPage || (task?.teamId ? `teams/${task.teamId}` : "tasks"))}
+              tasks={tasks}
+              services={data.services || []}
+              transactions={data.transactions || []}
+              members={members}
+              teams={teams}
+              me={me}
+              onBack={() => go("customers")}
+              onEdit={(c) => setModal({ type: "customer", item: c })}
+              onTrash={(c) => requestTrash("customer", c)}
+              onTaskOpen={openTaskDetail}
+              onTaskCreate={(c) => setModal({ type: "task", customerId: c.id })}
+              onTaskComplete={complete}
             />
           )}
           {page.split("/")[0] === "tickets" && (
@@ -1194,7 +1430,7 @@ export default function App() {
                   </p>
                 </div>
                 <Button onClick={() => setModal({ type: "task" })}>
-                  Tạo công việc
+                  Thêm
                 </Button>
               </div>
               <div className="overview-strip">
@@ -1209,7 +1445,7 @@ export default function App() {
                 >
                   <span>Bạn có{" "}
                   <b>
-                    {dueToday.filter((t) => t.status !== "done").length} việc
+                    {dueTodayBoard.length} việc
                   </b>{" "}
                   cần hoàn thành hôm nay</span> <ArrowRight size={15} />
                 </button>
@@ -1218,8 +1454,8 @@ export default function App() {
                 <Stat
                   icon={CheckCheck}
                   color="green"
-                  title="Công việc đang mở"
-                  value={openTasks.length}
+                  title="Đang mở"
+                  value={openBoard.length}
                   foot={`${completed.length} công việc đã hoàn thành`}
                   onClick={() => go("tasks")}
                 />
@@ -1227,7 +1463,7 @@ export default function App() {
                   icon={CalendarDays}
                   color="blue"
                   title="Đến hạn hôm nay"
-                  value={dueToday.filter((t) => t.status !== "done").length}
+                  value={dueTodayBoard.length}
                   foot="Sắp xếp một ngày thật hiệu quả"
                   onClick={() => {
                     go("tasks");
@@ -1238,9 +1474,9 @@ export default function App() {
                   icon={Clock3}
                   color="orange"
                   title="Công việc quá hạn"
-                  value={overdue.length}
+                  value={overdueBoard.length}
                   foot={
-                    overdue.length
+                    overdueBoard.length
                       ? "Cần bạn dành chút thời gian"
                       : "Mọi việc đang đúng tiến độ"
                   }
@@ -1259,21 +1495,21 @@ export default function App() {
                       ? `Chi trong tháng: ${money(expense)}`
                       : "Cùng cộng tác trong không gian"
                   }
-                  onClick={() => go(canManage ? "finance" : "team")}
+                  onClick={() => go(canManage ? "finance" : "teams")}
                 />
               </div>
               <div className="dashboard-grid">
-                <section className="panel today-panel">
+                <section className="panel today-panel dashboard-board-span">
                   <div className="panel-head">
                     <div>
                       <h2>
-                        Công việc cần chú ý{" "}
-                        <span className="count-pill">{openTasks.length}</span>
+                        Bảng công việc{" "}
+                        <span className="count-pill">{dashboardItems.length}</span>
                       </h2>
-                      <p>Một việc hoàn thành, một điều nhẹ lòng.</p>
+                      <p>Công việc, lịch hẹn và lịch nhắc trên cùng một bảng.</p>
                     </div>
                     <button className="text-button" onClick={() => go("tasks")}>
-                      Xem tất cả <ArrowRight size={15} />
+                      Mở trang bảng <ArrowRight size={15} />
                     </button>
                   </div>
                   <div className="small-tabs">
@@ -1281,7 +1517,7 @@ export default function App() {
                       className={filter === "all" ? "active" : ""}
                       onClick={() => setFilter("all")}
                     >
-                      Sắp đến hạn
+                      Đang mở
                     </button>
                     <button
                       className={filter === "today" ? "active" : ""}
@@ -1289,109 +1525,29 @@ export default function App() {
                     >
                       Hôm nay{" "}
                       <span>
-                        {dueToday.filter((t) => t.status !== "done").length}
+                        {dueTodayBoard.length}
                       </span>
                     </button>
                     <button
                       className={filter === "overdue" ? "active" : ""}
                       onClick={() => setFilter("overdue")}
                     >
-                      Quá hạn <span>{overdue.length}</span>
+                      Quá hạn <span>{overdueBoard.length}</span>
                     </button>
                   </div>
-                  <div className="task-table compact">
-                    {(filter === "overdue"
-                      ? overdue
-                      : filter === "today"
-                        ? dueToday.filter((t) => t.status !== "done")
-                        : openTasks
-                    )
-                      .sort(
-                        (a, b) =>
-                          new Date(a.dueAt || "2099-01-01") -
-                          new Date(b.dueAt || "2099-01-01"),
-                      )
-                      .slice(0, 5)
-                      .map((t) => (
-                        <TaskRow key={t.id} task={t} compact />
-                      ))}
-                    {!(
-                      filter === "overdue"
-                        ? overdue
-                        : filter === "today"
-                          ? dueToday.filter((t) => t.status !== "done")
-                          : openTasks
-                    ).length && (
-                      <Empty
-                        title="Mọi việc đã được sắp xếp"
-                        text="Bạn có thể thêm công việc và đặt lịch nhắc ngay tại đây."
-                      />
-                    )}
-                  </div>
-                  <button
-                    className="add-inline"
-                    onClick={() => setModal({ type: "task" })}
-                  >
-                    <Plus size={16} /> Thêm một công việc mới
-                  </button>
-                </section>
-                <section className="panel reminder-panel">
-                  <div className="panel-head">
-                    <div>
-                      <h2>
-                        <Bell size={17} /> Lịch nhắc sắp tới
-                      </h2>
-                      <p>Đúng lúc, đúng việc.</p>
-                    </div>
-                    <span className="soft-icon">
-                      <CalendarDays size={18} />
-                    </span>
-                  </div>
-                  <div className="reminder-timeline">
-                    {upcomingReminders.map((item, i) => (
-                        <button
-                          key={`${item.kind}:${item.id}`}
-                          className="timeline-item"
-                          onClick={() => openUnifiedItem(item)}
-                        >
-                          <span className={`timeline-dot dot-${i % 3}`} />
-                          <div>
-                            <small>
-                              {isToday(item.remindAt)
-                                ? "HÔM NAY"
-                                : dateLabel(item.remindAt)}{" "}
-                              <span>
-                                ·{" "}
-                                {new Date(item.remindAt).toLocaleTimeString(
-                                  "vi-VN",
-                                  { hour: "2-digit", minute: "2-digit" },
-                                )}
-                              </span>
-                            </small>
-                            <strong>{item.title}</strong>
-                            <span className="timeline-category">
-                              {item.category || (item.kind === "event" ? "Lịch hẹn" : "Công việc")}
-                              {item.kind === "task" && item.recurrence !== "none" && item.recurrence && (
-                                <Repeat2 size={12} />
-                              )}
-                            </span>
-                          </div>
-                          <ChevronRight size={14} />
-                        </button>
-                      ))}
-                    {!upcomingReminders.length && (
-                      <Empty
-                        title="Chưa có lịch nhắc"
-                        text="Đặt thời điểm nhắc khi tạo công việc hoặc lịch hẹn."
-                      />
-                    )}
-                  </div>
-                  <button
-                    className="reminder-footer"
-                    onClick={() => go("tasks")}
-                  >
-                    Mở bảng công việc <ArrowUpRight size={16} />
-                  </button>
+                  <TaskBoard
+                    selectedTaskId={selectedAiTaskId}
+                    scopeKey={`dashboard/${me.workspace.id}/${filter}`}
+                    tasks={dashboardItems}
+                    members={members}
+                    readOnly={Boolean(me.workspace.suspendedAt)}
+                    onOpen={openUnifiedItem}
+                    onCreate={(status) => setModal({ type: "task", status })}
+                    onMove={moveBoardItem}
+                    canMove={(item) => item.kind === "task" ? !item.teamArchived : item.kind === "event" && item.canEdit}
+                    onTrash={(item) => requestTrash("task", item)}
+                    canTrash={(item) => item.kind === "task"}
+                  />
                 </section>
                 <section className="panel cash-panel">
                   <div className="panel-head">
@@ -1503,7 +1659,7 @@ export default function App() {
                       <h2>Nhịp làm việc của đội ngũ</h2>
                       <p>Cùng nhau giữ mọi việc đúng hẹn.</p>
                     </div>
-                    <button className="text-button" onClick={() => go("team")}>
+                    <button className="text-button" onClick={() => go("teams")}>
                       Chi tiết <ArrowRight size={15} />
                     </button>
                   </div>
@@ -1535,14 +1691,13 @@ export default function App() {
               </div>
             </>
           )}
-          {page === "tasks" && (
+          {(page === "tasks" || (page.startsWith("tasks/") && (!taskReturnPage || taskReturnPage === "tasks"))) && (
             <>
               <PageHeading
                 title="Công việc"
                 subtitle="Công việc, lịch hẹn và lịch nhắc trên cùng một bảng."
-                action={renderUnifiedAdd()}
               />
-              <div className="toolbar">
+              <div className="toolbar task-toolbar">
                 <div className="filter-tabs">
                   {[
                     ["all", "Tất cả"],
@@ -1561,26 +1716,30 @@ export default function App() {
                     </button>
                   ))}
                 </div>
-              </div>
-              <div className="task-search-toolbar">
                 <SearchBox
                   value={search}
                   setValue={setSearch}
                   placeholder="Tìm công việc, lịch hẹn, nhóm dịch vụ…"
                 />
-                {renderTaskTeamFilter()}
               </div>
-              <TaskBoard
+              <WorkflowBoard
+                selectedTaskId={selectedAiTaskId}
+                api={api}
+                teamId={teams.some((team) => team.id === taskTeamFilter) ? taskTeamFilter : null}
                 scopeKey={`${me.workspace.id}/${taskTeamFilter}`}
                 tasks={filteredItems}
                 members={members}
+                placeByStatus
+                countNoun="mục"
+                captionRight={renderTaskTeamFilter()}
                 readOnly={Boolean(me.workspace.suspendedAt)}
                 onOpen={openUnifiedItem}
                 onCreate={createFilteredTask}
-                onMove={moveBoardItem}
-                canMove={(item) => item.kind === "task" ? !item.teamArchived : item.kind === "event" && item.canEdit}
+                onStatusMove={moveBoardItem}
                 onTrash={(item) => requestTrash("task", item)}
                 canTrash={(item) => item.kind === "task"}
+                canMove={(item) => item.kind === "task" ? !item.teamArchived : item.kind === "event" && item.canEdit}
+                onChanged={refresh}
               />
             </>
           )}
@@ -1611,7 +1770,7 @@ export default function App() {
                     <button
                       className="panel customer-card"
                       key={c.id}
-                      onClick={() => setModal({ type: "customer", item: c })}
+                      onClick={() => go(`customers/${c.id}`)}
                     >
                       <div>
                         <Avatar name={c.name} index={i} />
@@ -1756,89 +1915,6 @@ export default function App() {
               </p>
             </>
           )}
-          {page === "team" && (
-            <>
-              <PageHeading
-                title="Thành viên doanh nghiệp"
-                subtitle={`${me.workspace.name} · ${members.length} thành viên cùng cộng tác`}
-                action={
-                  canManage && (
-                    <Button onClick={() => setModal({ type: "invite" })}>
-                      Mời thành viên
-                    </Button>
-                  )
-                }
-              />
-              <section className="panel">
-                <div className="panel-head">
-                  <h2>Thành viên không gian</h2>
-                  <span className="tag priority-low">Không gian riêng tư</span>
-                </div>
-                {members.map((m, i) => (
-                  <div className="team-row" key={m.id}>
-                    <Avatar name={m.name} index={i} />
-                    <div>
-                      <strong>
-                        {m.name} {m.id === me.user.id && <small>(Bạn)</small>}
-                      </strong>
-                      <span>{m.email}</span>
-                    </div>
-                    <span className={`role-tag ${m.role}`}>
-                      {m.role === "owner"
-                        ? "Chủ không gian"
-                        : m.role === "admin"
-                          ? "Quản trị viên"
-                          : "Thành viên"}
-                    </span>
-                    <span className="team-task-count">
-                      {openTasks.filter((t) => t.assigneeId === m.id).length}{" "}
-                      việc đang mở
-                    </span>
-                  </div>
-                ))}
-              </section>
-              <div className="info-card">
-                <ShieldCheck size={22} />
-                <div>
-                  <strong>Cộng tác với quyền truy cập phù hợp</strong>
-                  <p>
-                    Thành viên có thể tham gia nhiều team. Công việc theo team
-                    chỉ hiển thị với người trong team và quản trị doanh nghiệp.
-                    Quản trị viên quản lý team, thu chi và lời mời; chủ doanh
-                    nghiệp quản lý thuê bao.
-                  </p>
-                </div>
-              </div>
-              {invitation && (
-                <div className="invite-result">
-                  <h3>Liên kết mời đã sẵn sàng</h3>
-                  <p>
-                    Sao chép và gửi riêng cho người được mời. Hệ thống chưa gửi
-                    email.
-                  </p>
-                  <div>
-                    <input readOnly value={invitation} />
-                    <Button
-                      icon={Copy}
-                      onClick={() =>
-                        navigator.clipboard
-                          .writeText(invitation)
-                          .then(() => notify("Đã sao chép liên kết"))
-                          .catch(() =>
-                            notify(
-                              "Hãy sao chép liên kết trong ô bên cạnh.",
-                              true,
-                            ),
-                          )
-                      }
-                    >
-                      Sao chép
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
           {page === "billing" && (
             <>
               <PageHeading
@@ -1901,33 +1977,20 @@ export default function App() {
               ) : (
                 <>
                   <div className="pricing-grid">
-                    {billing.plans.map((p, i) => (
+                    {billing.plans.length === 0 && <p className="empty">Hiện chưa có gói đang bán. Vui lòng liên hệ hỗ trợ để gia hạn.</p>}
+                    {billing.plans.map((p) => (
                       <section
-                        className={`pricing-card ${i === 1 ? "recommended" : ""}`}
+                        className={`pricing-card ${p.id === "team" ? "recommended" : ""}`}
                         key={p.id}
                       >
-                        {i === 1 && (
+                        {p.id === "team" && (
                           <div className="recommended-label">
                             DÀNH CHO ĐỘI NGŨ ĐANG PHÁT TRIỂN
                           </div>
                         )}
-                        <div className="plan-icon">
-                          {i === 0 ? (
-                            <Bell />
-                          ) : i === 1 ? (
-                            <Users />
-                          ) : (
-                            <Building2 />
-                          )}
-                        </div>
+                        <div className="plan-icon"><Users /></div>
                         <h2>{p.name}</h2>
-                        <p>
-                          {i === 0
-                            ? "Khởi đầu gọn gàng, làm việc chủ động."
-                            : i === 1
-                              ? "Kết nối đội ngũ, chăm sóc khách hàng."
-                              : "Vận hành nhiều hơn, quản lý tập trung."}
-                        </p>
+                        <p>Dành cho đội ngũ tối đa {p.memberLimit.toLocaleString("vi-VN")} thành viên.</p>
                         <div className="plan-price">
                           {money(
                             cycle === "monthly"
@@ -1937,7 +2000,7 @@ export default function App() {
                           <span>/{cycle === "monthly" ? "tháng" : "năm"}</span>
                         </div>
                         <Button
-                          secondary={i !== 1}
+                          secondary={p.id !== "team"}
                           icon={ArrowUpRight}
                           disabled={
                             busy || role !== "owner" || !billing.configured
@@ -2059,6 +2122,44 @@ export default function App() {
           </footer>
         </div>
       </main>
+      {!page.startsWith("admin/") && <AssistantChat
+        key={`${me.user.id}/${me.workspace.id}`}
+        api={api}
+        me={me}
+        hidden={Boolean(modal) || page.startsWith("tasks/") || noticeOpen}
+        onOpenTask={openAiTask}
+        selectedTaskId={selectedAiTaskId}
+        inactive={Boolean(aiTaskId)}
+        onDraft={draft => { setTaskTeamId(""); setModal({ type: "task", draft }); }}
+        onSettings={() => go("admin/settings")}
+      />}
+      {(page.startsWith("tasks/") || aiTaskId) && (
+        <div
+          className="task-detail-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeTaskDetail();
+          }}
+        >
+          <div className="task-detail-modal" role="dialog" aria-modal="true" aria-label="Chi tiết công việc" tabIndex={-1}>
+            <button type="button" className="task-detail-modal-close icon-button" aria-label="Đóng chi tiết công việc" onClick={closeTaskDetail}>
+              <X size={18} />
+            </button>
+            <TaskDetail
+              key={`${me.workspace.id}/${aiTaskId || page}`}
+              taskId={aiTaskId || page.split("/")[1]}
+              api={api}
+              me={me}
+              members={members}
+              customers={customers}
+              revision={teamsRevision}
+              onChanged={refresh}
+              onEdit={(task) => openTeamTask({ item: task, readOnly: task.teamArchived })}
+              onTrash={(task) => requestTrash("task", task)}
+              onBack={closeTaskDetail}
+            />
+          </div>
+        </div>
+      )}
       {noticeOpen && (
         <>
           <div className="drawer-scrim" onClick={() => setNoticeOpen(false)} />
@@ -2089,8 +2190,16 @@ export default function App() {
                       setSelectedServiceId(n.serviceId || null);
                       go("services");
                     } else if (n.entityType === "calendar_event" && n.entityId) {
-                      setEventToOpen(n.entityId);
-                      go("tasks");
+                      const known = calendarEvents.find((event) => String(event.id) === String(n.entityId));
+                      if (known) openUnifiedItem(asBoardEvent(known));
+                      else {
+                        try {
+                          const result = await api(`/calendar-events/${encodeURIComponent(n.entityId)}`);
+                          openUnifiedItem(asBoardEvent(result.event));
+                        } catch (error) {
+                          notify(error.message, true);
+                        }
+                      }
                     } else {
                       const t = tasks.find((t) => t.id === n.taskId);
                       if (t) openTaskDetail(t);
@@ -2144,8 +2253,8 @@ export default function App() {
                 <h2 id="modal-title">
                   {modal.type === "task"
                     ? modal.item
-                      ? "Chi tiết công việc"
-                      : "Tạo công việc mới"
+                      ? "Chi tiết"
+                      : "Thêm vào bảng"
                     : modal.type === "customer"
                       ? modal.item
                         ? "Thông tin khách hàng"
@@ -2172,17 +2281,18 @@ export default function App() {
                 >
                   {modal.readOnly && (
                     <p className="hint">
-                      Team đã lưu trữ. Bạn có thể xem lịch sử công việc; khôi
-                      phục team để tiếp tục cập nhật.
+                      {modal.appointment
+                        ? "Mục này chỉ được xem."
+                        : "Team đã lưu trữ. Bạn có thể xem lịch sử công việc; khôi phục team để tiếp tục cập nhật."}
                     </p>
                   )}
-                  <Field label="Tên công việc *">
+                  <Field label="Tên *">
                     <input
                       autoFocus
                       required
                       name="title"
                       maxLength={200}
-                      defaultValue={modal.item?.title}
+                      defaultValue={modal.item?.title || modal.draft?.title}
                       placeholder="Ví dụ: Nhắc khách gia hạn dịch vụ"
                     />
                   </Field>
@@ -2190,11 +2300,22 @@ export default function App() {
                     <textarea
                       name="description"
                       rows={3}
-                      defaultValue={modal.item?.description}
+                      defaultValue={modal.item?.description || modal.draft?.description}
                       placeholder="Thông tin cần nhớ, yêu cầu hoặc ghi chú…"
                     />
                   </Field>
                   <div className="form-grid">
+                    {!modal.item && (
+                      <Field label="Loại">
+                        <select
+                          value={modal.appointment ? "event" : "task"}
+                          onChange={(e) => setModal((current) => ({ ...current, appointment: e.target.value === "event", teamId: taskTeamId }))}
+                        >
+                          <option value="task">Công việc</option>
+                          <option value="event">Lịch hẹn</option>
+                        </select>
+                      </Field>
+                    )}
                     <Field label="Team phụ trách">
                       <select
                         name="teamId"
@@ -2227,30 +2348,42 @@ export default function App() {
                         ))}
                       </select>
                     </Field>
-                    <Field label="Mức ưu tiên">
-                      <select
-                        name="priority"
-                        defaultValue={modal.item?.priority || "medium"}
-                      >
-                        {Object.entries(priorities).map(([id, name]) => (
-                          <option key={id} value={id}>
-                            {name}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
-                    <Field label="Hạn hoàn thành *">
+                    {!modal.appointment && (
+                      <Field label="Mức ưu tiên">
+                        <select
+                          name="priority"
+                          defaultValue={modal.item?.priority || modal.draft?.priority || "medium"}
+                        >
+                          {Object.entries(priorities).map(([id, name]) => (
+                            <option key={id} value={id}>
+                              {name}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                    )}
+                    <Field label={modal.appointment ? "Bắt đầu *" : "Hạn hoàn thành (không bắt buộc)"}>
                       <input
-                        required
+                        required={modal.appointment}
                         type="datetime-local"
                         name="dueAt"
                         defaultValue={
                           modal.item?.dueAt
                             ? localInput(modal.item.dueAt)
-                            : `${modal.date || today}T17:00`
+                            : modal.draft?.dueAt ? localInput(modal.draft.dueAt) : modal.appointment ? `${modal.date || today}T17:00` : ""
                         }
                       />
                     </Field>
+                    {modal.appointment && (
+                      <Field label="Kết thúc *">
+                        <input
+                          required
+                          type="datetime-local"
+                          name="endsAt"
+                          defaultValue={modal.item?.endsAt ? localInput(modal.item.endsAt) : ""}
+                        />
+                      </Field>
+                    )}
                     <Field label="Nhắc vào lúc">
                       <input
                         type="datetime-local"
@@ -2262,6 +2395,7 @@ export default function App() {
                         }
                       />
                     </Field>
+                    {!modal.appointment && <>
                     <Field label="Người phụ trách">
                       <select
                         key={taskTeamId}
@@ -2282,7 +2416,7 @@ export default function App() {
                     <Field label="Khách hàng">
                       <select
                         name="customerId"
-                        defaultValue={modal.item?.customerId || ""}
+                        defaultValue={modal.item?.customerId || modal.customerId || ""}
                       >
                         <option value="">Không gắn khách hàng</option>
                         {customers.map((c) => (
@@ -2300,17 +2434,8 @@ export default function App() {
                         maxLength={100}
                       />
                     </Field>
-                    <Field label="Lặp lại sau khi hoàn thành">
-                      <select
-                        name="recurrence"
-                        defaultValue={modal.item?.recurrence || "none"}
-                      >
-                        <option value="none">Không lặp lại</option>
-                        <option value="daily">Hàng ngày</option>
-                        <option value="weekly">Hàng tuần</option>
-                        <option value="monthly">Hàng tháng</option>
-                      </select>
-                    </Field>
+                    <RecurrenceFields task={modal.item} />
+                    </>}
                   </div>
                   <p className="hint">
                     <Bell size={14} /> Lịch nhắc được gửi trong ứng dụng. Email
@@ -2459,9 +2584,23 @@ export default function App() {
                     icon={Trash2}
                     type="button"
                     disabled={busy}
-                    onClick={() => requestTrash(modal.type, modal.item)}
+                    onClick={async () => {
+                      if (modal.item?.kind === "event") {
+                        if (!window.confirm(`Xóa “${modal.item.title}”?`)) return;
+                        const result = await action(
+                          () => api(`/calendar-events/${encodeURIComponent(modal.item.id)}`, { method: "DELETE" }),
+                          "Đã xóa lịch hẹn",
+                        );
+                        if (result) {
+                          setModal(null);
+                          await loadCalendarEvents();
+                        }
+                        return;
+                      }
+                      requestTrash(modal.type, modal.item);
+                    }}
                   >
-                    Xóa
+                    {modal.item?.kind === "event" ? "Xóa lịch hẹn" : "Xóa"}
                   </Button>
                 )}
                 <Button
@@ -2588,6 +2727,9 @@ function Auth({ onLogin, onReset }) {
   const router = useRouter();
   const pathname = usePathname();
   const token = new URLSearchParams(location.search).get("invite");
+  const pushId = new URLSearchParams(location.search).get("notification");
+  const afterLoginPath = pushId && /^[a-zA-Z0-9_-]{1,200}$/.test(pushId)
+    ? `/dashboard?notification=${encodeURIComponent(pushId)}` : '/dashboard';
   const routeMode = authModeForPath(pathname, token);
   const [googleEnabled, setGoogleEnabled] = useState(false);
   const [mode, setMode] = useState(routeMode);
@@ -2595,14 +2737,63 @@ function Auth({ onLogin, onReset }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [resetEmail, setResetEmail] = useState("");
-  const [loginEmail, setLoginEmail] = useState("");
+  const [rememberMe, setRememberMe] = useState(() => {
+    try {
+      const saved = localStorage.getItem("nhactoi_remember_me");
+      return saved === null ? true : saved === "true";
+    } catch {
+      return true;
+    }
+  });
+  const [loginEmail, setLoginEmail] = useState(() => {
+    try {
+      const savedRemember = localStorage.getItem("nhactoi_remember_me");
+      if (savedRemember !== "false") {
+        return localStorage.getItem("nhactoi_remember_email") || "";
+      }
+      return "";
+    } catch {
+      return "";
+    }
+  });
   const [cooldown, setCooldown] = useState(0);
+  const [devAccounts, setDevAccounts] = useState([]);
+  const [devMenuOpen, setDevMenuOpen] = useState(false);
 
   useEffect(() => {
     api("/auth/google/config")
       .then((data) => setGoogleEnabled(data.enabled))
       .catch(() => {});
+    api("/auth/dev-accounts")
+      .then((data) => {
+        if (data.enabled && Array.isArray(data.accounts)) {
+          setDevAccounts(data.accounts);
+        }
+      })
+      .catch(() => {});
   }, []);
+
+  async function handleDevLogin(email) {
+    if (busy) return;
+    setError("");
+    setBusy(true);
+    try {
+      await api("/auth/dev-login", {
+        method: "POST",
+        body: JSON.stringify({ email }),
+      });
+      try {
+        localStorage.setItem("nhactoi_remember_me", "true");
+        localStorage.setItem("nhactoi_remember_email", email);
+      } catch {}
+      router.replace(afterLoginPath);
+      await onLogin();
+    } catch (err) {
+      setError(err.message || "Đăng nhập nhanh thất bại.");
+    } finally {
+      setBusy(false);
+    }
+  }
   useEffect(() => {
     setMode(routeMode);
     setError("");
@@ -2700,11 +2891,23 @@ function Auth({ onLogin, onReset }) {
       }
       if (mode === "register" && body.password !== body.confirmPassword)
         throw new Error("Mật khẩu nhập lại không khớp.");
+      const remember = mode === "login" ? rememberMe : true;
       await api(mode === "invite" ? "/invitations/accept" : `/auth/${mode}`, {
         method: "POST",
-        body: JSON.stringify({ ...body, ...(token ? { token } : {}) }),
+        body: JSON.stringify({ ...body, remember, ...(token ? { token } : {}) }),
       });
-      if (!token || mode === "invite") router.replace("/dashboard");
+      if (mode === "login") {
+        try {
+          if (rememberMe) {
+            localStorage.setItem("nhactoi_remember_me", "true");
+            localStorage.setItem("nhactoi_remember_email", String(body.email || loginEmail).trim());
+          } else {
+            localStorage.setItem("nhactoi_remember_me", "false");
+            localStorage.removeItem("nhactoi_remember_email");
+          }
+        } catch {}
+      }
+      if (!token || mode === "invite") router.replace(afterLoginPath);
       await onLogin();
     } catch (reason) {
       setError(reason.message || "Không thể thực hiện. Vui lòng thử lại.");
@@ -2736,6 +2939,7 @@ function Auth({ onLogin, onReset }) {
 
   return (
     <div className="auth-page">
+      <ThemeToggle className="auth-theme-toggle" />
       <section className="auth-story">
         <a
           className="brand"
@@ -2913,6 +3117,28 @@ function Auth({ onLogin, onReset }) {
                 />
               </Field>
             )}
+            {mode === "login" && (
+              <div className="auth-row-options">
+                <label className="auth-remember">
+                  <input
+                    disabled={busy}
+                    type="checkbox"
+                    name="remember"
+                    checked={rememberMe}
+                    onChange={(event) => setRememberMe(event.target.checked)}
+                  />
+                  <span>Ghi nhớ đăng nhập</span>
+                </label>
+                <button
+                  type="button"
+                  className="auth-forgot-link"
+                  disabled={busy}
+                  onClick={() => navigateMode("forgot")}
+                >
+                  Quên mật khẩu?
+                </button>
+              </div>
+            )}
             {mode === "register" && (
               <>
                 <Field label="Nhập lại mật khẩu">
@@ -2971,13 +3197,7 @@ function Auth({ onLogin, onReset }) {
               </button>
             </p>
           )}
-          {mode === "login" && (
-            <p className="auth-switch">
-              <button type="button" disabled={busy} onClick={() => navigateMode("forgot")}>
-                Quên mật khẩu?
-              </button>
-            </p>
-          )}
+
           {(mode === "forgot" || mode === "reset") && (
             <p className="auth-switch">
               <button type="button" disabled={busy} onClick={() => navigateMode("login")}>
@@ -3011,6 +3231,57 @@ function Auth({ onLogin, onReset }) {
             <a className="button secondary" href="/api/auth/google/start">
               Tiếp tục với Google
             </a>
+          )}
+          {devAccounts.length > 0 && mode === "login" && (
+            <div className="dev-quick-login-wrap">
+              <div className="dev-quick-login-divider">
+                <span>Môi trường Dev</span>
+              </div>
+              <button
+                type="button"
+                className={`dev-quick-login-btn ${devMenuOpen ? "active" : ""}`}
+                disabled={busy}
+                onClick={() => setDevMenuOpen((prev) => !prev)}
+                aria-expanded={devMenuOpen}
+              >
+                <Zap size={15} className="dev-zap-icon" />
+                <span>Đăng nhập nhanh (Dev)</span>
+                <ChevronDown size={14} className={`dev-chevron ${devMenuOpen ? "open" : ""}`} />
+              </button>
+              {devMenuOpen && (
+                <div className="dev-accounts-panel">
+                  <div className="dev-accounts-hint">
+                    Chọn tài khoản tạo sẵn để vào nhanh:
+                  </div>
+                  <div className="dev-accounts-list">
+                    {devAccounts.map((acc) => (
+                      <button
+                        key={acc.email}
+                        type="button"
+                        className="dev-account-card"
+                        disabled={busy}
+                        onClick={() => handleDevLogin(acc.email)}
+                        title={`Đăng nhập với ${acc.name} (${acc.role})`}
+                      >
+                        <span className={`dev-account-avatar ${acc.roleKey || ""}`}>
+                          {acc.name.charAt(0)}
+                        </span>
+                        <div className="dev-account-details">
+                          <div className="dev-account-name-row">
+                            <strong className="dev-account-name">{acc.name}</strong>
+                            <span className={`dev-badge dev-badge-${acc.roleKey || "member"}`}>
+                              {acc.badge || acc.role}
+                            </span>
+                          </div>
+                          <span className="dev-account-email">{acc.email}</span>
+                        </div>
+                        <ArrowRight size={14} className="dev-account-arrow" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
           <div className="auth-security">
             <ShieldCheck size={15} /> Dữ liệu riêng cho từng không gian làm việc

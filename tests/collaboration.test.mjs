@@ -13,3 +13,18 @@ test('task watchers and mentions notify authorized recipients, comments preserve
  const count=s.db.prepare('SELECT COUNT(*) n FROM task_comments').get().n;assert.equal((await call(s,path+'/comments',{method:'POST',cookie:owner.cookie,body:{body:'wrong recipient',mentionIds:[outsider.user.id]}})).status,400);assert.equal(s.db.prepare('SELECT COUNT(*) n FROM task_comments').get().n,count);
  assert.equal((await call(s,path+'/comments/'+id,{method:'DELETE',cookie:owner.cookie})).status,200);assert.equal(s.db.prepare('SELECT COUNT(*) n FROM comment_reactions').get().n,0);
 });
+test('mention list follows the team assigned to the current board',async t=>{
+ const s=await boot(t),owner=await user(s,'owner-board@example.test'),mate=await user(s,'mate-board@example.test'),admin=await user(s,'admin-board@example.test');
+ addMember(s,owner,mate);addMember(s,owner,admin);
+ s.db.prepare("UPDATE workspace_members SET role='admin' WHERE user_id=?").run(admin.user.id);
+ const team=await call(s,'/teams',{method:'POST',cookie:owner.cookie,body:{name:'Kinh doanh',description:'',color:'green',members:[{userId:owner.user.id,role:'lead'},{userId:mate.user.id,role:'member'}]}});
+ assert.equal(team.status,201,JSON.stringify(team.body));
+ const card=await call(s,'/tasks',{method:'POST',cookie:owner.cookie,body:{title:'Việc trong team',dueAt:'2030-01-01T10:00:00Z',teamId:team.body.team.id}});
+ assert.equal(card.status,201,JSON.stringify(card.body));
+ const info=await call(s,`/tasks/${card.body.task.id}/collaboration`,{cookie:owner.cookie});
+ assert.equal(info.status,200,JSON.stringify(info.body));
+ assert.deepEqual(info.body.members.map(m=>m.id).sort(),[owner.user.id,mate.user.id].sort());
+ const shared=await task(s,owner,'Việc chung');
+ const common=await call(s,`/tasks/${shared.id}/collaboration`,{cookie:owner.cookie});
+ assert.deepEqual(common.body.members.map(m=>m.id).sort(),[owner.user.id,mate.user.id,admin.user.id].sort());
+});

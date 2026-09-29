@@ -48,6 +48,7 @@ export function Notifications({ onTask }: { onTask: (id: string) => void }) {
       if (n.taskId) onTask(n.taskId);
       else if (n.entityType === "calendar_event" && n.entityId)
         router.push({ pathname: "/event/[id]", params: { id: n.entityId } });
+      else if (n.entityType === "service" && n.entityId) router.push({ pathname: "/service/[id]", params: { id: n.entityId } });
       else setStatus("Thông báo này thuộc chức năng hiện có trên web.");
     } catch (e) {
       setError(errorMessage(e));

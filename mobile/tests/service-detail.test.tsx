@@ -1,0 +1,20 @@
+import React from 'react';
+import {cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react-native';
+import {ServiceDetail} from '../src/features/ServiceDetail';
+import {useResource,useSession} from '../src/core/session';
+jest.mock('expo-router',()=>({router:{back:jest.fn(),canGoBack:()=>true,replace:jest.fn()}}));
+jest.mock('../src/core/session',()=>({useResource:jest.fn(),useSession:jest.fn(),refreshData:jest.fn()}));
+jest.mock('../src/core/api',()=>({errorMessage:(e:unknown)=>e instanceof Error?e.message:'Lỗi'}));
+jest.mock('../src/ui/frames',()=>({HingeSafe:({children}:{children:React.ReactNode})=>children}));
+const api=jest.fn();let cached=false;
+beforeEach(()=>{cached=false;api.mockReset();api.mockResolvedValue({ok:true});jest.mocked(useSession).mockReturnValue({api,writable:true} as unknown as ReturnType<typeof useSession>);
+ jest.mocked(useResource).mockImplementation(()=>({data:{cached,value:{service:{id:'service-1',name:'Tên miền',provider:'Nhà cung cấp',nextDate:'2026-10-01',amount:200000,actualPaid:null,archivedAt:null,canEdit:true,note:'',cycle:'year',intervalCount:1}}}} as never));});
+afterEach(cleanup);
+test('renewal requires explicit confirmation and includes expected period',async()=>{
+ await render(<ServiceDetail id="service-1"/>);
+ await fireEvent.press(screen.getByLabelText('Ghi nhận gia hạn'));expect(api).not.toHaveBeenCalled();
+ await fireEvent.press(screen.getByLabelText('Xác nhận ghi nhận gia hạn'));
+ await waitFor(()=>expect(api).toHaveBeenCalledTimes(1));
+ expect(api).toHaveBeenCalledWith('/services/service-1/renew',{method:'POST',body:JSON.stringify({expectedDate:'2026-10-01',amount:200000,note:'Ghi nhận trên ứng dụng Android'})});
+});
+test('cached service remains read-only',async()=>{cached=true;await render(<ServiceDetail id="service-1"/>);await fireEvent.press(screen.getByLabelText('Ghi nhận gia hạn'));expect(api).not.toHaveBeenCalled();expect(screen.queryByLabelText('Xác nhận ghi nhận gia hạn')).toBeNull();});

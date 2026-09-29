@@ -1,11 +1,16 @@
+import { WEB_PUSH_SCHEMA } from "./web-push.mjs";
+import { PERSONAL_TASKS_SCHEMA } from "./personal-tasks.mjs";
+import { REMINDER_WORKFLOW_SCHEMA } from "./reminder-workflow.mjs";
+import { APPEARANCE_SCHEMA } from "./appearance.mjs";
 import {EXTRAS_SCHEMA} from "./task-extras.mjs";
 import {GOOGLE_SCHEMA} from "./google-login.mjs";
 import { EVENTS_SCHEMA } from "./calendar-events.mjs";
 import { COLLABORATION_SCHEMA } from "./collaboration.mjs";
 import { SERVICES_SCHEMA } from "./services.mjs";
 import { AUTOMATION_SCHEMA } from "./automations.mjs";
-import { MOBILE_SCHEMA, MOBILE_DELIVERY_SCHEMA } from "./mobile.mjs";
+import { MOBILE_SCHEMA, MOBILE_DELIVERY_SCHEMA, SERVICE_MOBILE_SCHEMA } from "./mobile.mjs";
 import { PASSWORD_RESET_SCHEMA } from "./password-reset.mjs";
+import { AI_ASSISTANT_SCHEMA } from "./ai-assistant.mjs";
 import { SERVICE_RENEWAL_SCHEMA } from "../shared/service-renewal.mjs";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -662,6 +667,65 @@ const migrations = [
     version: 22,
     sql: "ALTER TABLE calendar_events ADD COLUMN status TEXT NOT NULL DEFAULT 'todo' CHECK(status IN ('todo', 'doing', 'done'));",
   },
+  {
+    version: 23,
+    sql: `
+      ALTER TABLE task_checklist_items ADD COLUMN start_at TEXT;
+      ALTER TABLE task_checklist_items ADD COLUMN due_at TEXT;
+      ALTER TABLE task_checklist_items ADD COLUMN remind_at TEXT;
+      CREATE TABLE IF NOT EXISTS task_checklist_assignees (
+        item_id TEXT NOT NULL REFERENCES task_checklist_items(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        PRIMARY KEY (item_id, user_id)
+      );
+      CREATE INDEX IF NOT EXISTS task_checklist_assignees_user_idx
+        ON task_checklist_assignees(user_id, item_id);
+    `,
+  },
+  { version: 24, sql: AI_ASSISTANT_SCHEMA },
+  { version: 25, sql: APPEARANCE_SCHEMA },
+  {
+    version: 26,
+    // Replace the fixed plan allowlist, preserving every subscription and quote.
+    // The migration runner wraps the copy/swap and its marker in one transaction.
+    sql: `
+      CREATE TABLE subscriptions_v26 (
+        workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+        plan TEXT NOT NULL CHECK (length(plan) BETWEEN 1 AND 20),
+        cycle TEXT NOT NULL CHECK (cycle IN ('monthly', 'yearly')),
+        status TEXT NOT NULL CHECK (status IN ('trialing', 'active', 'past_due', 'expired', 'canceled')),
+        current_period_end TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO subscriptions_v26 SELECT * FROM subscriptions;
+      DROP TABLE subscriptions;
+      ALTER TABLE subscriptions_v26 RENAME TO subscriptions;
+      CREATE TABLE billing_orders_v26 (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        plan TEXT NOT NULL CHECK (length(plan) BETWEEN 1 AND 20),
+        cycle TEXT NOT NULL CHECK (cycle IN ('monthly', 'yearly')),
+        amount INTEGER NOT NULL CHECK (amount > 0),
+        currency TEXT NOT NULL DEFAULT 'VND',
+        status TEXT NOT NULL CHECK (status IN ('pending', 'paid', 'failed', 'refunded', 'expired')),
+        provider_payment_id TEXT,
+        created_at TEXT NOT NULL,
+        paid_at TEXT,
+        checkout_url TEXT
+      );
+      INSERT INTO billing_orders_v26 SELECT * FROM billing_orders;
+      DROP TABLE billing_orders;
+      ALTER TABLE billing_orders_v26 RENAME TO billing_orders;
+      CREATE INDEX billing_orders_workspace_idx ON billing_orders(workspace_id, created_at);
+      CREATE UNIQUE INDEX billing_orders_provider_payment_idx
+        ON billing_orders(provider_payment_id) WHERE provider_payment_id IS NOT NULL;
+    `,
+  },
+  { version: 27, sql: REMINDER_WORKFLOW_SCHEMA },
+  { version: 28, sql: SERVICE_MOBILE_SCHEMA },
+  { version: 29, sql: PERSONAL_TASKS_SCHEMA },
+  { version: 30, sql: '' },
+  { version: 31, sql: WEB_PUSH_SCHEMA },
 ];
 
 export const SCHEMA_VERSION = migrations.at(-1).version;
@@ -709,8 +773,23 @@ export function migrateDatabase(db) {
   );
   for (const migration of migrations) {
     if (has.get(migration.version)) continue;
-    db.exec("BEGIN IMMEDIATE");
+    // FK actions must be disabled outside the transaction for a parent rebuild.
+    const taskSchema = [29, 30].includes(migration.version) ? db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='tasks'").get().sql : '';
+    const rebuildTasks = migration.version === 29 && db.prepare('PRAGMA table_info(tasks)').all().some(c => c.name === 'due_at' && c.notnull)
+      || migration.version === 30 && !taskSchema.includes("'yearly'");
+    if (rebuildTasks) db.exec('PRAGMA foreign_keys=OFF; PRAGMA legacy_alter_table=ON;');
     try {
+      db.exec("BEGIN IMMEDIATE");
+      if (rebuildTasks) {
+        const objects = db.prepare("SELECT sql FROM sqlite_schema WHERE tbl_name='tasks' AND type IN ('index','trigger') AND sql IS NOT NULL").all();
+        const schema = migration.version === 29
+          ? taskSchema.replace(/due_at\s+TEXT\s+NOT NULL/i, 'due_at TEXT')
+          : taskSchema.replace(/('none',\s*'daily',\s*'weekly',\s*'monthly')/, "$1, 'yearly'");
+        db.exec(schema.replace(/CREATE TABLE\s+"?tasks"?/i, 'CREATE TABLE tasks_rebuilt'));
+        db.exec('INSERT INTO tasks_rebuilt SELECT * FROM tasks; DROP TABLE tasks; ALTER TABLE tasks_rebuilt RENAME TO tasks;');
+        for (const object of objects) db.exec(object.sql);
+        if (db.prepare('PRAGMA foreign_key_check').all().length) throw new Error('Task migration failed foreign key validation');
+      }
       if (migration.version === 18) {
         const hasColumn = (table, column) =>
           db
@@ -727,9 +806,36 @@ export function migrateDatabase(db) {
         if (!hasColumn("notifications", "entity_id"))
           db.exec("ALTER TABLE notifications ADD COLUMN entity_id TEXT");
       }
-      if (migration.version === 22) {
+      if (migration.version === 30) {
+        // Check columns individually: legacy fixture/restore upgrades may replay
+        // migration markers while retaining already-added columns.
+        for (const [table, column, definition] of [
+          ['tasks', 'recurrence_options', "TEXT NOT NULL DEFAULT '{}'"],
+          ['tasks', 'recurrence_anchor', 'TEXT'],
+          ['personal_task_plans', 'start_time', 'TEXT'],
+          ['personal_task_plans', 'duration_minutes', 'INTEGER NOT NULL DEFAULT 60 CHECK(duration_minutes BETWEEN 15 AND 1440)'],
+        ]) {
+          if (!db.prepare(`PRAGMA table_info(${table})`).all().some(c => c.name === column))
+            db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+        }
+        db.exec("UPDATE tasks SET recurrence_anchor=due_at WHERE recurrence<>'none' AND recurrence_anchor IS NULL");
+      } else if (migration.version === 22) {
         if (!db.prepare("PRAGMA table_info(calendar_events)").all().some((column) => column.name === "status"))
           db.exec(migration.sql);
+      } else if (migration.version === 23) {
+        const names = new Set(db.prepare("PRAGMA table_info(task_checklist_items)").all().map((column) => column.name));
+        for (const column of ["start_at", "due_at", "remind_at"]) {
+          if (!names.has(column)) db.exec(`ALTER TABLE task_checklist_items ADD COLUMN ${column} TEXT`);
+        }
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS task_checklist_assignees (
+            item_id TEXT NOT NULL REFERENCES task_checklist_items(id) ON DELETE CASCADE,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            PRIMARY KEY (item_id, user_id)
+          );
+          CREATE INDEX IF NOT EXISTS task_checklist_assignees_user_idx
+            ON task_checklist_assignees(user_id, item_id);
+        `);
       } else if (migration.version === 19) {
         // The service migration is additive, but old test/backup fixtures can
         // retain a column after removing only the migration marker. Replay
@@ -758,6 +864,8 @@ export function migrateDatabase(db) {
         db.exec("ROLLBACK");
       } catch {}
       throw error;
+    } finally {
+      if (rebuildTasks) db.exec('PRAGMA legacy_alter_table=OFF; PRAGMA foreign_keys=ON;');
     }
   }
   return db;

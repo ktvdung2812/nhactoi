@@ -98,6 +98,7 @@ export default function Home() {
             pathname: "/event/[id]",
             params: { id: target.eventId },
           });
+        else if (target.serviceId) router.push({ pathname: "/service/[id]", params: { id: target.serviceId } });
         else setTab("notifications");
         await NotificationsAPI.clearLastNotificationResponseAsync();
       } catch (e) {

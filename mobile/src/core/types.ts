@@ -24,9 +24,10 @@ export type Task = {
   description: string;
   status: "todo" | "doing" | "done";
   priority: "low" | "medium" | "high";
-  dueAt: string;
+  dueAt: string | null;
   remindAt: string | null;
-  recurrence: "none" | "daily" | "weekly" | "monthly";
+  recurrence: "none" | "daily" | "weekly" | "monthly" | "yearly";
+  recurrenceOptions?: { interval: number; weekdays: number[]; basis: "due" | "completion" };
   assigneeId: string | null;
   customerId?: string | null;
   teamId: string | null;

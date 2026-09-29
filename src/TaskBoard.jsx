@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useRef, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CalendarDays, Check, ChevronRight, Eye, PanelLeftClose, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CalendarDays, Check, ChevronRight, Eye, GripVertical, PanelLeftClose, Plus, Trash2 } from "lucide-react";
 import ActionMenu from "./ActionMenu.jsx";
+import { reorderBeforeId, reorderIsNoop, moveColumnId, moveColumnToEndId } from "./board-order.js";
 import "./task-board.css";
 
 export const DEFAULT_STATUSES = [
@@ -31,6 +32,7 @@ function normalizeColumn(column, index) {
 
 export default function TaskBoard({
   tasks = [],
+  selectedTaskId = null,
   members = [],
   statuses = DEFAULT_STATUSES,
   columns: managedColumns = null,
@@ -50,6 +52,7 @@ export default function TaskBoard({
   canMove = task => !task.teamArchived,
   scopeKey = "default",
   showSummary = true,
+  captionRight = null,
 }) {
   const sourceColumns = (managedColumns || statuses || DEFAULT_STATUSES).map(normalizeColumn);
   const sourceIds = sourceColumns.map(column => column.id);
@@ -58,13 +61,21 @@ export default function TaskBoard({
   const [pending, setPending] = useState(null);
   const [dragged, setDragged] = useState(null);
   const [over, setOver] = useState(null);
+  const [draggedColumn, setDraggedColumn] = useState(null);
+  const [overColumn, setOverColumn] = useState(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const moving = useRef(false);
+  const draggedRef = useRef(null);
+  const draggedColumnRef = useRef(null);
   const boardRef = useRef(null);
   const scopeRef = useRef(scopeKey);
   const helpId = useId();
   scopeRef.current = scopeKey;
+  const selectedTaskVisible = tasks.some(task => task.id === selectedTaskId);
+  useEffect(() => {
+    if (selectedTaskId) boardRef.current?.querySelector(".is-ai-selected")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [selectedTaskId, selectedTaskVisible]);
 
   useEffect(() => {
     setView(current => {
@@ -77,8 +88,12 @@ export default function TaskBoard({
   useEffect(() => {
     setMessage("");
     setError("");
+    draggedRef.current = null;
     setDragged(null);
     setOver(null);
+    draggedColumnRef.current = null;
+    setDraggedColumn(null);
+    setOverColumn(null);
   }, [scopeKey]);
 
   const currentView = view.scope === scopeKey ? view : initialView(scopeKey, sourceColumns);
@@ -90,6 +105,7 @@ export default function TaskBoard({
   const collapsedIds = preferences && Array.isArray(preferences.collapsedIds)
     ? preferences.collapsedIds.map(String)
     : currentView.collapsed;
+  const canArrangeColumns = !readOnly && (onColumnReorder ? (canReorderColumns ?? true) : true) && columns.length > 1;
 
   const taskColumnId = task => {
     const value = getTaskColumn?.(task) ?? (managedColumns ? task?.columnId ?? task?.status : task?.status);
@@ -98,16 +114,34 @@ export default function TaskBoard({
 
   const movable = task => !readOnly && (onTaskMove || onMove) && canMove(task);
 
+  function applyOrder(order) {
+    setView(current => ({ ...current, scope: scopeKey, order }));
+    if (onColumnReorder && (canReorderColumns ?? true)) {
+      Promise.resolve(onColumnReorder(order)).catch(err => setError(err?.message || "Chưa lưu được thứ tự cột."));
+    }
+  }
+
   function reorder(id, direction) {
     const order = columns.map(column => column.id);
     const index = order.indexOf(id);
     const next = index + direction;
     if (next < 0 || next >= order.length) return;
     [order[index], order[next]] = [order[next], order[index]];
-    setView(current => ({ ...current, scope: scopeKey, order }));
-    if (onColumnReorder && (canReorderColumns ?? true)) {
-      Promise.resolve(onColumnReorder(order)).catch(err => setError(err?.message || "Chưa lưu được thứ tự cột."));
-    }
+    applyOrder(order);
+  }
+
+  function moveColumn(activeId, targetId, before) {
+    const order = columns.map(column => column.id);
+    const next = moveColumnId(order, activeId, targetId, before);
+    if (!next || next.every((id, index) => id === order[index])) return;
+    applyOrder(next);
+  }
+
+  function moveColumnToEnd(activeId) {
+    const order = columns.map(column => column.id);
+    const next = moveColumnToEndId(order, activeId);
+    if (!next || next.every((id, index) => id === order[index])) return;
+    applyOrder(next);
   }
 
   function collapse(id, collapsed) {
@@ -141,7 +175,9 @@ export default function TaskBoard({
       else await onMove(task, columnId);
       if (scopeRef.current === scope) {
         const target = columns.find(column => column.id === columnId);
-        setMessage(`Đã chuyển “${task.title}” sang ${target?.label || columnId}.`);
+        setMessage(fromColumnId === columnId
+          ? `Đã sắp xếp “${task.title}” trong cột ${target?.label || columnId}.`
+          : `Đã chuyển “${task.title}” sang ${target?.label || columnId}.`);
         requestAnimationFrame(() => {
           const node = [...(boardRef.current?.querySelectorAll("[data-task-id]") || [])].find(item => item.dataset.taskId === String(task.id));
           const focusTarget = node?.querySelector(".task-board-open") || boardRef.current;
@@ -157,30 +193,115 @@ export default function TaskBoard({
     }
   }
 
-  function drop(event, columnId, beforeTaskId = null) {
+  function cardRects(list) {
+    return [...(list?.querySelectorAll("[data-task-id]") || [])].map(node => {
+      const rect = node.getBoundingClientRect();
+      return { id: node.dataset.taskId, top: rect.top, height: rect.height };
+    });
+  }
+
+  function placeOver(event, columnId) {
+    const activeId = draggedRef.current;
+    if (!activeId) return;
+    const list = event.currentTarget.querySelector(":scope > .task-board-cards");
+    const beforeTaskId = reorderBeforeId(cardRects(list), activeId, event.clientY);
+    setOver(current => current?.columnId === columnId && String(current.beforeTaskId ?? "") === String(beforeTaskId ?? "")
+      ? current
+      : { columnId, beforeTaskId });
+  }
+
+  function drop(event, columnId, cards) {
     event.preventDefault();
     event.stopPropagation();
-    setOver(null);
-    const task = tasks.find(item => String(item.id) === String(dragged));
+    const activeId = draggedRef.current;
+    const list = event.currentTarget.querySelector(":scope > .task-board-cards");
+    const beforeTaskId = reorderBeforeId(cardRects(list), activeId, event.clientY);
+    const task = tasks.find(item => String(item.id) === String(activeId));
+    draggedRef.current = null;
     setDragged(null);
-    if (task) move(task, columnId, beforeTaskId);
+    setOver(null);
+    if (task && !reorderIsNoop(cards, task.id, beforeTaskId)) move(task, columnId, beforeTaskId);
   }
+
+  function startColumnDrag(event, column) {
+    if (pending || moving.current || event.target.closest(".action-menu")) {
+      event.preventDefault();
+      return;
+    }
+    const source = event.target.closest(".task-board-column");
+    if (source) source.draggable = true;
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", `column:${column.id}`);
+    draggedColumnRef.current = column.id;
+    setDraggedColumn(column.id);
+    setError("");
+  }
+
+  function endColumnDrag() {
+    [...(boardRef.current?.querySelectorAll('[data-column][draggable="true"]') || [])].forEach(node => { node.draggable = false; });
+    draggedColumnRef.current = null;
+    setDraggedColumn(null);
+    setOverColumn(null);
+  }
+
+  function placeOverColumn(event, columnId) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const before = event.clientX < rect.left + rect.width / 2;
+    setOverColumn(current => current?.id === columnId && current.before === before ? current : { id: columnId, before });
+  }
+
+  function dropColumn(event, columnId) {
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const before = event.clientX < rect.left + rect.width / 2;
+    const activeId = draggedColumnRef.current;
+    endColumnDrag();
+    if (activeId != null) moveColumn(activeId, columnId, before);
+  }
+
+  const hasHelpText = Boolean(captionRight || readOnly);
+  const hasCaption = Boolean(showSummary || hasHelpText);
 
   return (
     <div className="task-board-shell">
-      <div className="task-board-caption">
-        {showSummary && <span>{tasks.length} mục · {columns.length} cột</span>}
-        <span id={helpId}>{readOnly ? "Chế độ chỉ xem" : "Kéo thẻ hoặc dùng menu ⋮ để chuyển cột"}</span>
-      </div>
+      {hasCaption && (
+        <div className="task-board-caption">
+          {showSummary && <span>{tasks.length} mục · {columns.length} cột</span>}
+          {captionRight ? (
+            <div id={helpId} className="task-board-caption-right">{captionRight}</div>
+          ) : readOnly ? (
+            <span id={helpId}>Chế độ chỉ xem</span>
+          ) : null}
+        </div>
+      )}
       {error && <div className="task-board-error" role="alert">{error}</div>}
       <p className="task-board-announcement" role="status" aria-live="polite">{message}</p>
-      <div className="task-board" ref={boardRef} tabIndex={0} role="region" aria-label="Bảng công việc theo cột" aria-describedby={helpId}>
+      <div
+        className="task-board"
+        ref={boardRef}
+        tabIndex={0}
+        role="region"
+        aria-label="Bảng công việc theo cột"
+        aria-describedby={hasHelpText ? helpId : undefined}
+        onDragOver={event => {
+          if (draggedColumnRef.current == null || !canArrangeColumns || pending) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+        }}
+        onDrop={event => {
+          if (draggedColumnRef.current == null || !canArrangeColumns || pending) return;
+          event.preventDefault();
+          const activeId = draggedColumnRef.current;
+          endColumnDrag();
+          moveColumnToEnd(activeId);
+        }}
+      >
         {columns.map((column, index) => {
           const cards = tasks.filter(task => taskColumnId(task) === column.id);
-          const collapsed = collapsedIds.includes(column.id);
-          const draggingTask = tasks.find(item => String(item.id) === String(dragged));
-          const acceptDrop = draggingTask && movable(draggingTask) && !pending;
+          const collapsed = collapsedIds.includes(column.id) && !cards.some(task => task.id === selectedTaskId);
           const actions = [
+            !readOnly && onCreate && { label: "Thêm công việc", icon: Plus, disabled: !!pending, onSelect: () => onCreate(column.status || column.id, column.id) },
             { label: "Thu gọn cột", icon: PanelLeftClose, onSelect: () => collapse(column.id, true) },
             ...((onColumnReorder ? canReorderColumns : true) ? [
               { label: "Di chuyển cột sang trái", icon: ArrowLeft, disabled: index === 0, onSelect: () => reorder(column.id, -1) },
@@ -192,29 +313,53 @@ export default function TaskBoard({
             <section
               key={column.id}
               data-column={column.id}
-              className={`task-board-column tone-${column.tone || "blue"}${collapsed ? " is-collapsed" : ""}${over?.columnId === column.id ? " is-drop-target" : ""}`}
+              className={`task-board-column tone-${column.tone || "blue"}${collapsed ? " is-collapsed" : ""}${over?.columnId === column.id ? " is-drop-target" : ""}${String(draggedColumn) === String(column.id) ? " is-column-dragging" : ""}${overColumn?.id === column.id ? (overColumn.before ? " is-column-drop-before" : " is-column-drop-after") : ""}`}
               aria-label={`${column.label}: ${cards.length} mục`}
               onDragOver={event => {
-                if (acceptDrop) {
+                if (draggedColumnRef.current != null) {
+                  if (!canArrangeColumns || pending || String(draggedColumnRef.current) === String(column.id)) return;
                   event.preventDefault();
                   event.dataTransfer.dropEffect = "move";
-                  setOver({ columnId: column.id, taskId: null });
+                  placeOverColumn(event, column.id);
+                  return;
                 }
+                const task = tasks.find(item => String(item.id) === String(draggedRef.current));
+                if (!task || !movable(task) || pending) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+                placeOver(event, column.id);
               }}
-              onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setOver(null); }}
-              onDrop={event => drop(event, column.id, over?.columnId === column.id ? over.taskId : null)}
+              onDragLeave={event => {
+                if (event.currentTarget.contains(event.relatedTarget)) return;
+                setOver(null);
+                setOverColumn(null);
+              }}
+              onDrop={event => {
+                if (draggedColumnRef.current != null) {
+                  if (canArrangeColumns && !pending) dropColumn(event, column.id);
+                  return;
+                }
+                const task = tasks.find(item => String(item.id) === String(draggedRef.current));
+                if (task && movable(task) && !pending) drop(event, column.id, cards);
+              }}
+              draggable={canArrangeColumns && !pending}
+              onDragEnd={endColumnDrag}
             >
               {collapsed ? (
                 <button className="task-board-expand" type="button" aria-label={`Mở rộng cột ${column.label}`} onClick={() => collapse(column.id, false)}>
                   <ChevronRight size={17} /><i className="task-board-dot" /><strong>{column.label}</strong><span>{cards.length}</span>
                 </button>
               ) : <>
-                <header className="task-board-column-header">
-                  <h3><i className="task-board-dot" />{column.label}</h3>
+                <header
+                  className={`task-board-column-header${canArrangeColumns ? " is-draggable" : ""}`}
+                  onDragStart={event => startColumnDrag(event, column)}
+                >
+                  {canArrangeColumns && <span className="task-board-column-grip" aria-hidden="true"><GripVertical size={15} /></span>}
+                  <h3><i className="task-board-dot" /><span>{column.label}</span></h3>
                   <span className="task-board-count">{cards.length}</span>
                   <ActionMenu label={`Thao tác cột ${column.label}`} items={actions} />
                 </header>
-                <div className="task-board-cards" tabIndex={0} role="region" aria-label={`Thẻ trong cột ${column.label}`}>
+                <div className={`task-board-cards${over?.columnId === column.id && over.beforeTaskId == null ? " is-drop-end" : ""}`} tabIndex={0} role="region" aria-label={`Thẻ trong cột ${column.label}`}>
                   {cards.map((task, taskIndex) => {
                     const assignee = members.find(member => String(member.id) === String(task.assigneeId));
                     const name = assignee?.name || assignee?.email;
@@ -237,34 +382,28 @@ export default function TaskBoard({
                       <article
                         key={task.id}
                         data-task-id={task.id}
-                        className={`task-board-card${done ? " is-done" : ""}${dragged === task.id ? " is-dragging" : ""}${pending === task.id ? " is-pending" : ""}${over?.taskId === String(task.id) ? " is-card-drop-target" : ""}`}
+                        className={`task-board-card${task.id === selectedTaskId ? " is-ai-selected" : ""}${done ? " is-done" : ""}${String(dragged) === String(task.id) ? " is-dragging" : ""}${pending === task.id ? " is-pending" : ""}${over?.columnId === column.id && String(over.beforeTaskId ?? "") === String(task.id) ? " is-drop-before" : ""}`}
                         draggable={movable(task) && !pending}
                         aria-busy={pending === task.id}
                         onDragStart={event => {
                           if (event.target.closest(".action-menu") || !movable(task) || moving.current) { event.preventDefault(); return; }
                           event.dataTransfer.effectAllowed = "move";
-                          event.dataTransfer.setData("text/plain", task.id);
+                          event.dataTransfer.setData("text/plain", String(task.id));
+                          draggedRef.current = task.id;
                           setDragged(task.id);
                           setError("");
                         }}
-                        onDragOver={event => {
-                          if (!acceptDrop) return;
-                          event.preventDefault();
-                          event.stopPropagation();
-                          setOver({ columnId: column.id, taskId: String(task.id) });
-                        }}
-                        onDrop={event => drop(event, column.id, task.id)}
-                        onDragEnd={() => { setDragged(null); setOver(null); }}
+                        onDragEnd={() => { draggedRef.current = null; setDragged(null); setOver(null); }}
                       >
                         <div className="task-board-card-top">
                           <span className={`task-board-kind kind-${kindClass}`}>{kindLabel}</span>
                           <span className={`task-board-priority priority-${task.priority}`}>{priorities[task.priority] || "Trung bình"}</span>
                           <ActionMenu label={`Thao tác công việc ${task.title}`} disabled={!!pending} items={taskActions} />
                         </div>
-                        <button className="task-board-open" type="button" onClick={() => onOpen?.(task)} disabled={!!pending} aria-label={`Mở công việc ${task.title}`}>
+                        <div className="task-board-open" role="button" tabIndex={pending ? -1 : 0} aria-disabled={pending || undefined} onClick={() => { if (!pending) onOpen?.(task); }} onKeyDown={event => { if (pending || (event.key !== "Enter" && event.key !== " ")) return; event.preventDefault(); onOpen?.(task); }} aria-label={`Mở công việc ${task.title}`}>
                           <strong>{task.title}</strong>
                           {task.description && <span className="task-board-description">{task.description}</span>}
-                        </button>
+                        </div>
                         <span className="task-board-category">{task.teamName || "Việc chung"}{task.category ? ` · ${task.category}` : ""}</span>
                         <footer className="task-board-card-footer">
                           <span className={late ? "is-overdue" : ""}><CalendarDays size={13} />{task.dueAt ? new Date(task.dueAt).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" }) : "Chưa đặt hạn"}{task.kind === "event" && task.endsAt && <small> {new Date(task.dueAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}–{new Date(task.endsAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</small>}</span>

@@ -1017,6 +1017,7 @@
   text-align: right;
 }
 
+.teams-workspace-members { margin-top: 28px; }
 .teams-members-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1547,4 +1548,516 @@
     width: 100%;
     flex: 0 0 auto;
   }
+}
+
+
+/* ==========================================================================
+   Teams Dark Mode Overrides
+   ========================================================================== */
+
+[data-theme="dark"] .teams-page,
+.dark .teams-page {
+  --teams-ink: var(--ink);
+  --teams-muted: var(--muted);
+  --teams-soft: var(--bg-subtle);
+  --teams-line: var(--line);
+  --teams-green: var(--green);
+  --teams-green-dark: var(--green-hover);
+  color: var(--ink);
+}
+
+[data-theme="dark"] .teams-eyebrow,
+.dark .teams-eyebrow {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-page-heading h1,
+.dark .teams-page-heading h1,
+[data-theme="dark"] .teams-section-toolbar h2,
+.dark .teams-section-toolbar h2 {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .teams-page-heading p,
+.dark .teams-page-heading p {
+  color: var(--muted);
+}
+
+/* Overview Strip */
+[data-theme="dark"] .teams-overview-strip,
+.dark .teams-overview-strip {
+  background: var(--bg-surface);
+  border-color: var(--border-card);
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-overview-strip b,
+.dark .teams-overview-strip b {
+  color: var(--line);
+}
+
+[data-theme="dark"] .teams-overview-note,
+.dark .teams-overview-note {
+  color: var(--muted);
+}
+
+/* Search Box */
+[data-theme="dark"] .teams-search,
+.dark .teams-search {
+  background: var(--bg-input);
+  border-color: var(--border-card);
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-search input,
+.dark .teams-search input {
+  background: transparent;
+  color: var(--ink);
+}
+
+[data-theme="dark"] .teams-search input::placeholder,
+.dark .teams-search input::placeholder {
+  color: var(--muted);
+}
+
+/* Filter Tabs */
+[data-theme="dark"] .teams-filter-tabs,
+.dark .teams-filter-tabs {
+  background: var(--bg-surface);
+  border-color: var(--border-card);
+}
+
+[data-theme="dark"] .teams-filter-tabs button,
+.dark .teams-filter-tabs button {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-filter-tabs button.active,
+.dark .teams-filter-tabs button.active {
+  background: #f0f2f5;
+  color: #101214;
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+[data-theme="dark"] .teams-filter-tabs button.active span,
+.dark .teams-filter-tabs button.active span {
+  background: #101214;
+  color: #f0f2f5;
+}
+
+[data-theme="dark"] .teams-filter-tabs span,
+.dark .teams-filter-tabs span {
+  background: var(--bg-subtle);
+  color: var(--muted);
+}
+
+/* Team Cards */
+[data-theme="dark"] .teams-card,
+.dark .teams-card {
+  background: var(--bg-card);
+  border-color: var(--border-card);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.25);
+}
+
+[data-theme="dark"] .teams-card:hover,
+.dark .teams-card:hover {
+  border-color: var(--green);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.4);
+}
+
+[data-theme="dark"] .teams-card.archived,
+.dark .teams-card.archived {
+  background: var(--bg-subtle);
+}
+
+[data-theme="dark"] .teams-card h2,
+.dark .teams-card h2 {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .teams-card p,
+.dark .teams-card p {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-card-stats,
+.dark .teams-card-stats {
+  background: var(--bg-subtle);
+  border-top-color: var(--line);
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-card-stats strong,
+.dark .teams-card-stats strong {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .teams-card-arrow,
+.dark .teams-card-arrow {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-status-badge.active,
+.dark .teams-status-badge.active {
+  background: rgba(47, 185, 154, 0.15);
+  color: var(--green);
+}
+
+[data-theme="dark"] .teams-status-badge.archived,
+.dark .teams-status-badge.archived {
+  background: var(--bg-subtle);
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-role-badge,
+.dark .teams-role-badge {
+  background: rgba(47, 185, 154, 0.15);
+  color: var(--green);
+}
+
+[data-theme="dark"] .teams-role-badge.lead,
+.dark .teams-role-badge.lead {
+  background: rgba(224, 159, 103, 0.2);
+  color: #f0b27a;
+}
+
+[data-theme="dark"] .teams-role-badge.muted,
+.dark .teams-role-badge.muted {
+  background: var(--bg-subtle);
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-avatar,
+.dark .teams-avatar,
+[data-theme="dark"] .teams-avatar-stack .teams-avatar,
+.dark .teams-avatar-stack .teams-avatar,
+[data-theme="dark"] .teams-avatar-more,
+.dark .teams-avatar-more {
+  border-color: var(--bg-card);
+}
+
+[data-theme="dark"] .teams-avatar-more,
+.dark .teams-avatar-more {
+  background: var(--bg-subtle);
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-card-no-members,
+.dark .teams-card-no-members {
+  color: var(--muted);
+}
+
+/* Avatar Tones */
+[data-theme="dark"] .teams-avatar-tone-0, .dark .teams-avatar-tone-0 { background: rgba(47, 185, 154, 0.2); color: #5cdbb5; }
+[data-theme="dark"] .teams-avatar-tone-1, .dark .teams-avatar-tone-1 { background: rgba(114, 164, 217, 0.2); color: #8bbef5; }
+[data-theme="dark"] .teams-avatar-tone-2, .dark .teams-avatar-tone-2 { background: rgba(175, 157, 224, 0.2); color: #c4b5fd; }
+[data-theme="dark"] .teams-avatar-tone-3, .dark .teams-avatar-tone-3 { background: rgba(224, 159, 103, 0.2); color: #f0b27a; }
+[data-theme="dark"] .teams-avatar-tone-4, .dark .teams-avatar-tone-4 { background: rgba(224, 115, 103, 0.2); color: #f28b80; }
+
+/* Workspace Members Grid */
+[data-theme="dark"] .teams-member-card,
+.dark .teams-member-card {
+  background: var(--bg-card);
+  border-color: var(--border-card);
+}
+
+[data-theme="dark"] .teams-member-card strong,
+.dark .teams-member-card strong {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .teams-member-card div span,
+.dark .teams-member-card div span {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-member-card .teams-avatar,
+.dark .teams-member-card .teams-avatar {
+  border-color: var(--bg-card);
+}
+
+/* Team Detail Page */
+[data-theme="dark"] .teams-detail-breadcrumb,
+.dark .teams-detail-breadcrumb {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-detail-breadcrumb > button,
+.dark .teams-detail-breadcrumb > button {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-detail-head h1,
+.dark .teams-detail-head h1 {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .teams-detail-head p,
+.dark .teams-detail-head p {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-detail-stats > div,
+.dark .teams-detail-stats > div {
+  background: var(--bg-card);
+  border-color: var(--border-card);
+}
+
+[data-theme="dark"] .teams-detail-stats strong,
+.dark .teams-detail-stats strong {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .teams-detail-stats small,
+.dark .teams-detail-stats small {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-stat-icon.blue, .dark .teams-stat-icon.blue { background: rgba(114, 164, 217, 0.2); color: #8bbef5; }
+[data-theme="dark"] .teams-stat-icon.green, .dark .teams-stat-icon.green { background: rgba(47, 185, 154, 0.2); color: #5cdbb5; }
+[data-theme="dark"] .teams-stat-icon.purple, .dark .teams-stat-icon.purple { background: rgba(175, 157, 224, 0.2); color: #c4b5fd; }
+
+[data-theme="dark"] .teams-detail-tabs,
+.dark .teams-detail-tabs {
+  border-bottom-color: var(--line);
+}
+
+[data-theme="dark"] .teams-detail-tabs button,
+.dark .teams-detail-tabs button {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-detail-tabs button.active,
+.dark .teams-detail-tabs button.active {
+  color: var(--green);
+  border-bottom-color: var(--green);
+}
+
+[data-theme="dark"] .teams-detail-tabs span,
+.dark .teams-detail-tabs span {
+  background: var(--bg-subtle);
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-view-toggle,
+.dark .teams-view-toggle {
+  background: var(--bg-surface);
+  border-color: var(--border-card);
+}
+
+[data-theme="dark"] .teams-view-toggle button,
+.dark .teams-view-toggle button {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-view-toggle button.active,
+.dark .teams-view-toggle button.active {
+  background: var(--bg-card);
+  color: var(--green);
+}
+
+[data-theme="dark"] .teams-readonly-banner,
+.dark .teams-readonly-banner {
+  background: rgba(224, 159, 103, 0.12);
+  border-color: rgba(224, 159, 103, 0.3);
+  color: #f0b27a;
+}
+
+[data-theme="dark"] .teams-task-list,
+.dark .teams-task-list {
+  background: var(--bg-card);
+  border-color: var(--border-card);
+}
+
+[data-theme="dark"] .teams-task-list-row,
+.dark .teams-task-list-row {
+  background: var(--bg-card);
+  border-bottom-color: var(--line);
+  color: var(--ink);
+}
+
+[data-theme="dark"] .teams-task-list-row:hover,
+.dark .teams-task-list-row:hover {
+  background: var(--bg-hover);
+}
+
+[data-theme="dark"] .teams-task-list-main strong,
+.dark .teams-task-list-main strong {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .teams-task-list-main small,
+.dark .teams-task-list-main small,
+[data-theme="dark"] .teams-task-list-status,
+.dark .teams-task-list-status,
+[data-theme="dark"] .teams-task-list-due,
+.dark .teams-task-list-due,
+[data-theme="dark"] .teams-task-unassigned,
+.dark .teams-task-unassigned {
+  color: var(--muted);
+}
+
+/* Modals & Dialogs */
+[data-theme="dark"] .teams-modal-backdrop,
+.dark .teams-modal-backdrop {
+  background: var(--modal-overlay);
+}
+
+[data-theme="dark"] .teams-modal,
+.dark .teams-modal {
+  background: var(--bg-card);
+  border-color: var(--border-card);
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.6);
+}
+
+[data-theme="dark"] .teams-modal-head,
+.dark .teams-modal-head {
+  border-bottom-color: var(--line);
+}
+
+[data-theme="dark"] .teams-modal-head h2,
+.dark .teams-modal-head h2 {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .teams-modal-head p,
+.dark .teams-modal-head p {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-icon-button,
+.dark .teams-icon-button {
+  background: var(--bg-subtle);
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-icon-button:hover,
+.dark .teams-icon-button:hover {
+  background: var(--bg-hover);
+  color: var(--green);
+}
+
+[data-theme="dark"] .teams-button.primary,
+.dark .teams-button.primary {
+  background: #f0f2f5;
+  border-color: #f0f2f5;
+  color: #101214;
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+[data-theme="dark"] .teams-button.primary:hover,
+.dark .teams-button.primary:hover {
+  background: #ffffff;
+  border-color: #ffffff;
+  color: #101214;
+  box-shadow: 0 2px 8px rgba(255, 255, 255, 0.15);
+}
+
+[data-theme="dark"] .teams-button.secondary,
+.dark .teams-button.secondary {
+  background: var(--bg-card);
+  border-color: var(--border-card);
+  color: var(--ink);
+}
+
+[data-theme="dark"] .teams-button.secondary:hover,
+.dark .teams-button.secondary:hover {
+  background: var(--bg-hover);
+  border-color: var(--green);
+}
+
+[data-theme="dark"] .teams-field,
+.dark .teams-field,
+[data-theme="dark"] .teams-field-heading,
+.dark .teams-field-heading {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-field > input,
+.dark .teams-field > input,
+[data-theme="dark"] .teams-field > textarea,
+.dark .teams-field > textarea,
+[data-theme="dark"] .teams-field > select,
+.dark .teams-field > select {
+  background: var(--bg-input);
+  border-color: var(--border-card);
+  color: var(--ink);
+}
+
+[data-theme="dark"] .teams-field > input::placeholder,
+.dark .teams-field > input::placeholder,
+[data-theme="dark"] .teams-field > textarea::placeholder,
+.dark .teams-field > textarea::placeholder {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-picker-list,
+.dark .teams-picker-list,
+[data-theme="dark"] .teams-roster-list,
+.dark .teams-roster-list {
+  background: var(--bg-surface);
+  border-color: var(--border-card);
+}
+
+[data-theme="dark"] .teams-picker-row,
+.dark .teams-picker-row,
+[data-theme="dark"] .teams-roster-row,
+.dark .teams-roster-row {
+  border-bottom-color: var(--line);
+  color: var(--ink);
+}
+
+[data-theme="dark"] .teams-picker-row:hover,
+.dark .teams-picker-row:hover,
+[data-theme="dark"] .teams-roster-row:hover,
+.dark .teams-roster-row:hover {
+  background: var(--bg-hover);
+}
+
+[data-theme="dark"] .teams-roster-row.selected,
+.dark .teams-roster-row.selected,
+[data-theme="dark"] .teams-picker-row.selected,
+.dark .teams-picker-row.selected {
+  background: rgba(47, 185, 154, 0.12);
+}
+
+[data-theme="dark"] .teams-picker-main strong,
+.dark .teams-picker-main strong,
+[data-theme="dark"] .teams-roster-person strong,
+.dark .teams-roster-person strong {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .teams-picker-main small,
+.dark .teams-picker-main small,
+[data-theme="dark"] .teams-roster-person small,
+.dark .teams-roster-person small,
+[data-theme="dark"] .teams-roster-summary,
+.dark .teams-roster-summary {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-roster-controls select,
+.dark .teams-roster-controls select {
+  background: var(--bg-input);
+  border-color: var(--border-card);
+  color: var(--ink);
+}
+
+[data-theme="dark"] .teams-confirm-body h3,
+.dark .teams-confirm-body h3 {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .teams-confirm-body > p,
+.dark .teams-confirm-body > p {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .teams-permission-note,
+.dark .teams-permission-note {
+  background: var(--bg-subtle);
+  color: var(--muted);
 }

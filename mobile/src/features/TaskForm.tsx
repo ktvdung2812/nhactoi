@@ -3,7 +3,7 @@ import { router } from "expo-router";
 import { useResource, useSession, refreshData } from "../core/session";
 import type { Task, Team, Member } from "../core/types";
 import { errorMessage } from "../core/api";
-import { statuses, priorities, repeats } from "../core/policy";
+import { statuses, priorities, repeats, recurrenceLabel } from "../core/policy";
 import {
   FormPage,
   Field,
@@ -12,6 +12,8 @@ import {
   Button,
   ErrorNotice,
   Loading,
+  Text,
+  Row,
 } from "../ui/kit";
 export function TaskForm({ id }: { id?: string }) {
   const { api, writable, session } = useSession();
@@ -25,9 +27,10 @@ export function TaskForm({ id }: { id?: string }) {
     [status, setStatus] = useState("todo"),
     [priority, setPriority] = useState("medium"),
     [recurrence, setRecurrence] = useState("none"),
-    [dueAt, setDueAt] = useState<string | null>(() =>
-      new Date(Date.now() + 86400000).toISOString(),
-    ),
+    [interval, setInterval] = useState("1"),
+    [basis, setBasis] = useState<"due" | "completion">("due"),
+    [weekdays, setWeekdays] = useState<number[]>([]),
+    [dueAt, setDueAt] = useState<string | null>(null),
     [remindAt, setRemindAt] = useState<string | null>(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -47,6 +50,9 @@ export function TaskForm({ id }: { id?: string }) {
       setStatus(t.status);
       setPriority(t.priority);
       setRecurrence(t.recurrence);
+      setInterval(String(t.recurrenceOptions?.interval || 1));
+      setBasis(t.recurrenceOptions?.basis || "due");
+      setWeekdays(t.recurrenceOptions?.weekdays || []);
       setDueAt(t.dueAt);
       setRemindAt(t.remindAt);
     }
@@ -61,12 +67,20 @@ export function TaskForm({ id }: { id?: string }) {
         label: m.name,
       }));
   async function save() {
-    if (!title.trim() || !dueAt) {
-      setError("Nhập tên và hạn công việc.");
+    if (!title.trim()) {
+      setError("Nhập tên công việc.");
       return;
     }
-    if (remindAt && Date.parse(remindAt) > Date.parse(dueAt)) {
+    if (recurrence !== "none" && !dueAt) {
+      setError("Công việc lặp cần có hạn hoàn thành.");
+      return;
+    }
+    if (remindAt && dueAt && Date.parse(remindAt) > Date.parse(dueAt)) {
       setError("Thời gian nhắc phải trước hạn công việc.");
+      return;
+    }
+    if (recurrence !== "none" && (!Number.isInteger(Number(interval)) || Number(interval) < 1 || Number(interval) > 365)) {
+      setError("Khoảng lặp phải là số nguyên từ 1 đến 365.");
       return;
     }
     setBusy(true);
@@ -82,6 +96,7 @@ export function TaskForm({ id }: { id?: string }) {
           status,
           priority,
           recurrence,
+          recurrenceOptions: recurrence === "none" ? {} : { interval: Number(interval), basis, weekdays: recurrence === "weekly" ? weekdays : [] },
           dueAt,
           remindAt,
         }),
@@ -164,7 +179,7 @@ export function TaskForm({ id }: { id?: string }) {
               label,
             }))}
           />
-          <DateField label="Hạn công việc" value={dueAt} onChange={setDueAt} />
+          <DateField label="Hạn công việc (không bắt buộc)" value={dueAt} onChange={setDueAt} optional />
           <DateField
             label="Nhắc trước"
             value={remindAt}
@@ -180,6 +195,17 @@ export function TaskForm({ id }: { id?: string }) {
               label,
             }))}
           />
+          {recurrence !== "none" && <>
+            <Field label="Khoảng lặp (1–365)" value={interval} onChangeText={setInterval} keyboardType="number-pad" />
+            <Select label="Tính kỳ tiếp theo từ" value={basis} onChange={v => setBasis(v as "due" | "completion")} options={[{ value: "due", label: "Hạn kỳ trước" }, { value: "completion", label: "Lúc hoàn thành" }]} />
+            {recurrence === "weekly" && <>
+              <Text>Các thứ trong tuần (không chọn: cùng thứ với mốc tính kỳ)</Text>
+              <Row>{[1, 2, 3, 4, 5, 6, 7].map(day => <Button key={day} label={`${weekdays.includes(day) ? "✓ " : ""}${day === 7 ? "Chủ nhật" : `Thứ ${day + 1}`}`} secondary={!weekdays.includes(day)} onPress={() => setWeekdays(days => days.includes(day) ? days.filter(d => d !== day) : [...days, day].sort((a, b) => a - b))} />)}</Row>
+              <Button label="Thứ 2–Thứ 6" secondary onPress={() => { setWeekdays([1, 2, 3, 4, 5]); setInterval("1"); }} />
+            </>}
+            <Text>{recurrenceLabel(recurrence, { interval: Number(interval), basis, weekdays: recurrence === "weekly" ? weekdays : [] })}</Text>
+            <Text>Kỳ mới chỉ tạo sau khi hoàn thành. Tính từ hạn kỳ trước có thể tạo kỳ còn quá hạn nếu hoàn thành muộn.</Text>
+          </>}
           <Button
             label={busy ? "Đang lưu…" : "Lưu công việc"}
             disabled={

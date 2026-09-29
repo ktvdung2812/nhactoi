@@ -1,3 +1,4 @@
+import { ReminderPolicy } from "./ReminderSettings.jsx";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
@@ -473,8 +474,12 @@ export default function Teams({
   onChanged,
   onTaskCreate,
   onTaskOpen,
+  selectedTaskId = null,
   onTaskMove,
   onTaskTrash,
+  openTasks = [],
+  onInvite,
+  invitation,
 }) {
   const [teams, setTeams] = useState([]);
   const [detail, setDetail] = useState(null);
@@ -787,6 +792,7 @@ export default function Teams({
   function renderBoard() {
     return (
       <WorkflowBoard
+        selectedTaskId={selectedTaskId}
         api={api}
         teamId={activeTeam.id}
         scopeKey={`${me?.workspace?.id}/${activeTeam.id}`}
@@ -814,7 +820,7 @@ export default function Teams({
           return (
             <button
               type="button"
-              className="teams-task-list-row"
+              className={`teams-task-list-row${task.id === selectedTaskId ? " is-ai-selected" : ""}`}
               key={task.id}
               onClick={() => onTaskOpen?.(task, { readOnly: Boolean(activeTeam?.archivedAt || task.teamArchived) })}
             >
@@ -889,6 +895,7 @@ export default function Teams({
           <div><span className="teams-stat-icon green"><Check size={16} /></span><span><strong>{completedTaskCount}</strong><small>Đã hoàn thành</small></span></div>
           <div><span className="teams-stat-icon purple"><Users size={16} /></span><span><strong>{detailMembers.length}</strong><small>Thành viên</small></span></div>
         </div>
+        <ReminderPolicy key={activeTeam.id} api={api} teamId={activeTeam.id} readOnly={Boolean(activeTeam.archivedAt || me?.workspace?.suspendedAt)} />
         <div className="teams-detail-tabs" role="tablist" aria-label="Nội dung team">
           <button type="button" role="tab" aria-selected={detailTab === "board"} className={detailTab === "board" ? "active" : ""} onClick={() => setDetailTab("board")}><LayoutGrid size={16} /> Bảng công việc <span>{detailTasks.length}</span></button>
           <button type="button" role="tab" aria-selected={detailTab === "members"} className={detailTab === "members" ? "active" : ""} onClick={() => setDetailTab("members")}><UsersRound size={16} /> Thành viên <span>{detailMembers.length}</span></button>
@@ -917,11 +924,39 @@ export default function Teams({
 
   return (
     <div className="teams-page">
-      <header className="teams-page-heading"><div><span className="teams-eyebrow">KHÔNG GIAN CỦA BẠN</span><h1>Teams</h1><p>Nhóm đúng người, gom đúng việc, giữ tiến độ rõ ràng.</p></div>{canManageWorkspace && <button type="button" className="teams-button primary" onClick={event => openDialog("create", {}, event)}><Plus size={17} /> Tạo team</button>}</header>
-      <div className="teams-overview-strip"><span><i /> {activeCount} team đang hoạt động <b>·</b> {archivedCount} team đã lưu trữ</span><span className="teams-overview-note"><ShieldCheck size={14} /> Thành viên có thể tham gia nhiều team</span></div>
+      <header className="teams-page-heading"><div><span className="teams-eyebrow">KHÔNG GIAN CỦA BẠN</span><h1>Teams</h1><p>Team và thành viên của doanh nghiệp, cùng một nơi.</p></div>{canManageWorkspace && <button type="button" className="teams-button primary" onClick={event => openDialog("create", {}, event)}><Plus size={17} /> Tạo team</button>}</header>
       <div className="teams-list-toolbar"><label className="teams-search"><Search size={16} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Tìm tên hoặc mô tả team…" aria-label="Tìm team" /></label><div className="teams-filter-tabs" role="group" aria-label="Lọc team"><button type="button" className={filter === "active" ? "active" : ""} onClick={() => setFilter("active")}>Đang hoạt động <span>{activeCount}</span></button><button type="button" className={filter === "archived" ? "active" : ""} onClick={() => setFilter("archived")}>Đã lưu trữ <span>{archivedCount}</span></button><button type="button" className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>Tất cả <span>{teams.length}</span></button></div></div>
       {error && <div className="teams-inline-error" role="alert"><span><X size={15} /></span>{error}<button type="button" onClick={() => setRetryCount(value => value + 1)}><RefreshCw size={14} /> Thử lại</button></div>}
       {filteredTeams.length ? <div className="teams-card-grid">{filteredTeams.map(renderTeamCard)}</div> : <EmptyState icon={UsersRound} title={search ? "Không tìm thấy team phù hợp" : filter === "archived" ? "Chưa có team được lưu trữ" : "Chưa có team nào"} description={search ? "Thử một từ khoá khác hoặc xoá bộ lọc tìm kiếm." : canManageWorkspace ? "Tạo team đầu tiên để bắt đầu phân chia công việc." : "Bạn sẽ thấy các team được tham gia tại đây."} action={canManageWorkspace && !search && filter !== "archived" && <button type="button" className="teams-button primary" onClick={event => openDialog("create", {}, event)}><Plus size={16} /> Tạo team đầu tiên</button>} />}
+      <section className="teams-workspace-members" aria-label="Thành viên doanh nghiệp">
+        <div className="teams-section-toolbar">
+          <div><span className="teams-eyebrow">DOANH NGHIỆP</span><h2>Thành viên</h2></div>
+          {onInvite && <button type="button" className="teams-button primary" onClick={onInvite}><UserPlus size={16} /> Mời thành viên</button>}
+        </div>
+        <div className="teams-members-grid">
+          {members.map(member => (
+            <article className="teams-member-card" key={member.id}>
+              <TeamAvatar member={member} size="large" />
+              <div>
+                <strong>{member.name}{member.id === me?.user?.id ? " (Bạn)" : ""}</strong>
+                <span>{member.email}</span>
+                <span>{openTasks.filter(task => task.assigneeId === member.id).length} việc đang mở</span>
+                <span>Vai trò: {member.role === "owner" ? "Chủ không gian" : member.role === "admin" ? "Quản trị viên" : "Thành viên"}</span>
+              </div>
+            </article>
+          ))}
+        </div>
+        {invitation && (
+          <div className="invite-result">
+            <h3>Liên kết mời đã sẵn sàng</h3>
+            <p>Sao chép và gửi riêng cho người được mời. Hệ thống chưa gửi email.</p>
+            <div>
+              <input readOnly value={invitation} />
+              <button type="button" className="teams-button secondary" onClick={() => navigator.clipboard.writeText(invitation).catch(() => {})}>Sao chép</button>
+            </div>
+          </div>
+        )}
+      </section>
       {createDialog}
     </div>
   );

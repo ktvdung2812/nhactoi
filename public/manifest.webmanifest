@@ -1,0 +1,16 @@
+{
+  "id": "/",
+  "name": "Nhắc tôi · Công việc nhẹ nhàng hơn",
+  "short_name": "Nhắc tôi",
+  "description": "Lên lịch, theo dõi công việc và nhận lời nhắc.",
+  "lang": "vi",
+  "start_url": "/today",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f8faf9",
+  "theme_color": "#14685c",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

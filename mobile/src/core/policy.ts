@@ -41,6 +41,7 @@ export const repeats = {
   daily: "Hàng ngày",
   weekly: "Hàng tuần",
   monthly: "Hàng tháng",
+  yearly: "Hàng năm",
 };
 export function dateLabel(value?: string | null) {
   return value
@@ -52,4 +53,11 @@ export function dateLabel(value?: string | null) {
         minute: "2-digit",
       })
     : "Chưa đặt";
+}
+
+export function recurrenceLabel(recurrence: string, options?: { interval: number; weekdays: number[]; basis: "due" | "completion" }) {
+  if (recurrence === "none") return "Không lặp lại";
+  const unit = ({ daily: "ngày", weekly: "tuần", monthly: "tháng", yearly: "năm" } as Record<string, string>)[recurrence];
+  const days = options?.weekdays?.length ? ` (${options.weekdays.map(d => d === 7 ? "CN" : `T${d + 1}`).join(", ")})` : "";
+  return `Mỗi ${options?.interval || 1} ${unit}${days}, ${options?.basis === "completion" ? "từ lúc hoàn thành" : "từ hạn kỳ trước"}`;
 }

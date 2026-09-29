@@ -61,3 +61,55 @@
 .action-menu-item:focus-visible { outline: 2px solid #26816b; outline-offset: 2px; }
 .action-menu-trigger:disabled,
 .action-menu-item:disabled { opacity: .45; cursor: not-allowed; }
+
+
+/* Action Menu Dark Mode */
+[data-theme="dark"] .action-menu-trigger,
+.dark .action-menu-trigger {
+  background: var(--bg-card);
+  border-color: var(--border-card);
+  color: var(--ink-secondary);
+}
+
+[data-theme="dark"] .action-menu-trigger:hover,
+[data-theme="dark"] .action-menu-trigger[aria-expanded="true"],
+.dark .action-menu-trigger:hover,
+.dark .action-menu-trigger[aria-expanded="true"] {
+  background: var(--bg-hover);
+  border-color: var(--green);
+  color: var(--green);
+}
+
+[data-theme="dark"] .action-menu-popup,
+.dark .action-menu-popup {
+  background: var(--bg-surface);
+  border-color: var(--border-card);
+  color: var(--ink);
+  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.6);
+}
+
+[data-theme="dark"] .action-menu-item,
+.dark .action-menu-item {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .action-menu-item:hover,
+[data-theme="dark"] .action-menu-item:focus-visible,
+.dark .action-menu-item:hover,
+.dark .action-menu-item:focus-visible {
+  background: var(--bg-subtle);
+  color: var(--green);
+}
+
+[data-theme="dark"] .action-menu-item.danger,
+.dark .action-menu-item.danger {
+  color: #f28b80;
+}
+
+[data-theme="dark"] .action-menu-item.danger:hover,
+[data-theme="dark"] .action-menu-item.danger:focus-visible,
+.dark .action-menu-item.danger:hover,
+.dark .action-menu-item.danger:focus-visible {
+  background: rgba(224, 115, 103, 0.15);
+  color: #f28b80;
+}

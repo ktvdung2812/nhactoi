@@ -42,6 +42,14 @@ beforeEach(() => {
   jest.mocked(router.push).mockClear();
 });
 afterEach(cleanup);
+test('undated tasks stay out of date filters and sort after dated tasks', () => {
+  const base = { title: 'Task', description: '', status: 'todo' as const, priority: 'medium' as const, remindAt: null, recurrence: 'none' as const, assigneeId: 'u', teamId: null };
+  const tasks = [{ ...base, id: 'inbox', dueAt: null }, { ...base, id: 'later', dueAt: '2030-01-02T10:00:00Z' }, { ...base, id: 'earlier', dueAt: '2030-01-01T10:00:00Z' }];
+  const filters = { search: '', team: 'all', status: 'all', assignee: 'all', due: 'all' };
+  expect(projectWorkItems(tasks, [], filters).map(item => item.value.id)).toEqual(['earlier', 'later', 'inbox']);
+  expect(projectWorkItems([tasks[0]], [], { ...filters, due: 'overdue' })).toHaveLength(0);
+  expect(projectWorkItems([tasks[0]], [], { ...filters, due: 'today' })).toHaveLength(0);
+});
 test("pending tasks show loading instead of an empty section shell", async () => {
   mockTaskState = { ...mockTaskState, isPending: true, data: undefined };
   await render(<TaskList onSelect={() => {}} />);

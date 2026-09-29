@@ -74,5 +74,6 @@ export function notificationTarget(data: Record<string, unknown>) {
     idPattern.test(data.entityId)
       ? data.entityId
       : undefined;
-  return { workspaceId, userId, taskId, eventId };
+  const serviceId = data.entityType === "service" && typeof data.entityId === "string" && idPattern.test(data.entityId) ? data.entityId : undefined;
+  return { workspaceId, userId, taskId, eventId, serviceId };
 }

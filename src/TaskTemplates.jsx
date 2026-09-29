@@ -152,7 +152,6 @@ export default function TaskTemplates({
       if (result) closeDialog();
       return;
     }
-    if (!form.dueAt) { setFormError("Vui lòng nhập hạn hoàn thành."); return; }
     const result = await mutate(`create-task:${dialog.template.id}`, `/task-templates/${encodeURIComponent(dialog.template.id)}/create`, "POST", { dueAt: isoDateTime(form.dueAt), teamId: form.teamId || null }, "Đã tạo công việc từ mẫu.");
     if (result?.task) {
       onCreated?.(result.task);
@@ -254,7 +253,7 @@ export default function TaskTemplates({
                   <>
                     <p className="task-extras-modal-note">Tạo một công việc mới từ nội dung mẫu, sau đó chọn nơi làm việc và hạn.</p>
                     <label className="task-extras-field"><span>Team</span><select data-template-autofocus value={form.teamId} onChange={event => setForm(current => ({ ...current, teamId: event.target.value }))}><option value="">Việc chung của doanh nghiệp</option>{activeTeams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label>
-                    <label className="task-extras-field"><span>Hạn hoàn thành <b>*</b></span><input required aria-required="true" aria-describedby={formError ? "task-template-form-error" : undefined} aria-invalid={Boolean(formError)} type="datetime-local" value={form.dueAt} onChange={event => { setFormError(""); setForm(current => ({ ...current, dueAt: event.target.value })); }} /></label>
+                    <label className="task-extras-field"><span>Hạn hoàn thành (cần cho công việc lặp)</span><input aria-describedby={formError ? "task-template-form-error" : undefined} aria-invalid={Boolean(formError)} type="datetime-local" value={form.dueAt} onChange={event => { setFormError(""); setForm(current => ({ ...current, dueAt: event.target.value })); }} /></label>
                   </>
                 )}
                 {sourceLoading && dialog.kind === "create" && <p role="status">Đang tải checklist…</p>}

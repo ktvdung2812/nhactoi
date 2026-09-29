@@ -1,3 +1,5 @@
+import { RECURRENCES as RECURRENCE_VALUES } from "../shared/task-recurrence.mjs";
+import { validateRecurrenceOptions, storedRecurrenceOptions } from "./recurrence.mjs";
 import { createId } from "./auth.mjs";
 import { resolveTaskColumn } from "./boards.mjs";
 import {
@@ -80,7 +82,7 @@ const MAX_CHECKLIST_ITEMS = 100;
 const KINDS = new Set(["task", "checklist"]);
 const STATUSES = new Set(["todo", "doing", "done"]);
 const PRIORITIES = new Set(["low", "medium", "high"]);
-const RECURRENCES = new Set(["none", "daily", "weekly", "monthly"]);
+const RECURRENCES = new Set(RECURRENCE_VALUES);
 
 function errorOf(HttpError, status, message) {
   return new (HttpError || Error)(status, message);
@@ -128,6 +130,7 @@ function nowIso(clock) {
 }
 
 function dueValue(value, HttpError) {
+  if (value === null || value === undefined || value === "") return null;
   if (typeof value !== "string" || !value.trim())
     throw errorOf(HttpError, 400, "dueAt is required");
   const date = new Date(value);
@@ -252,7 +255,7 @@ function checklistRows(db, workspaceId, taskId) {
     .all(workspaceId, taskId);
   const itemRows = db
     .prepare(
-      `SELECT i.id, i.checklist_id, i.title, i.completed, i.position, i.created_at
+      `SELECT i.id, i.checklist_id, i.title, i.completed, i.position, i.start_at, i.due_at, i.remind_at, i.created_at
        FROM task_checklist_items i
        JOIN task_checklists c ON c.id = i.checklist_id AND c.task_id = ?
        JOIN tasks t ON t.id = c.task_id AND t.workspace_id = ?
@@ -260,10 +263,29 @@ function checklistRows(db, workspaceId, taskId) {
        ORDER BY i.position ASC, i.created_at ASC, i.id ASC`,
     )
     .all(taskId, workspaceId);
+  const assigneeRows = itemRows.length
+    ? db.prepare(
+      `SELECT item_id, user_id FROM task_checklist_assignees WHERE item_id IN (${itemRows.map(() => "?").join(",")}) ORDER BY user_id`,
+    ).all(...itemRows.map((row) => row.id))
+    : [];
+  const assigneeIds = new Map();
+  for (const row of assigneeRows) {
+    const list = assigneeIds.get(row.item_id) || [];
+    list.push(row.user_id);
+    assigneeIds.set(row.item_id, list);
+  }
   const items = new Map();
   for (const row of itemRows) {
     const list = items.get(row.checklist_id) || [];
-    list.push({ id: row.id, title: row.title, completed: Boolean(row.completed) });
+    list.push({
+      id: row.id,
+      title: row.title,
+      completed: Boolean(row.completed),
+      startAt: row.start_at || null,
+      dueAt: row.due_at || null,
+      remindAt: row.remind_at || null,
+      assigneeIds: assigneeIds.get(row.id) || [],
+    });
     items.set(row.checklist_id, list);
   }
   return lists.map((row) => ({ id: row.id, title: row.title, items: items.get(row.id) || [] }));
@@ -347,6 +369,12 @@ function validateAssigneeIds(db, workspaceId, teamId, ids, HttpError) {
   }
 }
 
+function isCardMember(db, task, userId) {
+  if (!task || !userId) return false;
+  if (task.assignee_id === userId) return true;
+  return Boolean(db.prepare("SELECT 1 FROM task_assignees WHERE task_id = ? AND user_id = ?").get(task.id, userId));
+}
+
 function validAssigneeId(db, workspaceId, teamId, id) {
   if (!id || !validWorkspaceMember(db, workspaceId, id)) return false;
   if (!teamId) return true;
@@ -370,9 +398,12 @@ function validateLabelIds(db, workspaceId, ids, HttpError) {
 }
 
 function setTaskExtras(db, workspaceId, taskId, assigneeIds, labelIdsValue, now) {
-  db.prepare("DELETE FROM task_assignees WHERE task_id = ?").run(taskId);
+  const retained = new Set(assigneeIds);
+  for (const previous of db.prepare("SELECT user_id FROM task_assignees WHERE task_id = ?").all(taskId)) {
+    if (!retained.has(previous.user_id)) db.prepare("DELETE FROM task_assignees WHERE task_id = ? AND user_id = ?").run(taskId, previous.user_id);
+  }
   const insertAssignee = db.prepare(
-    "INSERT INTO task_assignees(task_id, user_id, position, created_at) VALUES (?, ?, ?, ?)",
+    "INSERT INTO task_assignees(task_id, user_id, position, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(task_id,user_id) DO UPDATE SET position=excluded.position",
   );
   assigneeIds.forEach((id, index) => insertAssignee.run(taskId, id, index, now));
   db.prepare("DELETE FROM task_label_links WHERE task_id = ?").run(taskId);
@@ -419,6 +450,7 @@ function taskTemplatePayload(db, workspaceId, task) {
     customerId: task.customer_id,
     category: task.category,
     recurrence: task.recurrence,
+    recurrenceOptions: storedRecurrenceOptions(task),
     teamId: task.team_id || null,
     columnId: task.column_id || null,
     assigneeIds: extraAssigneeIds(db, task.id),
@@ -456,13 +488,18 @@ function insertChecklistTree(db, taskId, payload, actorUserId, now) {
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ).run(checklistId, taskId, list.title, created.length, actorUserId, now, now);
     const items = [];
+    const task = db.prepare("SELECT id, assignee_id, workspace_id, team_id FROM tasks WHERE id = ?").get(taskId);
     for (const [index, item] of (list.items || []).entries()) {
       const itemId = createId("checkitem_");
       db.prepare(
         `INSERT INTO task_checklist_items
-         (id, checklist_id, title, completed, position, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run(itemId, checklistId, item.title, item.completed ? 1 : 0, index, now, now);
+         (id, checklist_id, title, completed, position, start_at, due_at, remind_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(itemId, checklistId, item.title, item.completed ? 1 : 0, index, item.startAt || null, item.dueAt || null, item.remindAt || null, now, now);
+      const insertAssignee = db.prepare("INSERT INTO task_checklist_assignees(item_id, user_id) VALUES (?, ?)");
+      for (const userId of item.assigneeIds || []) {
+        if (task && validAssigneeId(db, task.workspace_id, task.team_id, userId) && isCardMember(db, task, userId)) insertAssignee.run(itemId, userId);
+      }
       items.push({ id: itemId, title: item.title, completed: Boolean(item.completed) });
     }
     created.push({ id: checklistId, title: list.title, items });
@@ -488,19 +525,26 @@ function copyChecklistTree(db, sourceTaskId, targetTaskId, actorUserId, now) {
        (id, task_id, title, position, created_by, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ).run(checklistId, targetTaskId, list.title, created.length, actorUserId, now, now);
+    const target = db.prepare("SELECT id, assignee_id, workspace_id, team_id FROM tasks WHERE id = ?").get(targetTaskId);
     const items = db
       .prepare(
-        `SELECT title, completed, position, created_at, id
+        `SELECT title, completed, position, created_at, id, start_at, due_at, remind_at
          FROM task_checklist_items WHERE checklist_id = ?
          ORDER BY position ASC, created_at ASC, id ASC`,
       )
       .all(list.id);
     items.forEach((item, index) => {
+      const itemId = createId("checkitem_");
       db.prepare(
         `INSERT INTO task_checklist_items
-         (id, checklist_id, title, completed, position, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run(createId("checkitem_"), checklistId, item.title, item.completed ? 1 : 0, index, now, now);
+         (id, checklist_id, title, completed, position, start_at, due_at, remind_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(itemId, checklistId, item.title, item.completed ? 1 : 0, index, item.start_at || null, item.due_at || null, item.remind_at || null, now, now);
+      const people = db.prepare("SELECT user_id FROM task_checklist_assignees WHERE item_id = ?").all(item.id);
+      const insertAssignee = db.prepare("INSERT INTO task_checklist_assignees(item_id, user_id) VALUES (?, ?)");
+      for (const person of people) {
+        if (target && validAssigneeId(db, target.workspace_id, target.team_id, person.user_id) && isCardMember(db, target, person.user_id)) insertAssignee.run(itemId, person.user_id);
+      }
     });
     created.push(checklistId);
   }
@@ -522,6 +566,7 @@ function insertTaskFromData(
     customerId = null,
     category = "",
     recurrence = "none",
+    recurrenceOptions,
     columnId = undefined,
     actorUserId,
     now,
@@ -532,6 +577,8 @@ function insertTaskFromData(
   const requestedStatus = STATUSES.has(status) ? status : "todo";
   const requestedPriority = PRIORITIES.has(priority) ? priority : "medium";
   const requestedRecurrence = RECURRENCES.has(recurrence) ? recurrence : "none";
+  const options = validateRecurrenceOptions(requestedRecurrence, recurrenceOptions, HttpError);
+  if (!dueAt && requestedRecurrence !== "none") throw errorOf(HttpError, 400, "Công việc lặp cần có hạn hoàn thành.");
   const column = resolveTaskColumn(db, {
     workspaceId,
     teamId,
@@ -545,8 +592,8 @@ function insertTaskFromData(
     `INSERT INTO tasks
      (id, workspace_id, title, description, status, priority, due_at, remind_at,
       assignee_id, customer_id, team_id, column_id, board_position, category,
-      recurrence, created_by, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
+      recurrence, recurrence_options, recurrence_anchor, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     workspaceId,
@@ -562,6 +609,8 @@ function insertTaskFromData(
     column.id,
     category,
     requestedRecurrence,
+    JSON.stringify(options),
+    requestedRecurrence === "none" ? null : dueAt,
     actorUserId,
     now,
     now,
@@ -602,6 +651,7 @@ function taskDataFromPayload(payload, dueAt, teamId, source, db, auth, HttpError
       customerId: payload.customerId || null,
       category: stringValue(payload.category, "category", HttpError, { max: 120 }),
       recurrence: RECURRENCES.has(payload.recurrence) ? payload.recurrence : "none",
+      recurrenceOptions: payload.recurrenceOptions,
       columnId: source && sameTeam(source.team_id, teamId) ? payload.columnId || undefined : undefined,
       extraIds: filtered,
       labelIds: Array.isArray(payload.labelIds) ? payload.labelIds : [],
@@ -618,6 +668,7 @@ function taskDataFromPayload(payload, dueAt, teamId, source, db, auth, HttpError
     customerId: payload.customerId || null,
     category: stringValue(payload.category, "category", HttpError, { max: 120 }),
     recurrence: RECURRENCES.has(payload.recurrence) ? payload.recurrence : "none",
+    recurrenceOptions: payload.recurrenceOptions,
     columnId: source && sameTeam(source.team_id, teamId) ? payload.columnId || undefined : undefined,
     extraIds,
     labelIds: Array.isArray(payload.labelIds) ? payload.labelIds : [],
@@ -646,6 +697,7 @@ function taskCopyPayload(db, workspaceId, task) {
     customerId: task.customer_id,
     category: task.category,
     recurrence: task.recurrence,
+    recurrenceOptions: storedRecurrenceOptions(task),
     teamId: task.team_id || null,
     columnId: task.column_id || null,
     assigneeIds: extraAssigneeIds(db, task.id),
@@ -950,6 +1002,7 @@ export function registerTaskExtrasRoutes(
           customerId: source.customer_id,
           category: source.category,
           recurrence: source.recurrence,
+          recurrenceOptions: storedRecurrenceOptions(source),
           columnId: source.column_id || undefined,
           actorUserId: req.auth.userId,
           now,
@@ -988,11 +1041,18 @@ export function registerTaskExtrasRoutes(
           `INSERT INTO task_checklists(id, task_id, title, position, created_by, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
         ).run(id, task.id, `${source.title} (copy)`, position, req.auth.userId, now, now);
-        const items = db.prepare("SELECT title, completed, position, created_at, id FROM task_checklist_items WHERE checklist_id = ? ORDER BY position, created_at, id").all(source.id);
-        items.forEach((item, index) => db.prepare(
-          `INSERT INTO task_checklist_items(id, checklist_id, title, completed, position, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        ).run(createId("checkitem_"), id, item.title, item.completed ? 1 : 0, index, now, now));
+        const items = db.prepare("SELECT title, completed, position, created_at, id, start_at, due_at, remind_at FROM task_checklist_items WHERE checklist_id = ? ORDER BY position, created_at, id").all(source.id);
+        items.forEach((item, index) => {
+          const itemId = createId("checkitem_");
+          db.prepare(
+            `INSERT INTO task_checklist_items(id, checklist_id, title, completed, position, start_at, due_at, remind_at, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ).run(itemId, id, item.title, item.completed ? 1 : 0, index, item.start_at || null, item.due_at || null, item.remind_at || null, now, now);
+          const insertAssignee = db.prepare("INSERT INTO task_checklist_assignees(item_id, user_id) VALUES (?, ?)");
+          for (const person of db.prepare("SELECT user_id FROM task_checklist_assignees WHERE item_id = ?").all(item.id)) {
+            if (isCardMember(db, task, person.user_id)) insertAssignee.run(itemId, person.user_id);
+          }
+        });
         createdId = id;
         recordActivity(recordTaskActivity, db, {
           taskId: task.id,
@@ -1038,12 +1098,19 @@ export function registerTaskExtrasRoutes(
       const source = taskOr404(req, { write: true });
       const item = itemById(db, req.auth.workspaceId, source.id, req.params.checklistId, req.params.itemId);
       if (!item) throw errorOf(HttpError, 404, "checklist item was not found");
-      const dueAt = dueValue(req.body.dueAt, HttpError);
-      const assigneeId = validAssigneeId(db, source.workspace_id, source.team_id, source.assignee_id)
-        ? source.assignee_id
-        : null;
-      const extras = extraAssigneeIds(db, source.id)
-        .filter((id) => id !== assigneeId && validAssigneeId(db, source.workspace_id, source.team_id, id));
+      const itemDue = item.due_at && /^\d{4}-\d{2}-\d{2}$/.test(item.due_at) ? `${item.due_at}T00:00:00.000Z` : null;
+      const dueAt = req.body.dueAt === undefined || req.body.dueAt === null || req.body.dueAt === ""
+        ? itemDue || source.due_at
+        : dueValue(req.body.dueAt, HttpError);
+      const itemPeople = db.prepare("SELECT user_id FROM task_checklist_assignees WHERE item_id = ? ORDER BY user_id").all(item.id)
+        .map((row) => row.user_id)
+        .filter((id) => validAssigneeId(db, source.workspace_id, source.team_id, id));
+      const assigneeId = itemPeople.length
+        ? itemPeople[0]
+        : validAssigneeId(db, source.workspace_id, source.team_id, source.assignee_id) ? source.assignee_id : null;
+      const extras = itemPeople.length
+        ? itemPeople.slice(1)
+        : extraAssigneeIds(db, source.id).filter((id) => id !== assigneeId && validAssigneeId(db, source.workspace_id, source.team_id, id));
       const labels = labelIds(db, source.workspace_id, source.id);
       const now = timestamp();
       let id;
@@ -1056,7 +1123,7 @@ export function registerTaskExtrasRoutes(
           status: "todo",
           priority: source.priority,
           dueAt,
-          remindAt: null,
+          remindAt: item.remind_at && !Number.isNaN(new Date(item.remind_at).getTime()) ? new Date(item.remind_at).toISOString() : null,
           assigneeId,
           customerId: source.customer_id,
           category: source.category,

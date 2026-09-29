@@ -201,11 +201,13 @@ test("notification outbox is durable, retries failures, and rechecks revoked acc
     body: { fcmToken: "fcm-failing-token" },
   });
   assert.equal(secondInstallation.response.status, 200);
+  const taskResult = await request(server.base, "/api/tasks", {method:"POST",cookie:owner.cookie,body:{title:"Push task",dueAt:"2026-01-02T00:00:00Z"}});
+  assert.equal(taskResult.response.status,201);
   const notificationId = "notification_mobile_outbox";
   server.db.prepare(
-    `INSERT INTO notifications(id,workspace_id,user_id,type,title,message,entity_type,entity_id,created_at)
-     VALUES (?,?,?,?,?,?,?,?,?)`,
-  ).run(notificationId, owner.json.workspace.id, owner.json.user.id, "task_reminder", "Nhắc", "Nội dung", "task", "task-x", "2026-01-01T00:00:00.000Z");
+    `INSERT INTO notifications(id,workspace_id,user_id,type,title,message,entity_type,entity_id,created_at,task_id)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`,
+  ).run(notificationId, owner.json.workspace.id, owner.json.user.id, "task_reminder", "Nhắc", "Nội dung", "task", taskResult.json.task.id, "2026-01-01T00:00:00.000Z", taskResult.json.task.id);
   assert.equal(server.db.prepare("SELECT COUNT(*) AS n FROM notification_outbox").get().n, 1);
   const firstRun = await server.app.locals.processNotificationOutbox();
   assert.deepEqual(firstRun, { processed: 1, sent: 0, failed: 1, skipped: 0 });
@@ -370,9 +372,11 @@ test("notification outbox serializes overlapping workers per database", async (t
     body: { fcmToken: "fcm-overlap-token" },
   });
   assert.equal(device.response.status, 200);
+  const taskResult = await request(server.base, "/api/tasks", {method:"POST",cookie:owner.cookie,body:{title:"Overlap task",dueAt:"2026-01-02T00:00:00Z"}});
+  assert.equal(taskResult.response.status,201);
   server.db.prepare(
-    "INSERT INTO notifications(id,workspace_id,user_id,type,title,message,created_at) VALUES (?,?,?,?,?,?,?)",
-  ).run("mobile-overlap-notification", owner.json.workspace.id, owner.json.user.id, "task_reminder", "Nhắc", "Nội dung", "2026-01-01T00:00:00.000Z");
+    "INSERT INTO notifications(id,workspace_id,user_id,task_id,type,title,message,created_at) VALUES (?,?,?,?,?,?,?,?)",
+  ).run("mobile-overlap-notification", owner.json.workspace.id, owner.json.user.id, taskResult.json.task.id, "task_reminder", "Nhắc", "Nội dung", "2026-01-01T00:00:00.000Z");
 
   const first = server.app.locals.processNotificationOutbox();
   await firstSend;

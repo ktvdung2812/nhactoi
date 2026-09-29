@@ -97,8 +97,102 @@ function checklistJson(row) {
   };
 }
 
-function itemJson(row) {
-  return { id: row.id, title: row.title, completed: Boolean(row.completed) };
+function itemJson(row, assignees = []) {
+  const people = Array.isArray(assignees) ? assignees : [];
+  return {
+    id: row.id,
+    title: row.title,
+    completed: Boolean(row.completed),
+    startAt: row.start_at || null,
+    dueAt: row.due_at || null,
+    remindAt: row.remind_at || null,
+    assigneeIds: people.map((person) => person.id),
+    assignees: people.map((person) => ({ id: person.id, name: person.name || "" })),
+  };
+}
+
+function optionalDate(value, field, HttpError, { dateOnly = false } = {}) {
+  if (value === undefined) return undefined;
+  if (value === null || value === "") return null;
+  if (typeof value !== "string") throw new HttpError(400, dateOnly ? "Ngày mục checklist không hợp lệ" : `${field} is invalid`);
+  const text = value.trim();
+  if (dateOnly) {
+    const parsed = new Date(`${text}T00:00:00.000Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(text) || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== text)
+      throw new HttpError(400, "Ngày mục checklist không hợp lệ");
+    return text;
+  }
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) throw new HttpError(400, `${field} is invalid`);
+  return date.toISOString();
+}
+
+// Sub-task assignees come from the parent card only: the primary assignee plus collaborators.
+function cardMembers(db, task) {
+  const extras = db
+    .prepare(
+      `SELECT u.id, u.name
+       FROM task_assignees a
+       JOIN users u ON u.id = a.user_id AND u.disabled_at IS NULL
+       WHERE a.task_id = ?
+       ORDER BY a.position ASC, u.name COLLATE NOCASE ASC, u.id ASC`,
+    )
+    .all(task.id);
+  const seen = new Set(extras.map((member) => member.id));
+  const people = [];
+  if (task.assignee_id && !seen.has(task.assignee_id)) {
+    const primary = db.prepare("SELECT id, name FROM users WHERE id = ? AND disabled_at IS NULL").get(task.assignee_id);
+    if (primary) people.push(primary);
+  }
+  return [...people, ...extras];
+}
+
+function assigneeMap(db, itemIds) {
+  const map = new Map();
+  if (!itemIds.length) return map;
+  const rows = db
+    .prepare(
+      `SELECT a.item_id, u.id, u.name
+       FROM task_checklist_assignees a
+       JOIN users u ON u.id = a.user_id
+       WHERE a.item_id IN (${itemIds.map(() => "?").join(",")})
+       ORDER BY u.name COLLATE NOCASE ASC, u.id ASC`,
+    )
+    .all(...itemIds);
+  for (const row of rows) {
+    const list = map.get(row.item_id) || [];
+    list.push({ id: row.id, name: row.name });
+    map.set(row.item_id, list);
+  }
+  return map;
+}
+
+function loadItem(db, itemId) {
+  const row = db
+    .prepare("SELECT id, title, completed, start_at, due_at, remind_at FROM task_checklist_items WHERE id = ?")
+    .get(itemId);
+  return itemJson(row, assigneeMap(db, [itemId]).get(itemId) || []);
+}
+
+function assertAssignees(db, task, ids, HttpError) {
+  if (!Array.isArray(ids) || ids.length > 30)
+    throw new HttpError(400, "assigneeIds must be an array of at most 30 members");
+  const unique = ids.map((id) => {
+    if (typeof id !== "string" || !id.trim() || id.trim().length > 160)
+      throw new HttpError(400, "assigneeIds is invalid");
+    return id.trim();
+  });
+  if (new Set(unique).size !== unique.length) throw new HttpError(400, "assigneeIds contains duplicates");
+  const allowed = new Set(cardMembers(db, task).map((member) => member.id));
+  if (unique.some((id) => !allowed.has(id)))
+    throw new HttpError(400, "Người phụ trách mục checklist phải là thành viên của thẻ");
+  return unique;
+}
+
+function replaceAssignees(db, itemId, ids) {
+  db.prepare("DELETE FROM task_checklist_assignees WHERE item_id = ?").run(itemId);
+  const insert = db.prepare("INSERT INTO task_checklist_assignees(item_id, user_id) VALUES (?, ?)");
+  for (const id of ids) insert.run(itemId, id);
 }
 
 function attachmentJson(row) {
@@ -156,7 +250,7 @@ function checklistRows(db, taskId, workspaceId) {
   const itemRows = db
     .prepare(
       `
-        SELECT i.id, i.checklist_id, i.title, i.completed, i.created_at
+        SELECT i.id, i.checklist_id, i.title, i.completed, i.start_at, i.due_at, i.remind_at, i.created_at
         FROM task_checklist_items i
         JOIN task_checklists c ON c.id = i.checklist_id
         JOIN tasks t ON t.id = c.task_id AND t.workspace_id = ?
@@ -165,10 +259,11 @@ function checklistRows(db, taskId, workspaceId) {
       `,
     )
     .all(workspaceId, taskId);
+  const people = assigneeMap(db, itemRows.map((row) => row.id));
   const items = new Map();
   for (const row of itemRows) {
     const list = items.get(row.checklist_id) || [];
-    list.push(itemJson(row));
+    list.push(itemJson(row, people.get(row.id) || []));
     items.set(row.checklist_id, list);
   }
   return rows.map((row) => checklistJson({ ...row, items: items.get(row.id) || [] }));
@@ -285,6 +380,7 @@ function changedTaskSummary(before, after) {
     ["team_id", "team"],
     ["category", "nhóm dịch vụ"],
     ["recurrence", "lặp lại"],
+    ["recurrence_options", "quy tắc lặp"],
   ];
   const changed = fields
     .filter(([column]) => (before[column] ?? null) !== (after[column] ?? null))
@@ -336,6 +432,7 @@ function detailPayload(db, task, auth, baseTaskJson, canAccessTeamTask, clock) {
   return {
     task: taskJson(task, baseTaskJson),
     checklists: checklistRows(db, task.id, auth.workspaceId),
+    checklistMembers: cardMembers(db, task),
     attachments: attachmentRows(db, task.id, auth.workspaceId),
     comments: commentRows(db, task.id, auth.workspaceId),
     activity: activityRows(db, task.id, auth.workspaceId),
@@ -469,6 +566,40 @@ export function registerTaskDetailRoutes(
     }
   });
 
+  app.put("/api/tasks/:id/checklists/order", requireAuth, (req, res, next) => {
+    try {
+      ensureWritable(req);
+      const task = taskOr404(req, { write: true });
+      const body = bodyObject(req.body, HttpError);
+      assertKeys(body, new Set(["ids"]), HttpError);
+      if (!Array.isArray(body.ids) || body.ids.length > MAX_CHECKLISTS)
+        throw new HttpError(400, "ids must include every checklist");
+      const ids = body.ids.map((id) => {
+        if (typeof id !== "string" || !id.trim()) throw new HttpError(400, "ids must include every checklist");
+        return id;
+      });
+      if (new Set(ids).size !== ids.length) throw new HttpError(400, "ids contains duplicates");
+      const rows = db.prepare("SELECT id FROM task_checklists WHERE task_id = ? ORDER BY position, created_at, id").all(task.id);
+      if (rows.length !== ids.length || rows.some((row) => !ids.includes(row.id)))
+        throw new HttpError(400, "ids must include every checklist");
+      const now = isoNow(clock);
+      withTransaction(db, () => {
+        const update = db.prepare("UPDATE task_checklists SET position = ?, updated_at = ? WHERE id = ? AND task_id = ?");
+        ids.forEach((id, index) => update.run(index, now, id, task.id));
+        recordTaskActivity(db, {
+          taskId: task.id,
+          actorUserId: req.auth.userId,
+          action: "checklists_reordered",
+          summary: "đã sắp xếp checklist",
+          createdAt: now,
+        });
+      });
+      return res.json({ ids });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
   app.post("/api/tasks/:id/checklists/:checklistId/items", requireAuth, (req, res, next) => {
     try {
       ensureWritable(req);
@@ -495,9 +626,9 @@ export function registerTaskDetailRoutes(
           summary: `đã thêm mục checklist “${title}”`,
           createdAt: now,
         });
-        return db.prepare("SELECT id, title, completed FROM task_checklist_items WHERE id = ?").get(id);
+        return id;
       });
-      return res.status(201).json({ item: itemJson(item) });
+      return res.status(201).json({ item: loadItem(db, item) });
     } catch (error) {
       return next(error);
     }
@@ -508,21 +639,31 @@ export function registerTaskDetailRoutes(
       ensureWritable(req);
       const task = taskOr404(req, { write: true });
       const body = bodyObject(req.body, HttpError);
-      assertKeys(body, new Set(["title", "completed"]), HttpError);
-      if (body.title === undefined && body.completed === undefined)
+      assertKeys(body, new Set(["title", "completed", "startAt", "dueAt", "remindAt", "assigneeIds"]), HttpError);
+      if (body.title === undefined && body.completed === undefined && body.startAt === undefined && body.dueAt === undefined && body.remindAt === undefined && body.assigneeIds === undefined)
         throw new HttpError(400, "no checklist item changes were supplied");
       const item = itemById(db, task.id, req.params.checklistId, req.params.itemId, req.auth.workspaceId);
       if (!item) return fail(res, 404, "checklist item was not found");
       const nextTitle = body.title === undefined ? item.title : text(body.title, "title", cleanString, HttpError);
       const nextCompleted = body.completed === undefined ? Boolean(item.completed) : body.completed;
       if (typeof nextCompleted !== "boolean") throw new HttpError(400, "completed must be true or false");
+      const nextStart = body.startAt === undefined ? item.start_at || null : optionalDate(body.startAt, "startAt", HttpError, { dateOnly: true });
+      const nextDue = body.dueAt === undefined ? item.due_at || null : optionalDate(body.dueAt, "dueAt", HttpError, { dateOnly: true });
+      const nextRemind = body.remindAt === undefined ? item.remind_at || null : optionalDate(body.remindAt, "remindAt", HttpError);
+      if (nextStart && nextDue && nextStart > nextDue) throw new HttpError(400, "Ngày bắt đầu không được sau hạn chót");
+      const nextAssignees = body.assigneeIds === undefined ? null : assertAssignees(db, task, body.assigneeIds, HttpError);
+      const previousAssignees = nextAssignees ? (assigneeMap(db, [item.id]).get(item.id) || []).map((person) => person.id) : [];
+      const assigneesChanged = Boolean(nextAssignees) && (previousAssignees.length !== nextAssignees.length || [...previousAssignees].sort().some((id, index) => id !== [...nextAssignees].sort()[index]));
       const titleChanged = nextTitle !== item.title;
       const completedChanged = nextCompleted !== Boolean(item.completed);
+      const scheduleChanged = nextStart !== (item.start_at || null) || nextDue !== (item.due_at || null);
+      const remindChanged = nextRemind !== (item.remind_at || null);
       const now = isoNow(clock);
       const updated = withTransaction(db, () => {
         db.prepare(
-          "UPDATE task_checklist_items SET title = ?, completed = ?, updated_at = ? WHERE id = ? AND checklist_id = ?",
-        ).run(nextTitle, nextCompleted ? 1 : 0, now, item.id, req.params.checklistId);
+          "UPDATE task_checklist_items SET title = ?, completed = ?, start_at = ?, due_at = ?, remind_at = ?, updated_at = ? WHERE id = ? AND checklist_id = ?",
+        ).run(nextTitle, nextCompleted ? 1 : 0, nextStart, nextDue, nextRemind, now, item.id, req.params.checklistId);
+        if (assigneesChanged) replaceAssignees(db, item.id, nextAssignees);
         if (completedChanged)
           recordTaskActivity(db, {
             taskId: task.id,
@@ -539,9 +680,44 @@ export function registerTaskDetailRoutes(
             summary: `đã đổi tên mục checklist thành “${nextTitle}”`,
             createdAt: now,
           });
-        return db.prepare("SELECT id, title, completed FROM task_checklist_items WHERE id = ?").get(item.id);
+        if (scheduleChanged)
+          recordTaskActivity(db, {
+            taskId: task.id,
+            actorUserId: req.auth.userId,
+            action: "checklist_item_updated",
+            summary: `đã cập nhật ngày của mục checklist “${nextTitle}”`,
+            createdAt: now,
+          });
+        if (remindChanged)
+          recordTaskActivity(db, {
+            taskId: task.id,
+            actorUserId: req.auth.userId,
+            action: "checklist_item_updated",
+            summary: `đã cập nhật lịch nhắc mục checklist “${nextTitle}”`,
+            createdAt: now,
+          });
+        if (assigneesChanged) {
+          const added = nextAssignees.filter((id) => !previousAssignees.includes(id));
+          if (added.length)
+            notifyTaskAudience(db, {
+              taskId: task.id,
+              actorUserId: req.auth.userId,
+              summary: `đã giao bạn mục checklist “${nextTitle}”`,
+              createdAt: now,
+              recipients: added,
+              type: "checklist_assigned",
+            });
+          recordTaskActivity(db, {
+            taskId: task.id,
+            actorUserId: req.auth.userId,
+            action: "checklist_item_updated",
+            summary: `đã cập nhật người phụ trách mục checklist “${nextTitle}”`,
+            createdAt: now,
+          });
+        }
+        return item.id;
       });
-      return res.json({ item: itemJson(updated) });
+      return res.json({ item: loadItem(db, updated) });
     } catch (error) {
       return next(error);
     }

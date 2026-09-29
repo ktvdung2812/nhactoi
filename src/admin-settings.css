@@ -79,9 +79,9 @@
 }
 .settings-plan {
   padding: 18px;
-  background: #f5f8f5;
+  background: var(--bg-subtle, #f5f8f5);
   border-radius: 12px;
-  border: 1px solid #e4ece5;
+  border: 1px solid var(--border-card, #e4ece5);
 }
 .settings-plan > span {
   font-size: var(--text-sm);
@@ -393,4 +393,96 @@
 .board-transfer-actions > label:focus-within {
   outline: 2px solid #26816b;
   outline-offset: 3px;
+}
+
+
+/* Admin Settings Dark Theme Overrides */
+[data-theme="dark"] .settings-card,
+.dark .settings-card {
+  background: var(--bg-surface);
+  border-color: var(--line);
+  color: var(--ink);
+}
+[data-theme="dark"] .settings-card-icon,
+.dark .settings-card-icon {
+  background: var(--bg-hover);
+  color: var(--green);
+}
+[data-theme="dark"] .settings-card-heading h2,
+.dark .settings-card-heading h2 {
+  color: var(--ink);
+}
+[data-theme="dark"] .settings-card-heading p,
+.dark .settings-card-heading p {
+  color: var(--muted);
+}
+[data-theme="dark"] .settings-value span,
+[data-theme="dark"] .settings-values span,
+.dark .settings-value span,
+.dark .settings-values span {
+  color: var(--muted);
+}
+[data-theme="dark"] .settings-value strong,
+[data-theme="dark"] .settings-values strong,
+.dark .settings-value strong,
+.dark .settings-values strong {
+  color: var(--ink);
+}
+[data-theme="dark"] .settings-plan,
+.dark .settings-plan {
+  background: var(--bg-subtle);
+  border-color: var(--line);
+  color: var(--ink);
+}
+[data-theme="dark"] .settings-plan > span,
+.dark .settings-plan > span {
+  color: var(--green);
+}
+[data-theme="dark"] .settings-plan > strong,
+.dark .settings-plan > strong {
+  color: var(--ink);
+}
+[data-theme="dark"] .settings-plan strong small,
+[data-theme="dark"] .settings-plan p,
+.dark .settings-plan strong small,
+.dark .settings-plan p {
+  color: var(--muted);
+}
+[data-theme="dark"] .settings-plan > div,
+.dark .settings-plan > div {
+  border-top-color: var(--line);
+  color: var(--muted);
+}
+[data-theme="dark"] .settings-plan-edit > div,
+.dark .settings-plan-edit > div {
+  border-bottom-color: var(--line);
+}
+[data-theme="dark"] .settings-plan-edit h3,
+.dark .settings-plan-edit h3 {
+  color: var(--ink);
+}
+[data-theme="dark"] .settings-editor .field small,
+.dark .settings-editor .field small {
+  color: var(--muted);
+}
+[data-theme="dark"] .settings-check,
+.dark .settings-check {
+  color: var(--ink);
+}
+[data-theme="dark"] .settings-help,
+.dark .settings-help {
+  color: var(--muted);
+}
+[data-theme="dark"] .settings-actions,
+.dark .settings-actions {
+  border-top-color: var(--line);
+}
+[data-theme="dark"] .settings-actions small,
+.dark .settings-actions small {
+  color: var(--muted);
+}
+[data-theme="dark"] .settings-error,
+.dark .settings-error {
+  background: rgba(224, 115, 103, 0.15);
+  color: #f28b80;
 }

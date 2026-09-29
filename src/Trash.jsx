@@ -7,7 +7,7 @@ const types = { task: "Công việc", customer: "Khách hàng", transaction: "Th
 const date = value => value ? new Date(value).toLocaleString("vi-VN") : "Không rõ";
 const paths = { task: "tasks", customer: "customers", transaction: "transactions" };
 const fieldLabels = { title: "Tiêu đề", name: "Tên", description: "Mô tả", status: "Trạng thái", priority: "Ưu tiên", dueAt: "Hạn hoàn thành", remindAt: "Lịch nhắc", assigneeName: "Người phụ trách", customerName: "Khách hàng", teamName: "Team", category: "Danh mục", recurrence: "Lặp lại", email: "Email", phone: "Điện thoại", company: "Công ty", service: "Dịch vụ", amount: "Số tiền", date: "Ngày ghi nhận", type: "Loại giao dịch", createdAt: "Ngày tạo", updatedAt: "Cập nhật cuối" };
-const values = { todo: "Cần làm", doing: "Đang làm", done: "Hoàn thành", low: "Thấp", medium: "Trung bình", high: "Cao", none: "Không lặp lại", daily: "Hàng ngày", weekly: "Hàng tuần", monthly: "Hàng tháng", income: "Thu", expense: "Chi" };
+const values = { todo: "Cần làm", doing: "Đang làm", done: "Hoàn thành", low: "Thấp", medium: "Trung bình", high: "Cao", none: "Không lặp lại", daily: "Hàng ngày", weekly: "Hàng tuần", monthly: "Hàng tháng", yearly: "Hàng năm", income: "Thu", expense: "Chi" };
 function detailValue(key, value) {
   if (value == null || value === "") return "Chưa có thông tin";
   if (key === "amount") return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(value);

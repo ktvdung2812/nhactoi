@@ -1,11 +1,11 @@
 import RemoteStorageSettings from "./RemoteStorageSettings.jsx";
 import OperationsSettings from "./OperationsSettings.jsx";
+import AiSettings from "./AiSettings.jsx";
 import React, { useEffect, useRef, useState } from "react";
 import {
   Globe,
   Receipt,
   Mail,
-  CreditCard,
   Pencil,
   Save,
   X,
@@ -15,14 +15,11 @@ import {
   Sparkles,
   ArrowUpRight,
   LoaderCircle,
-  Users,
 } from "lucide-react";
 import "./admin-settings.css";
 import ActionMenu from "./ActionMenu.jsx";
 import StorageSettings from "./StorageSettings.jsx";
 
-const money = (value) =>
-  new Intl.NumberFormat("vi-VN").format(value || 0) + " ₫";
 function Field({ label, hint, ...props }) {
   return (
     <label className="field">
@@ -60,7 +57,7 @@ function Connection({ ready }) {
     </span>
   );
 }
-export default function AdminSettings({ data, api, onSaved, openPreview }) {
+export default function AdminSettings({ data, api, onSaved, openPreview, openPlans }) {
   const [editing, setEditing] = useState(null),
     [saving, setSaving] = useState(false),
     [error, setError] = useState("");
@@ -85,14 +82,6 @@ export default function AdminSettings({ data, api, onSaved, openPreview }) {
     const f = Object.fromEntries(new FormData(event.currentTarget));
     const payload = { reason: f.reason.trim() };
     if (editing === "general") payload.publicAppUrl = f.publicAppUrl.trim();
-    if (editing === "plans")
-      payload.plans = data.plans.map((p) => ({
-        id: p.id,
-        name: f[`${p.id}.name`].trim(),
-        monthly: Number(f[`${p.id}.monthly`]),
-        yearly: Number(f[`${p.id}.yearly`]),
-        seats: Number(f[`${p.id}.seats`]),
-      }));
     if (editing === "billgateway") {
       payload.billgateway = {
         apiUrl: f.apiUrl.trim(),
@@ -227,6 +216,7 @@ export default function AdminSettings({ data, api, onSaved, openPreview }) {
   }
   return (
     <div className="admin-settings">
+      <AiSettings api={api} />
       <StorageSettings api={api} />
       <RemoteStorageSettings api={api}/>
       <OperationsSettings api={api}/>
@@ -250,79 +240,9 @@ export default function AdminSettings({ data, api, onSaved, openPreview }) {
           hint="Sử dụng địa chỉ đầy đủ. Tên miền và quyền truy cập CORS được quản lý riêng trên máy chủ."
         />,
       )}
-      {card(
-        "plans",
-        "Gói dịch vụ",
-        "Giá áp dụng cho hóa đơn mới. Hóa đơn đã tạo giữ nguyên số tiền.",
-        CreditCard,
-        <div className="settings-plan-grid">
-          {(data.plans || []).map((p) => (
-            <div className="settings-plan" key={p.id}>
-              <span>{p.name}</span>
-              <strong>
-                {money(p.monthly)}
-                <small>/ tháng</small>
-              </strong>
-              <p>{money(p.yearly)} / năm</p>
-              <div>
-                <Users size={15} /> Tối đa {p.seats} thành viên
-              </div>
-            </div>
-          ))}
-        </div>,
-        <div className="settings-plan-edit">
-          {(data.plans || []).map((p) => (
-            <div key={p.id}>
-              <h3>
-                {p.name} <small>{p.id}</small>
-              </h3>
-              <div className="settings-fields">
-                <Field
-                  label="Tên gói"
-                  name={`${p.id}.name`}
-                  defaultValue={p.name}
-                  required
-                  maxLength={80}
-                />
-                <Field
-                  label="Số thành viên tối đa"
-                  name={`${p.id}.seats`}
-                  type="number"
-                  min={1}
-                  max={100000}
-                  step={1}
-                  defaultValue={p.seats}
-                  required
-                />
-                <Field
-                  label="Giá tháng (VND)"
-                  name={`${p.id}.monthly`}
-                  type="number"
-                  min={1}
-                  max={1000000000}
-                  step={1}
-                  defaultValue={p.monthly}
-                  required
-                />
-                <Field
-                  label="Giá năm (VND)"
-                  name={`${p.id}.yearly`}
-                  type="number"
-                  min={1}
-                  max={1000000000}
-                  step={1}
-                  defaultValue={p.yearly}
-                  required
-                />
-              </div>
-            </div>
-          ))}
-          <p className="settings-help">
-            Giới hạn thành viên phải đủ cho các doanh nghiệp đang dùng gói, kể
-            cả lời mời còn hiệu lực.
-          </p>
-        </div>,
-      )}
+      <section className="panel settings-card">
+        <div className="settings-card-heading"><div><h2>Gói thuê bao</h2><p>Thêm gói, chỉnh giá, quyền lợi và trạng thái bán tại trang quản lý riêng.</p></div><button className="button secondary" onClick={openPlans}>Quản lý gói <ArrowUpRight size={16} /></button></div>
+      </section>
       {card(
         "billgateway",
         "BillGateway",

@@ -25,21 +25,74 @@
   --radius-dialog: 16px;
   --space-section: 24px;
   --space-field: 16px;
+
+  /* Color tokens */
   --green: #176b59;
+  --green-hover: #105b4b;
+  --green-subtle: #edf5ef;
   --ink: #283c38;
+  --ink-secondary: #4e635c;
   --muted: #65786f;
   --line: #dfe8e2;
+  --border-color: #dfe8e2;
+  --border-card: #d4e2da;
+  --bg-app: #f7f9f8;
+  --bg-surface: #ffffff;
+  --bg-card: #ffffff;
+  --bg-subtle: #f8faf9;
+  --bg-hover: #eef3f0;
+  --bg-input: #ffffff;
+  --modal-overlay: rgba(15, 30, 24, 0.45);
+  --shadow-card: 0 2px 4px rgba(36, 72, 56, 0.04);
+  --shadow-dialog: 0 20px 80px rgba(18, 50, 28, 0.2);
+
   font-family: var(--font-sans);
   font-size: 100%;
 }
-body { font-size: var(--text-base); line-height: var(--leading-body); }
+
+[data-theme="dark"],
+.dark {
+  --green: #2fb99a;
+  --green-hover: #26a287;
+  --green-subtle: rgba(47, 185, 154, 0.12);
+  --ink: #f0f2f5;
+  --ink-secondary: #c2c8d2;
+  --muted: #8b94a2;
+  --line: #2b3038;
+  --border-color: #2b3038;
+  --border-card: #353b45;
+  --bg-app: #101214;
+  --bg-surface: #16181b;
+  --bg-card: #1b1e22;
+  --bg-subtle: #21252b;
+  --bg-hover: #282c34;
+  --bg-input: #131518;
+  --modal-overlay: rgba(0, 0, 0, 0.75);
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.45);
+  --shadow-dialog: 0 20px 80px rgba(0, 0, 0, 0.8);
+  color-scheme: dark;
+}
+
+body {
+  font-size: var(--text-base);
+  line-height: var(--leading-body);
+  background: var(--bg-app);
+  color: var(--ink);
+}
+
 .teams-page {
   --teams-ink: var(--ink);
   --teams-muted: var(--muted);
   --teams-line: var(--line);
   --teams-green: var(--green);
+  --teams-soft: var(--bg-subtle);
 }
-.tickets { --ticket-border: var(--line); --ticket-muted: var(--muted); }
+
+.tickets {
+  --ticket-border: var(--line);
+  --ticket-muted: var(--muted);
+}
+
 button, input, select, textarea { font-family: var(--font-sans); }
 code, pre { font-family: var(--font-mono); }
 h1, h2, h3 { font-weight: 600; line-height: var(--leading-heading); }
@@ -56,6 +109,7 @@ body :is(.page-heading, .teams-page-heading, .teams-detail-head, .td-title,
   font-weight: 700;
   line-height: var(--leading-heading);
   letter-spacing: -0.5px;
+  color: var(--ink);
 }
 body :is(.page-heading, .teams-page-heading, .teams-detail-head,
   .trash-heading, .services-heading, .task-templates-heading, .admin-details-heading) p {
@@ -68,6 +122,7 @@ body :is(.panel-head, .td-section-heading, .settings-card-heading,
   font-size: var(--font-section-title);
   font-weight: 600;
   line-height: var(--leading-heading);
+  color: var(--ink);
 }
 .eyebrow, .teams-eyebrow, .nav-caption {
   font-size: var(--text-xs);
@@ -113,17 +168,34 @@ body :is(.app-shell, .modal, .teams-modal, .ticket-create, .auth-form, .invite-p
   border-radius: var(--radius-control);
   min-width: 0;
   max-width: 100%;
+  background: var(--bg-input);
+  border-color: var(--line);
+  color: var(--ink);
 }
 body :is(.field > span, .field > label, .service-modal label, .services-modal .field,
   .teams-modal label, .ticket-create label) {
   font-size: var(--text-sm);
   line-height: var(--leading-body);
   font-weight: 500;
+  color: var(--ink);
 }
 body :is(.panel, .td-panel, .customer-card, .service-card, .services-card,
-  .settings-card, .ticket-list-panel, .teams-card) { border-radius: var(--radius-card); }
+  .settings-card, .ticket-list-panel, .teams-card, .teams-member-card,
+  .task-template-card, .stat-card, .pricing-card, .info-card,
+  .theme-option-card, .trash-panel, .auth-form, .dev-accounts-panel, .dev-account-card) {
+  border-radius: var(--radius-card);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-card, var(--line));
+  color: var(--ink);
+}
 body :is(.modal, .teams-modal, .ticket-create, .workflow-board-modal,
-  .task-extras-modal, .admin-details-modal) { border-radius: var(--radius-dialog); }
+  .task-extras-modal, .admin-details-modal) {
+  border-radius: var(--radius-dialog);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-card, var(--line));
+  color: var(--ink);
+  box-shadow: var(--shadow-dialog);
+}
 body :is(.td-panel, .service-card, .services-card, .services-panel) { padding: 20px; }
 .form-error, .form-success, .hint { font-size: var(--text-sm); line-height: var(--leading-body); }
 body :is(.button, .teams-button, .icon-button, .icon-btn, .action-menu-trigger,
@@ -152,4 +224,52 @@ body :is(.button, .teams-button, .icon-button, .icon-btn, .action-menu-trigger,
     :is(input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=file]), select, textarea) {
     font-size: var(--text-lg);
   }
+}
+
+/* Personal/team preferences use the same tokens as every feature module. */
+:root[data-appearance] {
+  font-size: var(--appearance-font-size);
+  --green: var(--appearance-accent-light);
+  --green-hover: color-mix(in srgb, var(--green), black 12%);
+  --green-subtle: color-mix(in srgb, var(--green) 10%, var(--bg-surface));
+  --space-section: var(--appearance-gap);
+}
+:root[data-appearance][data-theme="dark"] { --green: var(--appearance-accent-dark); }
+:root[data-appearance-background="warm"] { --bg-app: #faf6f0; --bg-subtle: #f5f0e9; --bg-hover: #eee6dc; }
+:root[data-appearance-background="cool"] { --bg-app: #f1f5fb; --bg-subtle: #edf2f9; --bg-hover: #e3ebf6; }
+:root[data-appearance-background="warm"][data-theme="dark"] { --bg-app: #181410; --bg-subtle: #28221c; --bg-hover: #342b22; }
+:root[data-appearance-background="cool"][data-theme="dark"] { --bg-app: #10151e; --bg-subtle: #1b2534; --bg-hover: #253348; }
+:root[data-appearance] .app-shell :is(.sidebar, .topbar, .brand-box) { background: var(--bg-surface); }
+:root[data-appearance] .app-shell .page-content { max-width: var(--appearance-content-width); }
+:root[data-appearance] .app-shell .sidebar nav button.active { background: var(--green-subtle); color: var(--green); }
+:root[data-appearance] .app-shell :is(.button.primary, .teams-button-primary) { background: var(--appearance-accent); color: var(--appearance-on-accent); border-color: var(--appearance-accent); }
+:root[data-appearance] .app-shell :is(.button.primary, .teams-button-primary):hover { filter: brightness(0.95); }
+:root[data-appearance] .app-shell :is(.workspace-switch, .plan-promo, .overview-strip) { background: var(--bg-subtle); border-color: var(--line); color: var(--ink); }
+:root[data-appearance] .app-shell :is(input, select, textarea):focus { border-color: var(--green) !important; box-shadow: 0 0 0 3px var(--green-subtle); }
+:root[data-appearance] .app-shell :is(button, a):focus-visible { outline-color: var(--green); }
+:root[data-appearance-density="compact"] { --control-height: 34px; --space-field: 12px; }
+:root[data-appearance-density="compact"] .app-shell :is(.task-row, .transaction-row) { padding-top: 8px; padding-bottom: 8px; }
+:root[data-appearance-density="compact"] .app-shell :is(.panel, .td-panel, .settings-card, .stat-card) { padding: 14px; }
+:root[data-appearance-density="compact"] .app-shell :is(.dashboard-grid, .stats-grid, .appearance-grid) { gap: 12px; }
+:root[data-appearance-density="compact"] .app-shell .sidebar nav button { padding-top: 7px; padding-bottom: 7px; }
+@media (min-width: 761px) {
+  :root[data-appearance] .app-shell .sidebar:not(.hidden), :root[data-appearance] .app-shell .brand-box { width: var(--appearance-sidebar-width); }
+  :root[data-appearance] .app-shell .main:not(.sidebar-collapsed) { margin-left: var(--appearance-sidebar-width); }
+  :root[data-appearance-density="compact"] .app-shell .page-content { padding: 20px 24px 0; }
+}
+@media (max-width: 760px) {
+  :root[data-appearance] { --control-height: 44px; }
+}
+:root[data-appearance] .app-shell :is(.task-board-card, .workflow-board-archived, .workflow-board-archived-row) { border-radius: var(--radius-card); background: var(--bg-card); border-color: var(--border-card); color: var(--ink); }
+:root[data-appearance] .app-shell :is(.workflow-board-button.primary, .task-extras-button.primary) { background: var(--appearance-accent); color: var(--appearance-on-accent); }
+:root[data-appearance-density="compact"] .app-shell .task-board-card { padding: 8px; }
+:root[data-appearance-density="compact"] .app-shell .task-board-cards { gap: 6px; }
+@media (max-width: 600px) {
+  .app-shell .topbar { padding-left: 12px; padding-right: 12px; }
+  .app-shell .topbar-left, .app-shell .top-actions { gap: 4px; }
+  .app-shell .brand-word { display: none; }
+}
+
+@media (max-width: 400px) {
+  .app-shell .topbar .brand-box { display: none; }
 }

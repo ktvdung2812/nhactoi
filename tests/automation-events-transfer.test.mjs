@@ -18,7 +18,7 @@ test('board transfer preserves checklist order and rejects unsupported recurrenc
  assert.equal((await call(s,'/board-transfer',{method:'POST',cookie:owner.cookie,body:{data:exported}})).status,201);
  const imported=s.db.prepare('SELECT id FROM tasks WHERE workspace_id=? AND id!=?').get(owner.workspace.id,card.id);
  assert.deepEqual(s.db.prepare('SELECT i.title,i.position FROM task_checklist_items i JOIN task_checklists c ON c.id=i.checklist_id WHERE c.task_id=? ORDER BY i.position').all(imported.id).map(i=>[i.title,i.position]),[['Bước đầu',0],['Bước sau',1]]);
- const invalid={...exported,tasks:[{...exported.tasks[0],recurrence:'yearly'}]};
+ const invalid={...exported,tasks:[{...exported.tasks[0],recurrence:'hourly'}]};
  assert.equal((await call(s,'/board-transfer',{method:'POST',cookie:owner.cookie,body:{data:invalid}})).status,400);
  assert.equal(s.db.prepare('SELECT count(*) n FROM tasks WHERE workspace_id=?').get(owner.workspace.id).n,2);
 });

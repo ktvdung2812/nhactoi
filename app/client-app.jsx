@@ -1,5 +1,6 @@
 "use client";
 
+import { WebAppBootstrap } from "../src/WebPushSettings.jsx";
 import dynamic from "next/dynamic";
 import { Bell } from "lucide-react";
 import { usePathname } from "next/navigation";
@@ -24,6 +25,7 @@ export default function ClientApp({ children }) {
 
   return (
     <>
+      <WebAppBootstrap />
       {validRoute && (
         <ErrorBoundary>
           <LegacyApp />

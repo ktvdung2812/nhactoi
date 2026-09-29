@@ -131,6 +131,8 @@ test(
           FRONTEND_ORIGIN: base,
           COOKIE_SECURE: "false",
           DISABLE_BACKGROUND_WORKER: "true",
+          WEB_PUSH_PUBLIC_KEY: "",
+          WEB_PUSH_PRIVATE_KEY: "",
           NHACTOI_SETTINGS_KEY:
             "1111111111111111111111111111111111111111111111111111111111111111",
           BILLGATE_API_URL: "",
@@ -161,11 +163,21 @@ test(
     const readyPage = await ready.text();
     assert.match(readyPage, /Đang mở không gian làm việc/);
 
+    const manifestResponse = await request(base, '/manifest.webmanifest');
+    assert.equal(manifestResponse.status, 200);
+    assert.equal((await manifestResponse.json()).display, 'standalone');
+    const workerResponse = await request(base, '/sw.js');
+    assert.equal(workerResponse.status, 200);
+    assert.equal(workerResponse.headers.get('cache-control'), 'no-cache');
+    assert.match(await workerResponse.text(), /notificationclick/);
+    assert.equal((await request(base, '/icons/icon-192.png')).headers.get('content-type'), 'image/png');
+    assert.equal((await request(base, '/offline.html')).status, 200);
+
     const deepLink = await request(base, "/tasks/direct-deep-link");
     assert.equal(deepLink.status, 200);
     assert.match(await deepLink.text(), /Đang mở không gian làm việc/);
 
-    for (const path of ["/login", "/register", "/forgot-password", "/reset-password"]) {
+    for (const path of ["/login", "/register", "/forgot-password", "/reset-password", "/inbox", "/today", "/upcoming", "/week"]) {
       const authPage = await request(base, path);
       assert.equal(authPage.status, 200, path);
       assert.match(await authPage.text(), /Đang mở không gian làm việc/);
@@ -242,6 +254,22 @@ test(
     const meResult = await jsonResponse(me);
     assert.equal(me.status, 200);
     assert.equal(meResult.body?.user?.id, registrationResult.body?.user?.id);
+
+    const pushConfig = await request(base, '/api/web-push/config', { cookie });
+    assert.equal(pushConfig.status, 200);
+    assert.equal(pushConfig.headers.get('cache-control'), 'private, no-store');
+    assert.equal((await pushConfig.json()).enabled, false);
+
+    const captured = await request(base, '/api/tasks', { cookie, method: 'POST', body: { title: 'Inbox qua Next' } });
+    const capturedBody = await jsonResponse(captured);
+    assert.equal(captured.status, 201, capturedBody.text);
+    assert.equal(capturedBody.body.task.dueAt, null);
+    const planned = await request(base, `/api/tasks/${capturedBody.body.task.id}/plan`, { cookie, method: 'PATCH', body: { plannedDate: '2030-01-01', plannedTime: '09:00', plannedDuration: 90 } });
+    assert.equal(planned.status, 200);
+    const personal = await jsonResponse(await request(base, '/api/personal-tasks', { cookie }));
+    assert.equal(personal.body.tasks.find(t => t.id === capturedBody.body.task.id).plannedDate, '2030-01-01');
+    assert.equal(personal.body.tasks.find(t => t.id === capturedBody.body.task.id).plannedTime, '09:00');
+    assert.equal(personal.body.tasks.find(t => t.id === capturedBody.body.task.id).plannedDuration, 90);
 
     const title = `Next query ${randomUUID()}`;
     const task = await request(base, "/api/tasks", {

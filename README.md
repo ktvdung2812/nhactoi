@@ -65,10 +65,50 @@ Triển khai trên một Node server chạy liên tục, có volume lưu `data/`
 - Dữ liệu tách theo không gian; vai trò chủ không gian, quản trị viên và thành viên. Có thể chuyển giữa các không gian đã được tham gia từ bộ chọn ở góc trên bên trái.
 - Mục **Công việc** là một bảng cho công việc, lịch hẹn và mốc nhắc, theo cột **Cần làm → Đang làm → Hoàn thành**. Lịch hẹn vẫn giữ giờ bắt đầu/kết thúc và lời nhắc; hoàn thành lịch hẹn sẽ dừng nhắc. Đường dẫn cũ `/calendar` và `/events` mở cùng bảng này. Dữ liệu cũ được giữ nguyên.
 - Hoàn thành một việc lặp theo ngày/tuần/tháng sẽ tạo kỳ tiếp theo một lần. Lịch lặp theo tháng sử dụng ngày lịch Việt Nam (Asia/Ho_Chi_Minh); ngày cuối tháng được chặn theo số ngày thực tế của tháng sau.
-- Lịch nhắc tạo thông báo trong ứng dụng ở phía máy chủ; giao diện cập nhật khoảng 30 giây/lần. **Máy chủ phải đang chạy**. Đóng trình duyệt không làm mất lịch; tắt máy hoặc tắt EnvKit thì lịch được xử lý khi máy chủ chạy lại. Đây chưa phải Web Push đến điện thoại khi ứng dụng đã đóng.
+- Lịch nhắc tạo thông báo trong ứng dụng ở phía máy chủ; giao diện cập nhật khoảng 30 giây/lần. **Máy chủ phải đang chạy**. Đóng trình duyệt không làm mất lịch; tắt máy hoặc tắt EnvKit thì lịch được xử lý khi máy chủ chạy lại. Web Push của trình duyệt là kênh tùy chọn, cần cấu hình VAPID và người dùng bật tại Tài khoản (xem đợt 3). App Android có luồng FCM riêng, phụ thuộc cấu hình Firebase và bản app đã build.
 - Email nhắc việc là tùy chọn, chỉ hoạt động khi cấu hình SMTP. Lời mời nhóm được tạo thành liên kết để tự gửi; ứng dụng không tự gửi email mời.
 - Hồ sơ khách hàng và dịch vụ. Sổ thu–chi VND với danh mục, khách hàng liên quan và tổng theo tháng. Đây là sổ quản lý nội bộ.
 - Gói Starter, Team, Business với giới hạn 3/10/50 thành viên. Giá mẫu sửa trong quản trị SaaS hoặc qua biến môi trường khi chưa có cấu hình lưu; giá năm là tổng cho 12 tháng. Quyền ghi dữ liệu được chặn khi thuê bao hết hạn; vẫn có thể đọc dữ liệu và gia hạn.
+
+## Inbox và kế hoạch cá nhân
+
+- Web có **Inbox** (`/inbox`), **Hôm nay** (`/today`) và **Sắp tới** (`/upcoming`). Hiển thị việc giao cho bạn (gồm người phối hợp) và việc bạn tạo chưa giao ai, trong workspace hiện tại và theo quyền team. Đây là góc nhìn cá nhân; công việc vẫn giữ quyền chia sẻ hiện có, không tự trở thành việc riêng tư.
+- **Thêm việc nhanh** chỉ cần nội dung; hạn hoàn thành không bắt buộc trên web/API và Android. Nhận diện giới hạn các cụm “hôm nay”, “mai”, “ngày mai”, “ngày kia” và giờ `9h`, `9h30`, `09:30`. Có ngày chưa có giờ thì gợi ý 17:00. Luôn xem trước tên/hạn, có thể sửa giờ hoặc tắt nhận diện để giữ nguyên câu. Kế hoạch và nhận diện dùng giờ Việt Nam (UTC+7).
+- Inbox chứa việc chưa có hạn và chưa chọn ngày làm. **Làm hôm nay** hoặc **Ngày dự định làm** lưu kế hoạch riêng từng người; không sửa deadline, không thay lịch nhắc và không ảnh hưởng kế hoạch của người cùng được giao. Hôm nay hiển thị việc đến hạn/ngày làm hôm nay, cùng nhóm **Cần xem lại** cho việc quá hạn hoặc kế hoạch cũ chưa hoàn thành. Sắp tới nhóm theo mốc tương lai sớm nhất giữa hạn và ngày làm.
+- Thêm nhanh có tùy chọn **Nhắc đúng hạn** khi đặt hạn. Không đặt hạn thì không tự phát sinh lời nhắc. Lời nhắc có thời điểm riêng vẫn hoạt động; chuỗi nhắc theo deadline bỏ qua việc chưa có hạn. Công việc lặp vẫn bắt buộc có hạn. Sao chép, mẫu, nhập/xuất bảng hỗ trợ hạn trống cho việc không lặp.
+- Android đọc, sửa và tạo được việc chưa có hạn; việc chưa có hạn xếp sau việc có lịch và không bị tính là quá hạn. Ba màn hình kế hoạch cá nhân hiện có trên web; chưa bổ sung màn hình tương ứng trên Android.
+- API `GET /api/personal-tasks` trả công việc kèm `plannedDate` của người đăng nhập. `PATCH /api/tasks/:id/plan` nhận `{ plannedDate: "YYYY-MM-DD" }` hoặc `null` để bỏ kế hoạch. Hết thuê bao, workspace tạm ngưng hoặc team lưu trữ không cho ghi.
+- Migration **29** cho phép `tasks.due_at` rỗng và thêm `personal_task_plans`. Migration dựng lại bảng tasks trong transaction, giữ bản ghi liên quan/index/trigger và kiểm tra foreign key. Sao lưu DB/kho tệp trước khi triển khai, khởi động lại Next để nạp backend; Android cần build lại. Không đổi migration đã áp dụng và không xóa dữ liệu để nâng cấp.
+
+### Cá nhân & freelancer — đợt 2
+
+- **Lịch tuần** (`/week`) hiển thị Thứ 2–Chủ nhật theo giờ Việt Nam: lịch làm cá nhân, deadline, lịch hẹn được phép xem và kỳ gia hạn hiện tại của dịch vụ bật đồng bộ lịch. Deadline luôn có mục riêng kể cả khi ngày làm khác ngày hạn. Lịch hẹn nhiều ngày xuất hiện ở từng ngày giao nhau; giờ kết thúc đúng 00:00 không chiếm ngày kế tiếp. Việc/lịch hẹn đã hoàn thành không hiển thị.
+- “Lên lịch việc” chọn công việc hiện có, ngày làm, giờ bắt đầu tùy chọn và thời lượng 15–1440 phút, kết thúc trong cùng ngày. “Sắp lịch” hỗ trợ bàn phím/điện thoại; máy tính có thể kéo mục dự định làm sang ngày khác. Lịch chỉ áp dụng cho từng người, không sửa deadline/nhắc. Tạo việc mới qua Inbox hoặc Công việc trước khi lên lịch.
+- `PATCH /api/tasks/:id/plan` nhận `{ plannedDate: "2026-10-01", plannedTime: "09:00", plannedDuration: 90 }`. Bỏ giờ bằng `plannedTime: null`, bỏ cả lịch bằng `plannedDate: null`. Bỏ qua giờ/thời lượng khi cập nhật ngày sẽ giữ giá trị cũ. `GET /api/personal-tasks` trả thêm `plannedTime`, `plannedDuration` (mặc định 60 phút).
+- **Lặp nâng cao** trên web/Android: theo ngày/tuần/tháng/năm, mỗi 1–365 kỳ, chọn thứ trong tuần và preset Thứ 2–Thứ 6 (chưa loại trừ ngày lễ). `recurrenceOptions: { interval: 2, weekdays: [1,3], basis: "due" }`; thứ 1=Thứ 2, 7=Chủ nhật, chỉ dùng `weekdays` với `weekly`. `basis` là `due` (hạn kỳ trước) hoặc `completion` (thời điểm hoàn thành). Client cũ không gửi options vẫn giữ quy tắc nếu không đổi tần suất.
+- Kỳ tiếp theo chỉ tạo một lần sau hoàn thành, kể cả qua board/automation; chưa dựng trước các kỳ tương lai trong lịch. Mốc `due` có thể tạo kỳ còn quá hạn nếu hoàn thành muộn. Mốc `completion` tính cả giờ từ lúc hoàn thành. Lặp theo hạn giữ ngày gốc qua tháng ngắn/năm nhuận (31/1 → 28/2 → 31/3). Khi đổi hạn/quy tắc, mốc gốc được đặt lại. Sao chép/template giữ quy tắc và lấy hạn mới làm mốc; nhập/xuất board giữ mốc gốc.
+- Migration **30** mở rộng ràng buộc lặp, thêm quy tắc/mốc gốc và giờ/thời lượng kế hoạch. Sao lưu DB trước triển khai; khởi động lại Next để áp dụng. Android cần build lại để dùng các điều khiển mới. Chưa có Google Calendar sync, Web Push hay ghi offline trong đợt này.
+
+- Kiểm tra mới: `node --test tests/personal-*.test.mjs`; kiểm tra đầy đủ dùng `npm test`, build và `npm run test:next`, cùng bộ kiểm thử Android. Email/FCM thật vẫn cần cấu hình và thiết bị để xác minh; thay đổi này chưa thêm Web Push hay phát hành store.
+
+### Cá nhân & freelancer — đợt 3
+
+- **Web Push**: vào **Tài khoản → Thông báo & ứng dụng web → Bật thông báo**. Chỉ thao tác này mới yêu cầu quyền trình duyệt. Đăng ký riêng cho mỗi trình duyệt/phiên, nhận nhắc việc, cập nhật công việc, lịch hẹn và gia hạn từ các workspace còn quyền truy cập. Có thể tắt riêng; đăng xuất, reset mật khẩu hoặc vô hiệu tài khoản sẽ hủy đăng ký phía máy chủ. Chuyển workspace giữ đăng ký. Sau khi đăng nhập lại/hết phiên, cần bật lại.
+- Thông báo ngoài ứng dụng chỉ có nội dung chung. Bấm thông báo sẽ xác thực lại, chuyển đến workspace và mở công việc/lịch hẹn/dịch vụ tương ứng nếu còn quyền. Không tự đánh dấu đã đọc. Trình duyệt/hệ điều hành có thể trì hoãn thông báo; cần máy chủ/worker đang chạy, không bảo đảm gửi khi trình duyệt bị buộc dừng.
+- **Cài ứng dụng web**: dùng nút “Cài Nhắc tôi” khi trình duyệt cung cấp, hoặc menu Cài ứng dụng/Thêm vào Màn hình chính. Trên iPhone/iPad hỗ trợ Web Push, mở ứng dụng từ Màn hình chính rồi bật thông báo. Manifest, icon và service worker đi kèm; mất mạng hiển thị trang hướng dẫn kết nối lại. Không cache API, trang có xác thực hay dữ liệu công việc; chưa hỗ trợ ghi offline.
+- Migration **31** thêm đăng ký trình duyệt và hàng đợi theo từng thông báo/trình duyệt. Chỉ xếp hàng các thông báo mới sau khi đăng ký; không gửi lại lịch sử. Kiểm tra lại tài khoản, phiên, workspace/team, trạng thái việc và chính sách hoãn/giờ yên lặng trước mỗi lần gửi. Thành công ở một trình duyệt không bị gửi lại khi trình duyệt khác lỗi; lỗi tạm thời retry tối đa 5 lần, đăng ký 404/410 tự xóa, thông báo chờ hơn 24 giờ bị bỏ qua. Push service giữ thông báo tối đa 1 giờ. Network timeout vẫn có thể dẫn đến gửi trùng; notification tag gộp cùng một thông báo.
+- Địa chỉ đăng ký chỉ chấp nhận các push service Chrome/Firefox/Edge/Safari được hỗ trợ, không gửi HTTP đến URL tùy ý do client cung cấp. Khóa VAPID riêng không trả về client, không ghi endpoint/khóa vào lỗi worker. Hiện giữ mô hình một tiến trình worker với SQLite như FCM/email.
+
+Cấu hình máy chủ (không cần Firebase cho Web Push):
+
+```bash
+npm run web-push:keys
+```
+
+Lưu cặp `publicKey`/`privateKey` vừa tạo vào `WEB_PUSH_PUBLIC_KEY`/`WEB_PUSH_PRIVATE_KEY`; đặt `WEB_PUSH_SUBJECT=mailto:dia-chi-quan-tri@ten-mien-cua-ban`. Giữ private key trong secret store/.env không commit, giữ cùng cặp khóa qua các lần triển khai. Sao lưu DB, khởi động lại Next để nạp migration/cấu hình. Dùng HTTPS ngoài localhost; bảo đảm proxy phục vụ `/sw.js`, `/manifest.webmanifest`, `/icons/*`, `/offline.html` và cho máy chủ gọi HTTPS outbound đến push services. Thiếu/sai cấu hình thì Web Push tắt, các kênh nhắc cũ vẫn hoạt động. Khi đổi cặp khóa, người dùng vào Tài khoản bật lại đăng ký.
+
+Kiểm thử tự động: `node --test tests/web-push.test.mjs tests/web-app.test.mjs`, toàn bộ `npm test`, build và `npm run test:next`. Transport push được giả lập trong test, không gửi thông báo thật. Sau triển khai, bật trên trình duyệt thật, tạo một lời nhắc tương lai cho chính mình, đóng tab và kiểm tra nhận/bấm thông báo; thử tắt quyền, đăng xuất và chuyển workspace. Phần này cần VAPID, HTTPS và thiết bị thực tế.
+
 
 ## Đăng ký và khôi phục mật khẩu
 
@@ -91,7 +131,7 @@ Mở **Quản lý gia hạn** (`/services`) để theo dõi thuê bao, tên mi�
 
 ## Làm việc theo team
 
-- Một doanh nghiệp có nhiều team; mỗi thành viên có thể tham gia nhiều team mà không tăng số chỗ thuê bao. Mời người vào doanh nghiệp ở **Thành viên**, sau đó thêm họ vào team.
+- Một doanh nghiệp có nhiều team; mỗi thành viên có thể tham gia nhiều team mà không tăng số chỗ thuê bao. Mời người vào doanh nghiệp ở **Teams**, sau đó thêm họ vào team. Đường dẫn cũ `/team` mở cùng trang này.
 - Chủ doanh nghiệp/quản trị viên tạo và quản lý mọi team. Trưởng nhóm cập nhật thông tin và thêm/bớt thành viên thường trong team của mình; chỉ quản trị doanh nghiệp được thay đổi trưởng nhóm. Mỗi team luôn có ít nhất một trưởng nhóm.
 - Mục **Teams** có danh sách team, bảng công việc ba trạng thái và danh sách thành viên. Giao việc cho người trong team, đặt hạn/lịch nhắc và cập nhật tiến độ bằng biểu mẫu công việc hiện có.
 - Công việc cũ thuộc **Việc chung của doanh nghiệp**. Biểu mẫu công việc có lựa chọn team; chỉ quản trị doanh nghiệp được chuyển công việc giữa các team hoặc về việc chung. Danh sách công việc và lịch nhắc có bộ lọc theo team.
@@ -142,6 +182,15 @@ Mở **Quản lý gia hạn** (`/services`) để theo dõi thuê bao, tên mi�
 - Nội dung trao đổi, người thực hiện và lịch sử thay đổi được lưu trong SQLite. Ticket chỉ phục vụ hỗ trợ dịch vụ; không truy cập công việc, khách hàng, nhân sự hoặc sổ thu–chi nội bộ của doanh nghiệp.
 - Phiên bản này trao đổi trong ứng dụng, chưa có tệp đính kèm hoặc thông báo email tự động.
 
+## Trợ lý AI dạng chat
+
+- Sau khi đăng nhập, bấm **Trợ lý AI** ở góc dưới bên phải. Cửa sổ hỗ trợ mở rộng, hội thoại mới, xem lại và xóa lịch sử; lịch sử được lưu trên máy chủ, riêng theo tài khoản và không gian.
+- Trợ lý dùng công cụ để tìm công việc, đếm tiến độ/quá hạn và soạn bản nháp công việc. Công cụ tìm kiếm áp dụng cùng quyền workspace/team như bảng công việc. Bấm **Kiểm tra và tạo** để sửa bản nháp, chọn team/người phụ trách rồi lưu bằng biểu mẫu hiện có. AI không tự sửa, xóa hay tạo công việc.
+- Quản trị SaaS → **Cấu hình → Trợ lý AI**: chọn OpenRouter hoặc Anthropic, tìm/chọn mô hình trong dropdown và nhập khóa API, bật trợ lý rồi lưu kèm lý do. Danh sách model được tải từ nhà cung cấp; OpenRouter chỉ hiển thị model hỗ trợ gọi công cụ, Anthropic dùng khóa đã lưu để tải danh sách. Khi không tải được, giao diện thông báo dùng danh sách dự phòng. Khóa được mã hóa và không trả về trình duyệt/nhật ký. Đổi nhà cung cấp cần khóa mới. Có thể đặt mặc định qua `AI_ENABLED`, `AI_PROVIDER`, `AI_MODEL`, `AI_API_KEY`; cấu hình lưu trong quản trị được ưu tiên.
+- Nội dung hội thoại và dữ liệu công việc được tra cứu sẽ được gửi tới nhà cung cấp AI đã chọn. Cấu hình thành công không đồng nghĩa khóa, số dư hoặc mô hình đã được kiểm tra; cần gửi một tin nhắn để kiểm tra kết nối thực tế.
+- Mỗi lượt gửi tối đa 6.000 ký tự; AI dùng 20 tin nhắn gần nhất làm ngữ cảnh. Mỗi hội thoại tối đa 100 lượt trao đổi và mỗi người tối đa 100 hội thoại/không gian. Có giới hạn 20 lượt gửi/10 phút/người dùng và một yêu cầu đang chạy tại một thời điểm trong tiến trình máy chủ. Thuê bao hết hạn không gọi được AI; vẫn xem/xóa được lịch sử.
+- Sau khi cập nhật backend trên máy đang chạy, khởi động lại dev server để nạp API và migration mới. Kiểm thử tự động dùng phản hồi nhà cung cấp giả lập, không tiêu tốn API thật.
+
 ## Quyền quản trị SaaS
 
 Truy cập **https://nhactoi.test/admin/overview** hoặc chọn **Quản trị SaaS** trong menu sau khi tài khoản được cấp quyền. Quyền này độc lập với vai trò chủ không gian/quản trị viên của một doanh nghiệp; đăng ký thông thường không cấp quyền admin SaaS.
@@ -156,7 +205,8 @@ Khu vực quản trị gồm:
 - **Thuê bao:** xem và điều chỉnh gói, chu kỳ, trạng thái, ngày hết hạn. Thay đổi cần lý do; hạ gói phải đủ số chỗ cho thành viên và lời mời đang chờ. Điều chỉnh không tạo giao dịch tiền, không sửa hóa đơn.
 - **Thanh toán:** tra cứu hóa đơn và mã BillGateway. Trạng thái thanh toán không thể sửa thủ công.
 - **Nhật ký quản trị:** người thực hiện, thời gian, đối tượng, lý do và các trường thực sự thay đổi. Modal diễn giải giá trị trước/sau bằng tiếng Việt; mã nội bộ và JSON được thu gọn trong phần thông tin kỹ thuật.
-- **Cấu hình:** chỉnh sửa địa chỉ ứng dụng, tên/giá gói/giới hạn thành viên, kết nối BillGateway và SMTP. Mỗi lần lưu cần lý do và được ghi nhật ký. Cấu hình lưu trong DB được ưu tiên hơn biến môi trường, có hiệu lực ngay và tồn tại sau khi khởi động lại. Giá mới áp dụng cho hóa đơn tạo mới; hóa đơn đang chờ giữ nguyên số tiền. Không thể hạ giới hạn dưới tổng thành viên và lời mời đang chờ của doanh nghiệp dùng gói.
+- **Gói thuê bao** (`/admin/plans`): thêm gói, sửa tên, giá tháng/năm, giới hạn thành viên, quyền lợi hiển thị và bật/ngừng bán. Mã gói giữ nguyên sau khi tạo; không xóa gói để giữ lịch sử. Quyền lợi là mô tả, không tự cấp quyền tính năng; giới hạn thành viên được kiểm soát thực tế. Ngừng bán ẩn gói khỏi trang thanh toán và chặn hóa đơn mới; thuê bao hiện có và xác nhận hóa đơn đã tạo vẫn hoạt động. Có tìm kiếm, lọc trạng thái bán và số doanh nghiệp gắn với gói. Mỗi thay đổi cần lý do và được ghi nhật ký. Giá mới chỉ áp dụng cho hóa đơn mới; không thể giảm giới hạn dưới tổng thành viên và lời mời đang chờ.
+- **Cấu hình:** chỉnh sửa địa chỉ ứng dụng, kết nối BillGateway và SMTP. Mỗi lần lưu cần lý do và được ghi nhật ký. Cấu hình lưu trong DB được ưu tiên hơn biến môi trường, có hiệu lực ngay và tồn tại sau khi khởi động lại.
 
 Khóa API, khóa webhook và mật khẩu SMTP chỉ nhập để thay thế: để trống sẽ giữ giá trị hiện tại, tùy chọn xóa cần được chọn rõ ràng. API đọc và nhật ký chỉ trả trạng thái đã cấu hình, không trả khóa bí mật. Trạng thái cấu hình không đồng nghĩa đã kiểm tra kết nối thực tế. Thay đổi địa chỉ ứng dụng không tự thay tên miền, reverse proxy hay danh sách `FRONTEND_ORIGIN`.
 
@@ -219,8 +269,47 @@ Stack: Next.js 16 + React 19 (App Router), Next API Routes với router nghiệp
 
 Dữ liệu mặc định ở `data/nhactoi.sqlite`. Migration theo phiên bản chạy khi mở DB. Kiểm thử dùng DB tạm, không dùng DB đang chạy. Khóa kết nối lưu trong DB được mã hóa AES-256-GCM. Mặc định khóa mã hóa được tạo tại `data/.nhactoi-settings.key` với quyền `0600`; có thể dùng `NHACTOI_SETTINGS_KEY` hoặc `NHACTOI_SETTINGS_KEY_FILE` trên máy chủ. Khi sao lưu thủ công, dừng API rồi sao lưu toàn bộ thư mục `data/`, bao gồm tệp khóa ẩn; nếu dùng khóa từ môi trường hoặc đường dẫn riêng, lưu bản sao khóa đó an toàn cùng quy trình sao lưu. Cần đúng khóa để giải mã khi phục hồi; không đổi hoặc xóa khóa nếu đã lưu thông tin kết nối. Phục hồi khi API đang dừng. Không xóa DB để cập nhật phiên bản.
 
-Đây là bản MVP chạy local cho các luồng cốt lõi. Chưa có Web Push/SMS/Zalo, hóa đơn điện tử hay hệ thống vận hành production nhiều máy. Dữ liệu, thư mục `demo/` và tệp nén tham khảo không được phục vụ công khai. Next.js chỉ phục vụ các trang, tài nguyên build và tài nguyên chủ động đặt trong `public/`; tệp đính kèm luôn đi qua API có xác thực.
+Đây là bản MVP chạy local cho các luồng cốt lõi. Chưa có SMS/Zalo, hóa đơn điện tử hay hệ thống vận hành production nhiều máy. Dữ liệu, thư mục `demo/` và tệp nén tham khảo không được phục vụ công khai. Next.js chỉ phục vụ các trang, tài nguyên build và tài nguyên chủ động đặt trong `public/`; tệp đính kèm luôn đi qua API có xác thực.
 
 ## Ứng dụng Android
 
 Mã nguồn React Native/Expo ở `mobile/`, dùng chung API và quyền truy cập với web. Có bố cục điện thoại, màn hình lớn và thiết bị gập; cache ngoại tuyến chỉ đọc được mã hóa. Xem [hướng dẫn build, chạy và kiểm thử Android](docs/ANDROID.md). Bản local là development APK cần Metro; cấu hình Firebase và phát hành store là bước riêng.
+
+### Cá nhân hóa không gian và quyền giao diện team
+
+Mở biểu tượng bảng màu trên thanh trên cùng hoặc **Tài khoản → Cá nhân hóa toàn bộ giao diện** (`/appearance`). Không gian cá nhân cho phép đổi chế độ sáng/tối, màu nhấn, nền, phông/cỡ chữ, độ giãn, bo góc, chiều rộng thanh bên/nội dung và ẩn/sắp xếp menu. Thay đổi được xem trước, chỉ lưu khi bấm **Lưu giao diện**; có hủy và khôi phục mặc định. Cấu hình lưu theo người dùng và workspace trên máy chủ.
+
+Chọn một team để tùy chỉnh giao diện khi mở team, bảng công việc lọc theo team hoặc chi tiết công việc thuộc team. Chủ/admin workspace và team lead mở **Giao diện & quyền của team** để đặt giao diện chung và chọn từng mục thành viên được tùy chỉnh. Mặc định team dùng giao diện chung, chưa mở mục tùy chỉnh cá nhân nào. Các mục bị khóa luôn theo cấu hình chung, kể cả khi trước đó thành viên đã lưu giá trị riêng; kiểm tra quyền thực hiện tại API. Quyền/giao diện mới được tải khi chuyển team, quay lại cửa sổ hoặc mỗi 30 giây. Nút cá nhân hóa luôn truy cập được ngay cả khi đã ẩn toàn bộ menu.
+
+API: `GET/PUT/DELETE /api/appearance?teamId=…` quản lý cấu hình của người đăng nhập; bỏ `teamId` cho không gian cá nhân. `PUT /api/teams/:teamId/appearance` dành cho quản trị team, nhận `{ preferences, editableFields }`. Migration 25 thêm bảng `user_appearance` và `team_appearance`, không sửa dữ liệu nghiệp vụ hiện có. Kiểm tra riêng: `node --test tests/appearance.test.mjs`.
+
+
+## Nhắc nhiều mốc, nhận việc và hoãn nhắc
+
+- **Teams → mở team → Chính sách nhắc của team**: quản lý bật chuỗi nhắc, chọn tối đa 6 mốc trước/sau hạn, người nhận (người được giao hoặc trưởng nhóm), điều kiện chưa hoàn thành/chưa nhận việc. Với việc chung, chính sách nằm trong chi tiết công việc, do chủ/admin quản lý.
+- Mặc định chuỗi nâng cao **tắt**, không tự bật cho dữ liệu đang có. Các mốc mẫu −60, +120 và +1440 phút chỉ chạy sau khi bật. Nhắc riêng `remindAt` vẫn hoạt động. Mỗi mốc gửi một lần cho mỗi người; thay đổi hạn tính lại chuỗi.
+- Giờ yên lặng theo **Asia/Ho_Chi_Minh**, hỗ trợ qua nửa đêm; lời nhắc công việc đến trong khoảng này được hoãn tới lần xử lý ngoài khoảng. Khoảng cách tối thiểu giữa các mốc nâng cao là 15–1440 phút cho cùng công việc/người. Đây chưa phải lịch ngày làm việc/ngày nghỉ.
+- Quản lý có thể cho phép tùy chỉnh chuỗi riêng từng việc. Khi thu hồi quyền này, các việc lập tức dùng lại chính sách team. Nhắc trưởng nhóm của việc chung gửi owner/admin; của team gửi các team lead đang có quyền.
+- Trong **Chi tiết công việc → Nhận việc & nhắc lại**, người được giao xác nhận nhận việc hoặc hoãn 15 phút/1 giờ/4 giờ/1 ngày. Xác nhận theo từng người, không đổi trạng thái. Hoãn không đổi hạn, không hoãn nhắc của người khác hoặc tự dừng báo trưởng nhóm. API cho phép hoãn từ 5 phút đến 7 ngày.
+- Android có nút **Đã nhận việc** và **Nhắc lại sau 1 giờ**. Lịch sử nhận/hoãn được ghi vào hoạt động công việc. Đổi hạn, người phụ trách chính hoặc team sẽ xóa trạng thái phản hồi cũ để nhận lại; bỏ người phối hợp chỉ xóa phản hồi của người bị bỏ. Đổi nhãn/thứ tự không xóa phản hồi.
+- Hoàn thành/xóa việc, lưu trữ team, mất quyền hoặc hết thuê bao dừng gửi nhắc công việc. Nhắc checklist vẫn dùng mốc riêng, có áp dụng giờ yên lặng và hoãn của người nhận trên công việc cha; chưa có chuỗi nâng cao riêng cho checklist.
+- **Gửi nhắc thử cho tôi** tạo thông báo cho người được giao đang thao tác, tối đa một lần/phút/công việc. Email/push gửi qua worker; việc tạo thông báo không chứng minh đã giao nhận bên ngoài.
+
+### Email nhắc có thử lại và trạng thái giao nhận
+
+- Thông báo nhắc công việc/gia hạn mới tự tạo hàng đợi email bền vững. Khi SMTP hoạt động, worker gửi và thử lại tối đa 5 lần với khoảng đợi tăng dần; thiếu SMTP thì giữ chờ. Không gửi lại thông báo lịch sử trước migration.
+- Chi tiết công việc hiển thị 50 thông báo nhắc gần nhất, trạng thái email/push và đã đọc trong ứng dụng. Người dùng có thể thử lại email bị lỗi của chính mình.
+- Hoãn nhắc bỏ các email/push cũ đang chờ của người đó, rồi tạo một lần nhắc lại. Mỗi lần gửi/thử lại kiểm tra quyền và tình trạng công việc/dịch vụ. SMTP có thể đã nhận thư trước khi tiến trình bị ngắt nhưng chưa ghi kết quả; vì SMTP không có idempotency, trường hợp này vẫn có thể gửi trùng khi chạy lại.
+- Trạng thái “đã gửi” là nhà cung cấp chấp nhận, không phải xác nhận thiết bị đã nhận hoặc người dùng đã đọc. Chưa kiểm thử SMTP/FCM thật trong đợt cập nhật này.
+
+### Push gia hạn và màn hình dịch vụ Android
+
+- Thông báo `service_renewal` mới được đưa vào FCM outbox; không phát lại thông báo cũ. Trước khi gửi kiểm tra quyền, lưu trữ, tắt theo dõi, kỳ gia hạn và thuê bao.
+- Bấm thông báo gia hạn trong app/push mở đúng dịch vụ. Màn hình hiển thị kỳ hiện tại và cho ghi nhận gia hạn sau bước xác nhận thực chi; có kiểm tra kỳ kỳ vọng để tránh gia hạn đúp. Không chuyển tiền hoặc tự ghi khoản chi. Offline chỉ xem bản lưu nếu có.
+- Chưa có danh sách/quản trị dịch vụ đầy đủ trên mobile, chưa có Zalo/SMS, ứng dụng iOS native hoặc phát hành store. Web Push trình duyệt được bổ sung ở đợt 3.
+
+### Nâng cấp và kiểm tra
+
+Migration **27–28** thêm chính sách, phản hồi, ngữ cảnh giao nhận, hàng đợi email và thay trigger FCM; không xóa dữ liệu nghiệp vụ hiện có. Sao lưu DB và kho tệp theo quy trình vận hành trước khi triển khai; khởi động lại tiến trình Next để nạp backend/migration. Bản Android cần build lại để có màn hình mới. Không dùng nhiều tiến trình worker cùng chia sẻ DB SQLite; khóa gửi email/FCM hiện bảo vệ trong một tiến trình.
+
+Kiểm tra: `npm test`, `npm run build`, `npm run test:next`; trong `mobile/`: `npm run typecheck`, `npm run lint`, `npm test`. Mọi test nhắc dùng DB cô lập và transport giả, không gửi email/push thật. Lịch lặp ngày làm việc, ủy quyền khi vắng và báo cáo SLA chuyên sâu vẫn thuộc đợt tiếp theo.

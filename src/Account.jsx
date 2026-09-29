@@ -1,5 +1,14 @@
 import React, { useEffect, useState } from "react";
-import { AlertCircle, CheckCircle2, LoaderCircle, UserRound } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  LoaderCircle,
+  Monitor,
+  Moon,
+  Sun,
+  UserRound,
+} from "lucide-react";
+import { useTheme } from "./theme.js";
 import "./account.css";
 
 const LIMITS = { name: 120, email: 320 };
@@ -23,6 +32,77 @@ function validate(values) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
     return "Địa chỉ email không hợp lệ.";
   return "";
+}
+
+export function ThemeSettings({ disabledReason = "" }) {
+  const { theme, setTheme, resolvedTheme } = useTheme();
+
+  return (
+    <section
+      className="td-panel account-theme-panel"
+      aria-labelledby="account-theme-title"
+    >
+      <div className="td-section-heading">
+        <div>
+          <h2 id="account-theme-title">
+            <Sun size={19} /> Giao diện
+          </h2>
+          <p>{disabledReason || "Tùy chỉnh chế độ hiển thị sáng hoặc tối cho ứng dụng."}</p>
+        </div>
+      </div>
+      <div
+        className="theme-options-grid"
+        role="radiogroup"
+        aria-label="Lựa chọn giao diện"
+      >
+        <button
+          type="button"
+          role="radio"
+          disabled={!!disabledReason}
+          aria-checked={theme === "system"}
+          className={`theme-option-card ${theme === "system" ? "active" : ""}`}
+          onClick={() => setTheme("system")}
+        >
+          <div className="theme-option-icon">
+            <Monitor size={18} />
+          </div>
+          <strong>Hệ thống</strong>
+          <small>
+            Tự động theo thiết bị (
+            {resolvedTheme === "dark" ? "Đang tối" : "Đang sáng"})
+          </small>
+        </button>
+        <button
+          type="button"
+          role="radio"
+          disabled={!!disabledReason}
+          aria-checked={theme === "light"}
+          className={`theme-option-card ${theme === "light" ? "active" : ""}`}
+          onClick={() => setTheme("light")}
+        >
+          <div className="theme-option-icon">
+            <Sun size={18} />
+          </div>
+          <strong>Chế độ sáng</strong>
+          <small>Giao diện nền sáng, dịu mắt ban ngày</small>
+        </button>
+        <button
+          type="button"
+          role="radio"
+          disabled={!!disabledReason}
+          aria-checked={theme === "dark"}
+          className={`theme-option-card ${theme === "dark" ? "active" : ""}`}
+          onClick={() => setTheme("dark")}
+        >
+          <div className="theme-option-icon">
+            <Moon size={18} />
+          </div>
+          <strong>Chế độ tối</strong>
+          <small>Giao diện nền tối, giảm chói mắt ban đêm</small>
+        </button>
+      </div>
+    </section>
+  );
 }
 
 export default function Account({ api, user, onSaved }) {

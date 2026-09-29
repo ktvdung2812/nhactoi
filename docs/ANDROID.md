@@ -123,3 +123,13 @@ Bản phát hành sau local cần `NHACTOI_RELEASE=1`, API HTTPS công khai, pac
 - Ảnh và log hình học đã kiểm tra nằm tại `mobile/artifacts/qa/`. Chưa kiểm thử thiết bị vật lý, iOS hay phát hành Google Play.
 
 AVD Pixel Fold phải dùng skin đúng để WindowManager trả về bản lề. Với SDK local, chọn `pixel_10_pro_fold` dưới `emulator/resources/skins/android-36/userdebug`. Nếu sensor báo 90° nhưng `foldingFeatures` rỗng, kiểm tra hai overlay `com.android.internal.emulation.pixel_10_pro_fold` và `com.android.systemui.emulation.pixel_10_pro_fold` đã bật; khởi động lại ứng dụng sau khi sửa cấu hình AVD. Chỉ thay kích thước màn hình không đủ để kiểm chứng bản lề.
+
+
+## Cập nhật nhắc việc 27/09/2026
+
+Chi tiết công việc bổ sung xác nhận nhận việc và hoãn nhắc 1 giờ; thông báo gia hạn mở `/service/[id]` để xem và xác nhận ghi nhận gia hạn. Push gia hạn mới được đưa vào FCM outbox và kiểm tra lại quyền/kỳ gia hạn trước gửi. Cần build lại APK; kiểm thử trong đợt này dùng transport giả, chưa xác minh giao nhận Firebase hoặc thiết bị thật. Các chính sách nhiều mốc/giờ yên lặng được quản lý trên web; app dùng chung API và chính sách. Cache vẫn chỉ đọc.
+
+
+### Lặp công việc nâng cao (đợt 2)
+
+Form tạo/sửa công việc hỗ trợ lặp theo năm, mỗi N ngày/tuần/tháng/năm, chọn các thứ và preset Thứ 2–Thứ 6, tính kỳ sau từ hạn hoặc thời điểm hoàn thành. Trang chi tiết hiển thị quy tắc đầy đủ. Backend migration 30 phải được nạp trước khi dùng bản Android mới; build lại ứng dụng sau cập nhật. Khi chỉ sửa nội dung, form giữ quy tắc lặp đã lưu. Kỳ mới chỉ tạo sau hoàn thành, không tạo bù hàng loạt kỳ quá hạn. Lịch tuần và khung giờ làm cá nhân hiện ở web `/week`; đợt này không thêm màn hình lịch mobile, quyền native hoặc dependency mới.

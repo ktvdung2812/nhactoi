@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Archive, ArchiveRestore, Check, LoaderCircle, Pencil, Plus, X } from "lucide-react";
 import ActionMenu from "./ActionMenu.jsx";
+import { classifyColumnDrop, resolveDisplayedColumn } from "./board-columns.js";
 import TaskBoard, { DEFAULT_STATUSES } from "./TaskBoard.jsx";
 
 const TONES = [
@@ -65,11 +66,18 @@ export default function WorkflowBoard({
   api,
   teamId = null,
   tasks = [],
+  selectedTaskId = null,
   members = [],
   onOpen,
   onCreate,
   onTrash,
   onChanged,
+  onStatusMove,
+  placeByStatus = false,
+  canTrash,
+  canMove: canMoveItem,
+  captionRight = null,
+  countNoun = "công việc",
   readOnly = false,
   revision = 0,
   scopeKey = "default",
@@ -139,11 +147,7 @@ export default function WorkflowBoard({
   const activeColumns = useMemo(() => allColumns.filter(column => !column.archivedAt), [allColumns]);
   const archivedColumns = useMemo(() => allColumns.filter(column => Boolean(column.archivedAt)), [allColumns]);
   const activeIds = useMemo(() => new Set(activeColumns.map(column => String(column.id))), [activeColumns]);
-  const getBoardTaskColumn = task => {
-    if (task?.columnId != null && text(task.columnId) !== "") return text(task.columnId);
-    const status = text(task?.status);
-    return text(activeColumns.find(column => String(column.status) === status)?.id) || status || "todo";
-  };
+  const getBoardTaskColumn = task => resolveDisplayedColumn(task, activeColumns, { placeByStatus, teamId });
   const visibleTasks = useMemo(() => {
     const originalIndexes = new Map(taskSnapshot.map((task, index) => [String(task.id), index]));
     const columnIndexes = new Map(activeColumns.map((column, index) => [String(column.id), index]));
@@ -158,9 +162,8 @@ export default function WorkflowBoard({
         if (Number.isFinite(leftPosition) && Number.isFinite(rightPosition) && leftPosition !== rightPosition) return leftPosition - rightPosition;
         return (originalIndexes.get(String(left.id)) ?? 0) - (originalIndexes.get(String(right.id)) ?? 0);
       });
-  }, [taskSnapshot, activeIds, activeColumns]);
+  }, [taskSnapshot, activeIds, activeColumns, placeByStatus, teamId]);
   const canWrite = Boolean(!readOnly && board && board.canWrite !== false);
-  const canManage = Boolean(canWrite && board?.canManage);
 
   async function notifyChanged() {
     if (!onChanged) return;
@@ -240,7 +243,7 @@ export default function WorkflowBoard({
   }
 
   async function restoreColumn(column) {
-    if (!canManage || mutation) return;
+    if (!canWrite || mutation) return;
     setMutation(`restore:${column.id}`);
     setError("");
     try {
@@ -255,7 +258,7 @@ export default function WorkflowBoard({
   }
 
   async function reorderColumns(ids) {
-    if (!canManage) return;
+    if (!canWrite) return;
     const activeIds = new Set(activeColumns.map(column => String(column.id)));
     let activeIndex = 0;
     const orderedIds = allColumns.map(column => activeIds.has(String(column.id)) ? ids[activeIndex++] : column.id);
@@ -303,16 +306,24 @@ export default function WorkflowBoard({
 
   async function moveTask(task, columnId, beforeTaskId = null) {
     if (!canWrite) throw new Error("Bạn không có quyền cập nhật công việc trong bảng này.");
-    if (!activeColumns.some(column => String(column.id) === String(columnId))) throw new Error("Cột đích không còn hoạt động.");
+    const decision = classifyColumnDrop(task, columnId, activeColumns, { placeByStatus, teamId });
+    if (decision.mode === "error") throw new Error(decision.message);
+    if (decision.mode === "skip") return;
     const key = `task:${task.id}`;
     setMutation(key);
     setError("");
     try {
-      await api(`/boards/tasks/${encodeURIComponent(task.id)}/move`, {
-        method: "POST",
-        body: JSON.stringify({ columnId, beforeTaskId: beforeTaskId ?? null }),
-      });
-      applyLocalTaskMove(task, columnId, beforeTaskId);
+      if (decision.mode === "status") {
+        if (!onStatusMove) throw new Error("Cột tùy chỉnh chỉ nhận công việc thuộc bảng đang chọn.");
+        await onStatusMove(task, decision.status);
+        applyLocalTaskMove(task, columnId, null);
+      } else {
+        await api(`/boards/tasks/${encodeURIComponent(task.id)}/move`, {
+          method: "POST",
+          body: JSON.stringify({ columnId, beforeTaskId: beforeTaskId ?? null }),
+        });
+        applyLocalTaskMove(task, columnId, beforeTaskId);
+      }
       await notifyChanged();
     } catch (moveError) {
       throw moveError;
@@ -322,30 +333,32 @@ export default function WorkflowBoard({
   }
 
   function columnActions(column, { cards }) {
-    if (!canManage) return [];
+    if (!canWrite) return [];
     return [
       { label: "Đổi tên và màu", icon: Pencil, onSelect: () => openEdit(column) },
       { label: "Lưu trữ cột", icon: Archive, danger: true, onSelect: () => openArchive(column) },
     ];
   }
 
-  if (loading && !board) return <div className="workflow-board-loading"><LoaderCircle className="workflow-board-spin" size={20} /> Đang tải bảng công việc…</div>;
+  if (loading && !board && !placeByStatus) return <div className="workflow-board-loading"><LoaderCircle className="workflow-board-spin" size={20} /> Đang tải bảng công việc…</div>;
 
   const dialogCards = dialog?.column ? taskCardsForColumn(taskSnapshot, dialog.column) : [];
   const archiveTargets = dialog?.column ? activeColumns.filter(column => column.id !== dialog.column.id) : [];
 
   return (
     <div className="workflow-board-shell">
-      <div className="workflow-board-toolbar">
-        <div>
-          <span className="workflow-board-caption">{visibleTasks.length} công việc · {activeColumns.length} cột</span>
-          {archivedColumns.length > 0 && <span className="workflow-board-archived-count">{archivedColumns.length} cột đã lưu trữ</span>}
+      {(archivedColumns.length > 0 || canWrite) && (
+        <div className="workflow-board-toolbar">
+          <div>
+            {archivedColumns.length > 0 && <span className="workflow-board-archived-count">{archivedColumns.length} cột đã lưu trữ</span>}
+          </div>
+          {canWrite && <button type="button" className="workflow-board-add-column" onClick={openCreate}><Plus size={16} /> Thêm cột</button>}
         </div>
-        {canManage && <button type="button" className="workflow-board-add-column" onClick={openCreate}><Plus size={16} /> Thêm cột</button>}
-      </div>
+      )}
       <ErrorMessage>{error}</ErrorMessage>
       {loading && <div className="workflow-board-refreshing"><LoaderCircle className="workflow-board-spin" size={15} /> Đang đồng bộ…</div>}
       <TaskBoard
+        selectedTaskId={selectedTaskId}
         showSummary={false}
         scopeKey={scopeKey}
         columns={activeColumns}
@@ -354,15 +367,17 @@ export default function WorkflowBoard({
         preferences={canWrite ? board?.preferences : null}
         onPreferencesChange={canWrite ? persistPreferences : undefined}
         onColumnReorder={reorderColumns}
-        canReorderColumns={canManage}
+        canReorderColumns={canWrite}
         columnActions={columnActions}
         onOpen={onOpen}
         onCreate={(status, columnId) => onCreate?.(status, columnId)}
         onTaskMove={moveTask}
         getTaskColumn={getBoardTaskColumn}
+        captionRight={captionRight}
         onTrash={onTrash}
+        canTrash={canTrash}
         readOnly={!canWrite}
-        canMove={task => canWrite && !task.teamArchived}
+        canMove={task => Boolean(canWrite && (canMoveItem ? canMoveItem(task) : !task.teamArchived))}
       />
 
       {archivedColumns.length > 0 && (
@@ -374,7 +389,7 @@ export default function WorkflowBoard({
               return <article className="workflow-board-archived-row" key={column.id}>
                 <span className={`task-board-dot tone-${column.tone}`} aria-hidden="true" />
                 <div><strong>{column.label}</strong><span>{cards.length} công việc</span></div>
-                {canManage && <ActionMenu label={`Thao tác cột ${column.label}`} items={[{ label: "Khôi phục cột", icon: ArchiveRestore, onSelect: () => restoreColumn(column) }]} disabled={mutation === `restore:${column.id}`} />}
+                {canWrite && <ActionMenu label={`Thao tác cột ${column.label}`} items={[{ label: "Khôi phục cột", icon: ArchiveRestore, onSelect: () => restoreColumn(column) }]} disabled={mutation === `restore:${column.id}`} />}
               </article>;
             })}
           </div>

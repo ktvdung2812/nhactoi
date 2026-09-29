@@ -13,6 +13,9 @@ export const metadata = {
   description:
     "Nhắc tôi — Quản lý công việc, lịch nhắc và thu chi cho đội ngũ dịch vụ.",
   applicationName: "Nhắc tôi",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: { capable: true, title: "Nhắc tôi", statusBarStyle: "default" },
+  icons: { icon: "/icons/icon-192.png", apple: "/icons/icon-192.png" },
   openGraph: {
     title: "Nhắc tôi · Công việc nhẹ nhàng hơn",
     description:
@@ -26,9 +29,27 @@ export const viewport = {
   themeColor: "#14685c",
 };
 
+const themeInitScript = `
+(function() {
+  try {
+    var stored = localStorage.getItem('nhactoi_theme') || 'system';
+    var isDark = stored === 'dark' || (stored === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  } catch (e) {}
+})();
+`;
+
 export default function RootLayout({ children }) {
   return (
-    <html lang="vi">
+    <html lang="vi" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
       <body>
         <ClientApp>{children}</ClientApp>
       </body>

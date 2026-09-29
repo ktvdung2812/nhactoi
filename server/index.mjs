@@ -1,3 +1,11 @@
+import { webPushConfig, registerWebPushRoutes, processWebPush } from "./web-push.mjs";
+import { RECURRENCES as RECURRENCE_VALUES, nextTaskOccurrence } from "../shared/task-recurrence.mjs";
+import { validateRecurrenceOptions, storedRecurrenceOptions } from "./recurrence.mjs";
+import { registerReminderRoutes, processWorkflowReminders, legacyReminderAllowed, processReminderEmails } from "./reminder-workflow.mjs";
+import { registerAppearanceRoutes } from "./appearance.mjs";
+import { seedDemo } from "./seed.mjs";
+import { registerPersonalTaskRoutes } from "./personal-tasks.mjs";
+import { registerAiAssistantRoutes } from "./ai-assistant.mjs";
 import {registerTaskExtrasRoutes,extraAssigneeIds,reconcileTaskAssignees,copyRecurringExtras} from "./task-extras.mjs";
 import {registerRemoteStorageRoutes} from "./remote-storage.mjs";
 import {registerGoogleRoutes} from "./google-login.mjs";
@@ -125,8 +133,7 @@ const DEFAULT_PLANS = [
   },
 ];
 
-const PLAN_IDS = new Set(DEFAULT_PLANS.map((plan) => plan.id));
-const RECURRENCES = new Set(["none", "daily", "weekly", "monthly"]);
+const RECURRENCES = new Set(RECURRENCE_VALUES);
 const STATUSES = new Set(["todo", "doing", "done"]);
 const PRIORITIES = new Set(["low", "medium", "high"]);
 
@@ -449,20 +456,8 @@ function addMonthsClamped(date, months) {
   return next;
 }
 
-function nextRecurrence(dateText, recurrence) {
-  const date = new Date(dateText);
-  if (Number.isNaN(date.getTime())) return null;
-  // Nhắc Tôi stores instants as ISO UTC, while a Vietnamese workspace expects
-  // a monthly task to stay on the same local calendar day (Jan 31 01:00 ICT
-  // becomes Feb 28 01:00 ICT). Vietnam has no DST, so a fixed +07 offset is
-  // sufficient and avoids pulling in a timezone dependency.
-  const vietnamOffsetMs = 7 * 60 * 60 * 1000;
-  let local = new Date(date.getTime() + vietnamOffsetMs);
-  if (recurrence === "daily") local.setUTCDate(local.getUTCDate() + 1);
-  else if (recurrence === "weekly") local.setUTCDate(local.getUTCDate() + 7);
-  else if (recurrence === "monthly") local = addMonthsClamped(local, 1);
-  else return date;
-  return new Date(local.getTime() - vietnamOffsetMs);
+function nextRecurrence(dateText, recurrence, options, completedAt, anchorAt) {
+  return nextTaskOccurrence(dateText, recurrence, options, completedAt, anchorAt);
 }
 
 function cleanString(
@@ -581,8 +576,10 @@ function setSessionCookie(
     "Path=/",
     "HttpOnly",
     "SameSite=Lax",
-    `Max-Age=${Math.max(0, Math.floor(maxAgeSeconds))}`,
   ];
+  if (typeof maxAgeSeconds === "number" && Number.isFinite(maxAgeSeconds)) {
+    attributes.push(`Max-Age=${Math.max(0, Math.floor(maxAgeSeconds))}`);
+  }
   if (config.cookieSecure) attributes.push("Secure");
   res.setHeader("Set-Cookie", attributes.join("; "));
 }
@@ -636,6 +633,7 @@ function taskJson(row) {
     customerId: row.customer_id,
     category: row.category,
     recurrence: row.recurrence,
+    recurrenceOptions: storedRecurrenceOptions(row),
     teamId: row.team_id ?? null,
     columnId: row.column_id ?? null,
     boardPosition: Number(row.board_position || 0),
@@ -735,10 +733,16 @@ function ensureWritable(req) {
   return subscription;
 }
 
-function createSession(db, userId, workspaceId, config, clock, { kind = "web" } = {}) {
+function createSession(db, userId, workspaceId, config, clock, { kind = "web", days = null } = {}) {
   const token = createToken();
   const now = currentDate(clock);
-  const expires = addDays(now, kind === "mobile" ? config.mobileSessionDays : config.sessionDays).toISOString();
+  const sessionDays =
+    typeof days === "number" && Number.isFinite(days) && days > 0
+      ? days
+      : kind === "mobile"
+        ? config.mobileSessionDays
+        : config.sessionDays;
+  const expires = addDays(now, sessionDays).toISOString();
   db.prepare(
     `
     INSERT INTO sessions(id, token_hash, user_id, workspace_id, expires_at, created_at, kind)
@@ -1895,7 +1899,7 @@ function workspaceProfileValues(body) {
 }
 
 function settingsSnapshot(config) {
-  return adminSettingsData(config);
+  return { ...adminSettingsData(config), plans: config.plans.map(adminPlanJson) };
 }
 
 function planWithSeatFeature(plan) {
@@ -1932,44 +1936,53 @@ function readStoredSetting(values, key, fallback = null) {
   }
 }
 
+function adminPlanJson(plan) {
+  return {
+    id: plan.id, name: plan.name,
+    monthly: plan.monthlyPrice, yearly: plan.yearlyPrice,
+    seats: plan.memberLimit, features: [...plan.features],
+    active: plan.active !== false,
+  };
+}
+
 function settingsPlanValues(config, bodyPlans) {
   if (bodyPlans === undefined) return config.plans;
-  if (!Array.isArray(bodyPlans) || bodyPlans.length !== DEFAULT_PLANS.length)
-    throw new HttpError(400, "plans must include Starter, Team, and Business");
+  if (!Array.isArray(bodyPlans) || !bodyPlans.length || bodyPlans.length > 100)
+    throw new HttpError(400, "Danh sách phải có từ 1 đến 100 gói");
   const seen = new Set();
   const plans = bodyPlans.map((value) => {
-    if (!value || typeof value !== "object")
-      throw new HttpError(400, "plan is invalid");
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      throw new HttpError(400, "Gói thuê bao không hợp lệ");
     const id = cleanString(value.id, { required: true, max: 20, field: "plan.id" });
-    if (!PLAN_IDS.has(id) || seen.has(id))
-      throw new HttpError(400, "plan id is invalid");
+    if (!/^[a-z][a-z0-9_-]*$/.test(id) || seen.has(id))
+      throw new HttpError(400, "Mã gói không hợp lệ hoặc bị trùng");
     seen.add(id);
+    if (typeof value.name !== "string") throw new HttpError(400, "Tên gói không hợp lệ");
     const name = cleanString(value.name, { required: true, max: 80, field: "plan.name" });
     const monthly = positiveAmount(value.monthly);
     const yearly = positiveAmount(value.yearly);
     if (monthly > 1_000_000_000 || yearly > 1_000_000_000)
-      throw new HttpError(400, "plan price is too large");
+      throw new HttpError(400, "Giá gói tối đa là 1.000.000.000 VND");
     const seats = value.seats;
     if (!Number.isSafeInteger(seats) || seats < 1 || seats > 1_000_000)
-      throw new HttpError(400, "plan.seats is invalid");
-    const existing = config.plans.find((item) => item.id === id) ||
-      DEFAULT_PLANS.find((item) => item.id === id);
-    return {
-      ...existing,
-      id,
-      name,
-      monthlyPrice: monthly,
-      yearlyPrice: yearly,
-      memberLimit: seats,
-      features: planWithSeatFeature({
-        ...existing,
-        memberLimit: seats,
-      }).features,
-    };
+      throw new HttpError(400, "Giới hạn thành viên phải từ 1 đến 1.000.000");
+    const existing = config.plans.find((item) => item.id === id);
+    const features = value.features === undefined ? existing?.features || [] : value.features;
+    if (!Array.isArray(features) || features.length > 31 || features.some((feature) =>
+      typeof feature !== "string" || !feature.trim() || feature.trim().length > 200))
+      throw new HttpError(400, "Quyền lợi gồm tối đa 30 dòng, mỗi dòng từ 1 đến 200 ký tự");
+    const descriptions = features.filter((feature) => !/^Tối đa\s+\d[\d,.]*\s+thành viên$/i.test(feature.trim()));
+    if (descriptions.length > 30) throw new HttpError(400, "Tối đa 30 quyền lợi hiển thị");
+    const active = value.active === undefined ? existing?.active !== false : value.active;
+    if (typeof active !== "boolean") throw new HttpError(400, "Trạng thái bán không hợp lệ");
+    return planWithSeatFeature({
+      id, name, monthlyPrice: monthly, yearlyPrice: yearly,
+      memberLimit: seats, features: descriptions.map((feature) => feature.trim()), active,
+    });
   });
-  if (seen.size !== PLAN_IDS.size)
-    throw new HttpError(400, "plans must include every plan id");
-  return plans.sort((a, b) => DEFAULT_PLANS.findIndex((item) => item.id === a.id) - DEFAULT_PLANS.findIndex((item) => item.id === b.id));
+  if (config.plans.some((plan) => !seen.has(plan.id)))
+    throw new HttpError(400, "Không thể xóa gói đã tạo; hãy ngừng bán để giữ lịch sử");
+  return plans;
 }
 
 function assertPlanSeatChanges(db, plans, clock) {
@@ -2269,22 +2282,6 @@ function smtpTransport(config) {
   });
 }
 
-async function sendReminderEmail(config, recipient, task) {
-  const transport = smtpTransport(config);
-  if (!transport || !recipient?.email) return;
-  try {
-    await transport.sendMail({
-      from: config.smtp.from,
-      to: recipient.email,
-      subject: `Nhắc việc: ${task.title}`,
-      text: `${task.title}\nHạn: ${task.due_at}`,
-    });
-  } catch (error) {
-    // An SMTP outage must not prevent an in-app reminder from being recorded.
-    console.error("[nhactoi] reminder email failed:", error?.message || error);
-  }
-}
-
 export function processReminders({
   db,
   config = configFrom(),
@@ -2360,6 +2357,7 @@ export function processReminders({
     }
     const scheduleKey = task.remind_at;
     for (const recipient of recipients) {
+      if (!legacyReminderAllowed(db, task, recipient.id, now)) continue;
       const notification = withTransaction(db, () => {
         const delivery = db
           .prepare(
@@ -2385,7 +2383,7 @@ export function processReminders({
           recipient.id,
           task.id,
           "Đến hạn công việc",
-          `${task.title} cần được xử lý. Hạn ${task.due_at}.`,
+          `${task.title} cần được xử lý.${task.due_at ? ` Hạn ${task.due_at}.` : ""}`,
           task.id,
           now,
         );
@@ -2397,11 +2395,110 @@ export function processReminders({
         userId: recipient.id,
         notificationId: notification,
       });
-      // Fire and forget: the in-app notification is already durable.
-      void sendReminderEmail(config, recipient, task);
+
     }
   }
+  const checklistItems = db
+    .prepare(
+      `
+    SELECT i.id AS item_id, i.title AS item_title, i.remind_at, i.due_at AS item_due,
+           t.id, t.workspace_id, t.team_id, t.title, t.due_at
+    FROM task_checklist_items i
+    JOIN task_checklists c ON c.id = i.checklist_id
+    JOIN tasks t ON t.id = c.task_id
+    JOIN workspaces w ON w.id = t.workspace_id
+    LEFT JOIN teams tm ON tm.id = t.team_id AND tm.workspace_id = t.workspace_id
+    WHERE i.completed = 0
+      AND i.remind_at IS NOT NULL
+      AND i.remind_at <= ?
+      AND t.deleted_at IS NULL
+      AND t.status != 'done'
+      AND w.suspended_at IS NULL
+      AND (t.team_id IS NULL OR tm.archived_at IS NULL)
+  `,
+    )
+    .all(now);
+  for (const item of checklistItems) {
+    const recipients = db
+      .prepare(
+        `
+      SELECT u.id, u.name, u.email
+      FROM task_checklist_assignees a
+      JOIN users u ON u.id = a.user_id AND u.disabled_at IS NULL
+      JOIN tasks t ON t.id = ?
+      WHERE a.item_id = ?
+        AND (t.assignee_id = a.user_id OR EXISTS (
+          SELECT 1 FROM task_assignees extra
+          WHERE extra.task_id = t.id AND extra.user_id = a.user_id
+        ))
+    `,
+      )
+      .all(item.id, item.item_id)
+      .filter((recipient) => canAccessTeamTask(db, item.workspace_id, recipient.id, item.team_id));
+    const scheduleKey = `checklist:${item.item_id}:${item.remind_at}`;
+    for (const recipient of recipients) {
+      if (!legacyReminderAllowed(db, item, recipient.id, now)) continue;
+      const notification = withTransaction(db, () => {
+        const delivery = db
+          .prepare(
+            `
+          INSERT OR IGNORE INTO task_reminder_deliveries
+            (id, task_id, user_id, schedule_key, created_at)
+          VALUES (?, ?, ?, ?, ?)
+        `,
+          )
+          .run(createId("delivery_"), item.id, recipient.id, scheduleKey, now);
+        if (!delivery.changes) return null;
+        const notificationId = createId("notification_");
+        db.prepare(
+          `
+          INSERT INTO notifications
+            (id, workspace_id, user_id, task_id, type, title, message,
+             entity_type, entity_id, created_at)
+          VALUES (?, ?, ?, ?, 'task_reminder', ?, ?, 'task', ?, ?)
+        `,
+        ).run(
+          notificationId,
+          item.workspace_id,
+          recipient.id,
+          item.id,
+          "Đến hạn mục checklist",
+          `${item.item_title} trong “${item.title}” cần được xử lý.`,
+          item.id,
+          now,
+        );
+        return notificationId;
+      });
+      if (!notification) continue;
+      sent.push({ taskId: item.id, userId: recipient.id, notificationId: notification, checklistItemId: item.item_id });
+
+    }
+  }
+  sent.push(...processWorkflowReminders({db,clock}));
   return sent;
+}
+
+// All completion entrypoints create the same single successor inside their transaction.
+function createRecurringSuccessor(db, task, actorUserId, now) {
+  if (task.recurrence === "none") return null;
+  const options = storedRecurrenceOptions(task);
+  const due = nextRecurrenceDate(task.due_at, task.recurrence, options, now, task.recurrence_anchor);
+  if (!due) return null;
+  const remind = task.remind_at
+    ? new Date(Date.parse(task.remind_at) + due.getTime() - Date.parse(task.due_at)).toISOString()
+    : null;
+  const id = createId("task_");
+  const column = resolveTaskColumn(db, { workspaceId: task.workspace_id, teamId: task.team_id, status: "todo", clock: () => new Date(now), HttpError });
+  const inserted = db.prepare(`INSERT OR IGNORE INTO tasks
+    (id,workspace_id,title,description,status,priority,due_at,remind_at,assignee_id,customer_id,team_id,
+     category,recurrence,recurrence_options,recurrence_anchor,generated_from_task_id,created_by,created_at,updated_at,column_id,board_position)
+    VALUES (?,?,?,?,'todo',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`)
+    .run(id,task.workspace_id,task.title,task.description,task.priority,due.toISOString(),remind,
+      task.assignee_id,task.customer_id,task.team_id,task.category,task.recurrence,
+      JSON.stringify(options),options.basis === "completion" ? due.toISOString() : task.recurrence_anchor || task.due_at,task.id,actorUserId,now,now,column.id);
+  if (!inserted.changes) return null;
+  copyRecurringExtras(db, task.id, id, now);
+  return id;
 }
 
 // Status changes made by the board use the same completion and recurrence
@@ -2431,47 +2528,8 @@ export function applyTaskStatusTransition({
       summary,
       createdAt: now,
     });
-  let nextTaskId = null;
-  if (task.status !== "done" && nextStatus === "done" && task.recurrence !== "none") {
-    const nextDueDate = nextRecurrenceDate(task.due_at, task.recurrence);
-    if (nextDueDate) {
-      const nextRemindDate = task.remind_at
-        ? new Date(
-            new Date(task.remind_at).getTime() +
-              (nextDueDate.getTime() - new Date(task.due_at).getTime()),
-          ).toISOString()
-        : null;
-      nextTaskId = createId("task_");
-      const inserted = db
-        .prepare(
-          `INSERT OR IGNORE INTO tasks
-             (id, workspace_id, title, description, status, priority, due_at, remind_at,
-              assignee_id, customer_id, team_id, category, recurrence, generated_from_task_id,
-              created_by, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          nextTaskId,
-          updatedTask.workspace_id,
-          updatedTask.title,
-          updatedTask.description,
-          updatedTask.priority,
-          nextDueDate.toISOString(),
-          nextRemindDate,
-          updatedTask.assignee_id,
-          updatedTask.customer_id,
-          updatedTask.team_id,
-          updatedTask.category,
-          updatedTask.recurrence,
-          updatedTask.id,
-          actorUserId,
-          now,
-          now,
-        );
-      if (!inserted.changes) nextTaskId = null;
-      else copyRecurringExtras(db,task.id,nextTaskId,now);
-    }
-  }
+  const nextTaskId = task.status !== "done" && nextStatus === "done"
+    ? createRecurringSuccessor(db, updatedTask, actorUserId, now) : null;
   return { nextTaskId, updatedTask };
 }
 
@@ -2505,10 +2563,13 @@ function createApp(options = {}) {
     options.fcmTransport ||
     options.notificationTransport ||
     createFcmTransport(config);
+  const browserPush = webPushConfig(config.env);
+  app.locals.processWebPush = () => processWebPush({ db, clock, transport: options.webPushTransport || browserPush.transport });
   app.locals.db = db;
   app.locals.config = config;
   app.locals.clock = clock;
   app.locals.processReminders = () => processReminders({ db, config, clock });
+  app.locals.processReminderEmails = () => processReminderEmails({ db, clock, transport: options.reminderEmailTransport || smtpTransport(config), from: config.smtp?.from, publicAppUrl: config.publicAppUrl });
   app.locals.processNotificationOutbox = () =>
     processNotificationOutbox({ db, clock, transport: mobilePushTransport });
 
@@ -2617,6 +2678,17 @@ function createApp(options = {}) {
     }
   });
 
+  registerWebPushRoutes(app, { db, clock, requireAuth, HttpError, config: browserPush, withTransaction });
+  registerPersonalTaskRoutes(app, { db, requireAuth, ensureWritable, HttpError, taskJson });
+  registerReminderRoutes(app, { db, clock, requireAuth, ensureWritable, HttpError, withTransaction });
+  registerAppearanceRoutes(app, { db, requireAuth, HttpError });
+  registerAiAssistantRoutes(app, {
+    db, clock, config, requireAuth, requirePlatformAdmin, ensureWritable, HttpError,
+    withTransaction, writeStoredSetting, loadStoredSettings, settingsKey, writeAdminAudit,
+    taskRowsFiltered, fetchImpl: options.aiFetch,
+    refreshAuth: req => authContext(db, req.sessionToken, clock, req.auth.sessionKind),
+  });
+
   registerTicketRoutes(app, {
     db,
     clock,
@@ -2668,11 +2740,7 @@ function createApp(options = {}) {
   registerCollaborationRoutes(app,{db,clock,requireAuth,ensureWritable,withTransaction,HttpError});
   registerServiceRoutes(app,{db,clock,requireAuth,ensureWritable,withTransaction,HttpError});
   registerAutomationRoutes(app,{db,clock,requireAuth,ensureWritable,withTransaction,HttpError,transitionTaskStatus:applyTaskStatusTransition});
-  app.locals.processServiceReminders = () => processServiceReminders({db,clock,sendEmail: async ({recipient,service,message}) => {
-            const transport = smtpTransport(config);
-            if (!transport || !recipient?.email) return;
-            await transport.sendMail({from:config.smtp.from,to:recipient.email,subject:`Nhắc gia hạn: ${service.name}`,text:`${message}\n${config.publicAppUrl}/services?service=${encodeURIComponent(service.id)}`});
-          }});
+  app.locals.processServiceReminders = () => processServiceReminders({db,clock});
 
   registerTaskExtrasRoutes(app,{db,clock,isoNow,withTransaction,requireAuth,ensureWritable,HttpError,fail,recordTaskActivity});
   registerTaskDetailRoutes(app, {
@@ -2818,15 +2886,27 @@ function createApp(options = {}) {
           .get(user.id);
         if (!membership)
           return fail(res, 403, "user has no workspace membership");
+        const remember =
+          req.body?.remember === false ||
+          req.body?.remember === "false" ||
+          req.body?.remember === 0
+            ? false
+            : true;
         const session = createSession(
           db,
           user.id,
           membership.workspace_id,
           config,
           clock,
+          { kind: "web", days: remember ? null : 1 },
         );
         req.clearAuthFailures?.();
-        setSessionCookie(res, session.token, config);
+        setSessionCookie(
+          res,
+          session.token,
+          config,
+          remember ? config.sessionDays * 86400 : null,
+        );
         const auth = authContext(db, session.token, clock);
         return res.json({
           user: auth.user,
@@ -2850,6 +2930,102 @@ function createApp(options = {}) {
         );
       clearSessionCookie(res, config);
       return res.json({ ok: true });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.get("/api/auth/dev-accounts", (req, res, next) => {
+    try {
+      if (config.nodeEnv === "production") {
+        return res.json({ enabled: false, accounts: [] });
+      }
+      try {
+        seedDemo({ db, clock });
+      } catch {}
+      const accounts = [
+        {
+          name: "Lê Dũng",
+          email: "demo@nhactoi.local",
+          role: "Chủ không gian",
+          roleKey: "owner",
+          badge: "Owner",
+        },
+        {
+          name: "Nguyễn An",
+          email: "an@nhactoi.local",
+          role: "Quản trị viên",
+          roleKey: "admin",
+          badge: "Admin",
+        },
+        {
+          name: "Trần Minh",
+          email: "minh@nhactoi.local",
+          role: "Thành viên",
+          roleKey: "member",
+          badge: "Member",
+        },
+      ];
+      return res.json({
+        enabled: true,
+        accounts,
+      });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.post("/api/auth/dev-login", (req, res, next) => {
+    try {
+      if (config.nodeEnv === "production") {
+        return fail(res, 404, "not found");
+      }
+      const email = emailValue(req.body?.email || "demo@nhactoi.local");
+      try {
+        seedDemo({ db, clock });
+      } catch {}
+      const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+      if (!user) {
+        return fail(res, 404, "dev user not found");
+      }
+      if (user.disabled_at) {
+        return fail(res, 403, "user account is disabled");
+      }
+      const membership = db
+        .prepare(
+          `
+        SELECT wm.workspace_id FROM workspace_members wm
+        WHERE wm.user_id = ? ORDER BY CASE wm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END
+        LIMIT 1
+      `,
+        )
+        .get(user.id);
+      if (!membership) {
+        return fail(res, 403, "user has no workspace membership");
+      }
+      const session = createSession(
+        db,
+        user.id,
+        membership.workspace_id,
+        config,
+        clock,
+        { kind: "web", days: config.sessionDays },
+      );
+      setSessionCookie(
+        res,
+        session.token,
+        config,
+        config.sessionDays * 86400,
+      );
+      const auth = authContext(db, session.token, clock);
+      return res.json({
+        user: auth.user,
+        workspace: auth.workspace,
+        subscription: subscriptionJson(
+          getSubscription(db, membership.workspace_id),
+          clock,
+        ),
+      });
     } catch (error) {
       return next(error);
     }
@@ -2975,6 +3151,56 @@ function createApp(options = {}) {
       return next(error);
     }
   });
+
+  function adminPlansData() {
+    const counts = new Map(db.prepare(
+      "SELECT plan, COUNT(*) AS total FROM subscriptions GROUP BY plan",
+    ).all().map((row) => [row.plan, Number(row.total)]));
+    return { plans: config.plans.map((plan) => ({
+      ...adminPlanJson(plan), subscriptionCount: counts.get(plan.id) || 0,
+    })) };
+  }
+  app.get("/api/admin/plans", requirePlatformAdmin, (req, res, next) => {
+    try { return res.json(adminPlansData()); } catch (error) { return next(error); }
+  });
+  function saveAdminPlan(req, res, next) {
+    try {
+      const body = req.body || {};
+      const reason = adminReason(body.reason);
+      const creating = req.method === "POST";
+      const id = creating
+        ? cleanString(body.id, { required: true, max: 20, field: "plan.id" })
+        : req.params.id;
+      const current = config.plans.find((plan) => plan.id === id);
+      if (creating && current) throw new HttpError(409, "Mã gói đã tồn tại");
+      if (!creating && !current) throw new HttpError(404, "Không tìm thấy gói thuê bao");
+      if (!creating && body.id !== undefined && body.id !== id)
+        throw new HttpError(400, "Không thể đổi mã gói đã tạo");
+      const input = { ...(current ? adminPlanJson(current) : {}), ...body, id };
+      const values = config.plans.map((plan) => plan.id === id ? input : adminPlanJson(plan));
+      if (creating) values.push(input);
+      const plans = settingsPlanValues(config, values);
+      const saved = plans.find((plan) => plan.id === id);
+      const updatedAt = isoNow(clock);
+      withTransaction(db, () => {
+        assertPlanSeatChanges(db, [saved], clock);
+        writeStoredSetting(db, "plans", plans, { updatedAt });
+        writeAdminAudit(db, {
+          actorUserId: req.auth.userId,
+          action: creating ? "plan.create" : "plan.update",
+          targetType: "plan", targetId: id, reason,
+          before: current ? adminPlanJson(current) : {},
+          after: adminPlanJson(saved), createdAt: updatedAt,
+        });
+      });
+      config.plans = plans;
+      config.settingsSource.plans = "database";
+      config._storedSettings.set("plans", jsonSetting(plans));
+      return res.status(creating ? 201 : 200).json(adminPlansData());
+    } catch (error) { return next(error); }
+  }
+  app.post("/api/admin/plans", requirePlatformAdmin, saveAdminPlan);
+  app.patch("/api/admin/plans/:id", requirePlatformAdmin, saveAdminPlan);
 
   app.get("/api/admin/settings", requirePlatformAdmin, (req, res, next) => {
     try {
@@ -3443,7 +3669,10 @@ function createApp(options = {}) {
             req.body?.status === undefined
               ? current.status
               : cleanString(req.body.status, { required: true, max: 20, field: "status" });
-          if (!PLAN_IDS.has(plan)) throw new HttpError(400, "Gói dịch vụ không hợp lệ");
+          if (!config.plans.some((item) => item.id === plan))
+            throw new HttpError(400, "Gói dịch vụ không hợp lệ");
+          if (plan !== current.plan && config.plans.find((item) => item.id === plan).active === false)
+            throw new HttpError(409, "Gói thuê bao đã ngừng bán");
           if (!["monthly", "yearly"].includes(cycle))
             throw new HttpError(400, "Chu kỳ thuê bao không hợp lệ");
           if (!ADMIN_SUBSCRIPTION_STATUSES.has(status))
@@ -3601,17 +3830,19 @@ function createApp(options = {}) {
         .get(req.auth.userId, workspaceId);
       if (!membership)
         return fail(res, 403, "you are not a member of this workspace");
-      if (req.sessionToken)
-        db.prepare("DELETE FROM sessions WHERE id = ?").run(req.auth.sessionId);
-      const session = createSession(
-        db,
-        req.auth.userId,
-        workspaceId,
-        config,
-        clock,
-      );
+      let session, auth;
+      withTransaction(db, () => {
+        session = createSession(db, req.auth.userId, workspaceId, config, clock);
+        auth = authContext(db, session.token, clock);
+        if (req.sessionToken) {
+          // Workspace switching rotates the cookie, while browser push belongs
+          // to this browser login across all accessible workspaces.
+          db.prepare('UPDATE web_push_subscriptions SET session_id=? WHERE session_id=? AND user_id=?')
+            .run(auth.sessionId, req.auth.sessionId, req.auth.userId);
+          db.prepare('DELETE FROM sessions WHERE id=?').run(req.auth.sessionId);
+        }
+      });
       setSessionCookie(res, session.token, config);
-      const auth = authContext(db, session.token, clock);
       return res.json({
         user: auth.user,
         workspace: auth.workspace,
@@ -3652,7 +3883,9 @@ function createApp(options = {}) {
         throw new HttpError(400, "priority is invalid");
       if (!RECURRENCES.has(recurrence))
         throw new HttpError(400, "recurrence is invalid");
-      const dueAt = dateValue(req.body?.dueAt, "dueAt", { required: true });
+      const dueAt = dateValue(req.body?.dueAt, "dueAt");
+      if (!dueAt && recurrence !== "none") throw new HttpError(400, "Công việc lặp cần có hạn hoàn thành.");
+      const recurrenceOptions = validateRecurrenceOptions(recurrence, req.body?.recurrenceOptions, HttpError);
       const remindAt = dateValue(req.body?.remindAt, "remindAt");
       const assigneeId = req.body?.assigneeId
         ? cleanString(req.body.assigneeId, { max: 100, field: "assigneeId" })
@@ -3711,8 +3944,8 @@ function createApp(options = {}) {
         INSERT INTO tasks
           (id, workspace_id, title, description, status, priority, due_at, remind_at,
            assignee_id, customer_id, team_id, column_id, board_position, category,
-           recurrence, created_by, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+           recurrence, recurrence_options, recurrence_anchor, created_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
       `,
       ).run(
         id,
@@ -3729,6 +3962,8 @@ function createApp(options = {}) {
         column.id,
         cleanString(req.body?.category, { max: 120, field: "category" }),
         recurrence,
+        JSON.stringify(recurrenceOptions),
+        recurrence === "none" ? null : dueAt,
         req.auth.userId,
         now,
         now,
@@ -3828,7 +4063,7 @@ function createApp(options = {}) {
         set("priority", priority);
       }
       if (body.dueAt !== undefined)
-        set("due_at", dateValue(body.dueAt, "dueAt", { required: true }));
+        set("due_at", dateValue(body.dueAt, "dueAt"));
       if (body.remindAt !== undefined)
         set("remind_at", dateValue(body.remindAt, "remindAt"));
       if (body.assigneeId !== undefined) {
@@ -3920,11 +4155,15 @@ function createApp(options = {}) {
       const nextDue =
         body.dueAt === undefined
           ? task.due_at
-          : dateValue(body.dueAt, "dueAt", { required: true });
-      const nextRemind =
-        body.remindAt === undefined
-          ? task.remind_at
-          : dateValue(body.remindAt, "remindAt");
+          : dateValue(body.dueAt, "dueAt");
+      if (!nextDue && nextRecurrence !== "none") throw new HttpError(400, "Công việc lặp cần có hạn hoàn thành.");
+      const nextOptions = validateRecurrenceOptions(nextRecurrence, body.recurrenceOptions === undefined
+        ? (nextRecurrence === task.recurrence ? storedRecurrenceOptions(task) : undefined)
+        : body.recurrenceOptions, HttpError);
+      const ruleChanged = nextRecurrence !== task.recurrence || JSON.stringify(nextOptions) !== JSON.stringify(storedRecurrenceOptions(task));
+      if (body.recurrenceOptions !== undefined || ruleChanged) set("recurrence_options", JSON.stringify(nextOptions));
+      if (ruleChanged || nextDue !== task.due_at) set("recurrence_anchor", nextRecurrence === "none" ? null : nextDue);
+
       const now = isoNow(clock);
       let nextTaskId = null;
       let updatedTask = null;
@@ -3947,66 +4186,8 @@ function createApp(options = {}) {
             summary,
             createdAt: now,
           });
-        if (
-          task.status !== "done" &&
-          effectiveNextStatus === "done" &&
-          nextRecurrence !== "none"
-        ) {
-          const nextDueDate = nextRecurrenceDate(nextDue, nextRecurrence);
-          if (nextDueDate) {
-            const nextRemindDate = nextRemind
-              ? new Date(
-                  new Date(nextRemind).getTime() +
-                    (nextDueDate.getTime() - new Date(nextDue).getTime()),
-                ).toISOString()
-              : null;
-            nextTaskId = createId("task_");
-            const inserted = db
-              .prepare(
-                `
-              INSERT OR IGNORE INTO tasks
-                (id, workspace_id, title, description, status, priority, due_at, remind_at,
-                 assignee_id, customer_id, team_id, category, recurrence, generated_from_task_id,
-                 created_by, created_at, updated_at)
-              VALUES (?, ?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `,
-              )
-              .run(
-                nextTaskId,
-                updatedTask.workspace_id,
-                updatedTask.title,
-                updatedTask.description,
-                updatedTask.priority,
-                nextDueDate.toISOString(),
-                nextRemindDate,
-                updatedTask.assignee_id,
-                updatedTask.customer_id,
-                updatedTask.team_id,
-                updatedTask.category,
-                updatedTask.recurrence,
-                updatedTask.id,
-                req.auth.userId,
-                now,
-                now,
-              );
-            if (!inserted.changes) nextTaskId = null;
-            else {
-              copyRecurringExtras(db,task.id,nextTaskId,now);
-              const nextRow = db
-                .prepare("SELECT * FROM tasks WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL")
-                .get(nextTaskId, req.auth.workspaceId);
-              const nextColumn = resolveTaskColumn(db, {
-                workspaceId: req.auth.workspaceId,
-                teamId: nextRow.team_id,
-                status: nextRow.status,
-                clock,
-                HttpError,
-              });
-              db.prepare("UPDATE tasks SET column_id = ?, board_position = 0 WHERE id = ? AND workspace_id = ?")
-                .run(nextColumn.id, nextTaskId, req.auth.workspaceId);
-            }
-          }
-        }
+        if (task.status !== "done" && effectiveNextStatus === "done")
+          nextTaskId = createRecurringSuccessor(db, updatedTask, req.auth.userId, now);
         if(task.status!==updatedTask.status)emitTaskEvent(db,{taskId:task.id,actorUserId:req.auth.userId,action:"task_updated",summary:"trạng thái"});
       });
       return res.json({
@@ -4068,6 +4249,20 @@ function createApp(options = {}) {
   app.get("/api/customers", requireAuth, (req, res, next) => {
     try {
       return res.json({ customers: customerRows(db, req.auth.workspaceId) });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.get("/api/customers/:id", requireAuth, (req, res, next) => {
+    try {
+      const customer = db
+        .prepare(
+          "SELECT * FROM customers WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL",
+        )
+        .get(req.params.id, req.auth.workspaceId);
+      if (!customer) return fail(res, 404, "customer was not found");
+      return res.json({ customer: customerJson(customer) });
     } catch (error) {
       return next(error);
     }
@@ -4614,7 +4809,7 @@ function createApp(options = {}) {
         .all(req.auth.workspaceId)
         .map(billingOrderJson);
       return res.json({
-        plans: config.plans.map(planJson),
+        plans: config.plans.filter((plan) => plan.active !== false).map(planJson),
         subscription: subscriptionJson(
           getSubscription(db, req.auth.workspaceId),
           clock,
@@ -4642,8 +4837,10 @@ function createApp(options = {}) {
           max: 20,
           field: "cycle",
         });
-        if (!PLAN_IDS.has(planId) || !["monthly", "yearly"].includes(cycle))
+        const plan = config.plans.find((item) => item.id === planId);
+        if (!plan || !["monthly", "yearly"].includes(cycle))
           throw new HttpError(400, "plan or cycle is invalid");
+        if (plan.active === false) throw new HttpError(409, "Gói thuê bao đã ngừng bán; vui lòng chọn gói khác");
         if (
           !config.billingConfigured ||
           !config.gatewayApiUrl ||
@@ -4654,7 +4851,6 @@ function createApp(options = {}) {
             "billing is not configured; set BILLGATE_API_URL, BILLGATE_API_KEY and BILLGATE_WEBHOOK_SECRET",
           );
         }
-        const plan = config.plans.find((item) => item.id === planId);
         const amount =
           cycle === "yearly" ? plan.yearlyPrice : plan.monthlyPrice;
         const orderId = createId("order_");
@@ -4871,12 +5067,10 @@ function createApp(options = {}) {
       () => {
         try {
           processReminders({ db, config, clock });
-          processServiceReminders({db,clock,sendEmail: async ({recipient,service,message}) => {
-            const transport = smtpTransport(config);
-            if (!transport || !recipient?.email) return;
-            await transport.sendMail({from:config.smtp.from,to:recipient.email,subject:`Nhắc gia hạn: ${service.name}`,text:`${message}\n${config.publicAppUrl}/services?service=${encodeURIComponent(service.id)}`});
-          }});
+          app.locals.processServiceReminders();
+          void app.locals.processReminderEmails().catch(error=>console.error("[nhactoi] email worker failed",error));
           processEventReminders({db,clock});
+          void app.locals.processWebPush().catch(error=>console.error("[nhactoi] web push worker failed", error));
           void app.locals.processNotificationOutbox?.().catch(error=>console.error("[nhactoi] notification outbox failed", error));
           void app.locals.processBackups?.().catch(error=>console.error("[nhactoi] backup failed",error));
           void app.locals.processRemoteCleanup?.().catch(error=>console.error("[nhactoi] remote cleanup failed",error));
@@ -4898,8 +5092,8 @@ function createApp(options = {}) {
 
 // Kept as a named helper to make the recurrence operation easy to exercise in
 // isolated tests without duplicating date arithmetic.
-function nextRecurrenceDate(dueAt, recurrence) {
-  return nextRecurrence(dueAt, recurrence);
+function nextRecurrenceDate(dueAt, recurrence, options, completedAt, anchorAt) {
+  return nextRecurrence(dueAt, recurrence, options, completedAt, anchorAt);
 }
 
 export { createApp, configFrom, nextRecurrenceDate };

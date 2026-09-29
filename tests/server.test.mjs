@@ -314,3 +314,49 @@ test("mutating API checks Origin and expired subscriptions block writes", async 
   });
   assert.equal(blocked.response.status, 402);
 });
+
+test("login remember me controls session cookie Max-Age and expiration", async (t) => {
+  const server = await boot();
+  t.after(() => server.close());
+  await register(server, "remember@example.test", "Ghi Nhớ");
+
+  // Login without remember (remember: false)
+  const loginNoRemember = await request(server.base, "/api/auth/login", {
+    method: "POST",
+    body: {
+      email: "remember@example.test",
+      password: "password123",
+      remember: false,
+    },
+  });
+  assert.equal(loginNoRemember.response.status, 200);
+  const setCookieNoRemember = loginNoRemember.response.headers.get("set-cookie");
+  assert.ok(setCookieNoRemember.includes("nt_session="));
+  assert.equal(setCookieNoRemember.includes("Max-Age="), false);
+
+  // Login with remember (remember: true)
+  const loginRemember = await request(server.base, "/api/auth/login", {
+    method: "POST",
+    body: {
+      email: "remember@example.test",
+      password: "password123",
+      remember: true,
+    },
+  });
+  assert.equal(loginRemember.response.status, 200);
+  const setCookieRemember = loginRemember.response.headers.get("set-cookie");
+  assert.ok(setCookieRemember.includes("nt_session="));
+  assert.ok(setCookieRemember.includes("Max-Age="));
+
+  // Default login (omitted remember) defaults to true for backwards compatibility
+  const loginDefault = await request(server.base, "/api/auth/login", {
+    method: "POST",
+    body: {
+      email: "remember@example.test",
+      password: "password123",
+    },
+  });
+  assert.equal(loginDefault.response.status, 200);
+  const setCookieDefault = loginDefault.response.headers.get("set-cookie");
+  assert.ok(setCookieDefault.includes("Max-Age="));
+});

@@ -14,7 +14,8 @@
     "seed": "node --env-file-if-exists=.env server/seed.mjs",
     "test": "node --test tests/*.test.mjs",
     "admin": "node --env-file-if-exists=.env server/admin.mjs",
-    "test:next": "node --test tests/integration/next-runtime.test.mjs"
+    "test:next": "node --test tests/integration/next-runtime.test.mjs",
+    "web-push:keys": "web-push generate-vapid-keys --json"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1136.0",
@@ -26,6 +27,9 @@
     "next": "^16.3.5",
     "nodemailer": "^10.0.10",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "web-push": "^3.6.7"
   }
 }

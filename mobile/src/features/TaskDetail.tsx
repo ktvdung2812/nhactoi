@@ -10,7 +10,7 @@ import { router } from "expo-router";
 import type { DocumentPickerAsset } from "expo-document-picker";
 import { useResource, useSession, refreshData } from "../core/session";
 import type { Detail, Column, Member } from "../core/types";
-import { dateLabel, statuses, priorities } from "../core/policy";
+import { dateLabel, statuses, priorities, recurrenceLabel } from "../core/policy";
 import { errorMessage } from "../core/api";
 import { pickFiles, uploadFile, openAttachment } from "../core/files";
 import {
@@ -43,6 +43,7 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const policy = useResource<{ enabled: boolean; maxFileSizeMb: number }>(
     base + "/upload-policy",
   );
+  const reminders = useResource<{canRespond:boolean;recipients:{id:string;name:string;acknowledged_at?:string;snoozed_until?:string;snooze_sent_at?:string}[]}>(base + "/reminders");
   const task = result.data?.value.task;
   const board = useResource<{ columns: Column[] }>(
     `/boards?teamId=${task?.teamId || ""}`,
@@ -205,6 +206,11 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
         </Text>
       )}
       <ErrorNotice message={error} />
+      {reminders.data && <Card><Text style={s.cardTitle}>Nhận việc & nhắc lại</Text>
+        {reminders.data.value.recipients.map(person=><Text key={person.id}>{person.name}: {person.acknowledged_at ? "đã nhận việc" : "chưa xác nhận"}{person.snoozed_until && !person.snooze_sent_at ? ` · hoãn đến ${dateLabel(person.snoozed_until)}` : ""}</Text>)}
+        {reminders.data.value.canRespond && <><Button label="Đã nhận việc" disabled={disabled || task.status==='done' || !!reminders.error} onPress={()=>void mutate(base+'/reminders/acknowledge','POST',{})}/>
+        <Button label="Nhắc lại sau 1 giờ" secondary disabled={disabled || task.status==='done' || !!reminders.error} onPress={()=>void mutate(base+'/reminders/snooze','POST',{minutes:60})}/><Text style={s.muted}>Hoãn nhắc chỉ áp dụng cho bạn; hạn công việc giữ nguyên.</Text></>}
+      </Card>}
       <Card>
         <Text>{task.description || "Chưa có mô tả."}</Text>
         <Text style={s.muted}>◷ Hạn: {dateLabel(task.dueAt)}</Text>
@@ -212,6 +218,7 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
           ♧ {task.assigneeName || "Chưa giao"} · {task.teamName || "Việc chung"}
         </Text>
         <Text style={s.muted}>Nhắc: {dateLabel(task.remindAt)}</Text>
+        <Text style={s.muted}>{recurrenceLabel(task.recurrence, task.recurrenceOptions)}</Text>
         <Select
           label="Chuyển sang cột"
           disabled={disabled}

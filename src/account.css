@@ -8,7 +8,8 @@
   margin: 0;
   min-width: 0;
 }
-.account-profile-panel h2 {
+.account-profile-panel h2,
+.account-theme-panel h2 {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -24,4 +25,65 @@
   color: var(--muted);
   font-size: var(--text-sm);
   line-height: 1.6;
+}
+
+.theme-options-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 14px;
+}
+@media (max-width: 700px) {
+  .theme-options-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.theme-option-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--bg-surface);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.theme-option-card:hover {
+  border-color: var(--green);
+  background: var(--bg-subtle);
+}
+.theme-option-card.active {
+  border-color: var(--green);
+  background: var(--green-subtle);
+  box-shadow: 0 0 0 1.5px var(--green);
+}
+.theme-option-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  color: var(--green);
+}
+.theme-option-card.active .theme-option-icon {
+  background: var(--green);
+  color: #fff;
+}
+[data-theme="dark"] .theme-option-card.active .theme-option-icon {
+  color: #0f1114;
+}
+.theme-option-card strong {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--ink);
+}
+.theme-option-card small {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  line-height: 1.5;
 }

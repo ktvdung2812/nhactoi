@@ -32,12 +32,25 @@ test("boards bootstrap per workspace, keep columns isolated, and let visible mem
   assert.equal(memberBoard.status, 200);
   assert.equal(memberBoard.body.canManage, false);
   assert.equal(memberBoard.body.canWrite, true);
-  const deniedColumn = await call(server, "/boards/columns", {
+  const createdColumn = await call(server, "/boards/columns", {
     method: "POST",
     cookie: member.cookie,
     body: { teamId: null, name: "Member column", status: "todo", tone: "blue" },
   });
-  assert.equal(deniedColumn.status, 403);
+  assert.equal(createdColumn.status, 201, JSON.stringify(createdColumn.body));
+  assert.equal(createdColumn.body.column.name, "Member column");
+  assert.equal(createdColumn.body.column.status, "todo");
+  assert.equal(createdColumn.body.column.tone, "blue");
+  const withMemberColumn = await call(server, "/boards", { cookie: member.cookie });
+  assert.ok(withMemberColumn.body.columns.some((column) => column.id === createdColumn.body.column.id));
+  const renamed = await call(server, `/boards/columns/${createdColumn.body.column.id}`, {
+    method: "PATCH",
+    cookie: member.cookie,
+    body: { name: "Renamed by member" },
+  });
+  assert.equal(renamed.status, 200, JSON.stringify(renamed.body));
+  assert.equal(renamed.body.column.name, "Renamed by member");
+  assert.equal(renamed.body.canManage, false);
 
   const moved = await call(server, `/boards/tasks/${card.id}/move`, {
     method: "POST",

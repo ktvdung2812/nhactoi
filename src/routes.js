@@ -3,19 +3,23 @@
 // so Next can use it while rendering a direct request.
 
 export const navRouteIds = [
+  "inbox",
+  "today",
+  "upcoming",
+  "week",
   "dashboard",
   "tasks",
   "calendar",
   "customers",
   "finance",
   "teams",
-  "team",
   "tickets",
   "services",
   "automations",
   "events",
   "transfer",
   "account",
+  "appearance",
   "templates",
   "trash",
 ];
@@ -25,6 +29,7 @@ export const adminRouteIds = [
   "workspaces",
   "users",
   "subscriptions",
+  "plans",
   "orders",
   "tickets",
   "audit",
@@ -64,6 +69,8 @@ export function readRoute(
 
   // Old Lịch nhắc and Lịch hẹn bookmarks open the single work board.
   if (current === "calendar" || current === "events") return "tasks";
+  // The member directory now lives on the Teams page.
+  if (current === "team") return "teams";
 
   const query = String(search || "").replace(/^\?/, "");
   if (
@@ -78,7 +85,8 @@ export function readRoute(
     /^admin\/(users|workspaces|tickets)\/[A-Za-z0-9_-]+$/.test(current) ||
     /^tickets\/[A-Za-z0-9_-]+$/.test(current) ||
     /^tasks\/[A-Za-z0-9_-]+$/.test(current) ||
-    /^teams\/[A-Za-z0-9_-]+$/.test(current)
+    /^teams\/[A-Za-z0-9_-]+$/.test(current) ||
+    /^customers\/[A-Za-z0-9_-]+$/.test(current)
   )
     return current;
 

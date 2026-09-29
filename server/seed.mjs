@@ -13,17 +13,19 @@ function dateAt(base, days, hour = 9) {
 }
 
 export function seedDemo({
+  db: explicitDb,
   dbPath = resolve(process.cwd(), "data", "nhactoi.sqlite"),
   clock = () => new Date(),
 } = {}) {
-  const db = openDatabase(dbPath);
+  const shouldClose = !explicitDb;
+  const db = explicitDb || openDatabase(dbPath);
   const now = new Date(typeof clock === "function" ? clock() : clock);
   const nowIso = now.toISOString();
   const existing = db
     .prepare("SELECT id FROM users WHERE email = ?")
     .get(DEMO_EMAIL);
   if (existing) {
-    db.close();
+    if (shouldClose) db.close();
     return { created: false, email: DEMO_EMAIL, password: DEMO_PASSWORD };
   }
 
@@ -231,7 +233,7 @@ export function seedDemo({
       nowIso,
     );
   });
-  db.close();
+  if (shouldClose) db.close();
   return {
     created: true,
     email: DEMO_EMAIL,

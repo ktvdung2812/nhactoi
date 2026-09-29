@@ -395,3 +395,95 @@ test("task detail stays readable but reports canWrite false after subscription e
     402,
   );
 });
+
+test("checklist items keep card-member assignees, dates, order, copy, and reminders", async (t) => {
+  const server = await boot();
+  t.after(() => server.close());
+  const owner = await register(server, "checklist-card@example.test", "Trần Minh");
+  const created = await request(server.base, "/api/tasks", {
+    method: "POST",
+    cookie: owner.cookie,
+    body: { title: "Plugin tính toán báo giá", dueAt: "2026-04-02T09:00:00.000Z", assigneeId: owner.json.user.id },
+  });
+  assert.equal(created.response.status, 201);
+  const taskId = created.json.task.id;
+  const checklist = await request(server.base, `/api/tasks/${taskId}/checklists`, {
+    method: "POST",
+    cookie: owner.cookie,
+    body: { title: "Danh sách công việc" },
+  });
+  const checklistId = checklist.json.checklist.id;
+  const item = await request(server.base, `/api/tasks/${taskId}/checklists/${checklistId}/items`, {
+    method: "POST",
+    cookie: owner.cookie,
+    body: { title: "Lên ý tưởng và mô tả dự án" },
+  });
+  const itemId = item.json.item.id;
+  const updated = await request(server.base, `/api/tasks/${taskId}/checklists/${checklistId}/items/${itemId}`, {
+    method: "PATCH",
+    cookie: owner.cookie,
+    body: {
+      startAt: "2026-04-01",
+      dueAt: "2026-04-03",
+      remindAt: "2020-01-01T00:00:00.000Z",
+      assigneeIds: [owner.json.user.id],
+    },
+  });
+  assert.equal(updated.response.status, 200, JSON.stringify(updated.json));
+  assert.equal(updated.json.item.startAt, "2026-04-01");
+  assert.deepEqual(updated.json.item.assigneeIds, [owner.json.user.id]);
+
+  const outside = await request(server.base, `/api/tasks/${taskId}/checklists/${checklistId}/items/${itemId}`, {
+    method: "PATCH",
+    cookie: owner.cookie,
+    body: { assigneeIds: ["user_not_on_card"] },
+  });
+  assert.equal(outside.response.status, 400);
+  assert.equal(outside.json.error, "Người phụ trách mục checklist phải là thành viên của thẻ");
+  const backwards = await request(server.base, `/api/tasks/${taskId}/checklists/${checklistId}/items/${itemId}`, {
+    method: "PATCH",
+    cookie: owner.cookie,
+    body: { startAt: "2026-04-04" },
+  });
+  assert.equal(backwards.response.status, 400);
+  assert.equal(backwards.json.error, "Ngày bắt đầu không được sau hạn chót");
+
+  const second = await request(server.base, `/api/tasks/${taskId}/checklists`, {
+    method: "POST",
+    cookie: owner.cookie,
+    body: { title: "Việc sau" },
+  });
+  const ordered = await request(server.base, `/api/tasks/${taskId}/checklists/order`, {
+    method: "PUT",
+    cookie: owner.cookie,
+    body: { ids: [second.json.checklist.id, checklistId] },
+  });
+  assert.equal(ordered.response.status, 200, JSON.stringify(ordered.json));
+  const copied = await request(server.base, `/api/tasks/${taskId}/checklists/${checklistId}/copy`, {
+    method: "POST",
+    cookie: owner.cookie,
+    body: {},
+  });
+  assert.equal(copied.response.status, 201, JSON.stringify(copied.json));
+  assert.equal(copied.json.checklist.items[0].startAt, "2026-04-01");
+  assert.deepEqual(copied.json.checklist.items[0].assigneeIds, [owner.json.user.id]);
+
+  const detail = await request(server.base, `/api/tasks/${taskId}/detail`, { cookie: owner.cookie });
+  assert.deepEqual(detail.json.checklists.map((list) => list.id), [second.json.checklist.id, checklistId, copied.json.checklist.id]);
+  assert.deepEqual(detail.json.checklistMembers.map((member) => member.id), [owner.json.user.id]);
+
+  const sent = server.app.locals.processReminders();
+  assert.equal(sent.filter((row) => row.checklistItemId === itemId).length, 1);
+  assert.equal(server.app.locals.processReminders().filter((row) => row.checklistItemId === itemId).length, 0);
+
+  const converted = await request(server.base, `/api/tasks/${taskId}/checklists/${checklistId}/items/${itemId}/convert`, {
+    method: "POST",
+    cookie: owner.cookie,
+    body: {},
+  });
+  assert.equal(converted.response.status, 201, JSON.stringify(converted.json));
+  const card = await request(server.base, `/api/tasks/${converted.json.task.id}`, { cookie: owner.cookie });
+  assert.equal(card.json.task.status, "todo");
+  assert.equal(card.json.task.assigneeId, owner.json.user.id);
+  assert.equal(card.json.task.dueAt, "2026-04-03T00:00:00.000Z");
+});

@@ -5,8 +5,11 @@ const distDir = process.env.NHACTOI_DIST_DIR || ".next";
 const nextConfig = {
   distDir,
   poweredByHeader: false,
+  async headers() {
+    return [{ source: '/sw.js', headers: [{ key: 'Cache-Control', value: 'no-cache' }, { key: 'Service-Worker-Allowed', value: '/' }] }];
+  },
   allowedDevOrigins: ["nhactoi.test"],
-  serverExternalPackages: ["express", "nodemailer", "google-auth-library", "@aws-sdk/client-s3"],
+  serverExternalPackages: ["express", "nodemailer", "google-auth-library", "web-push", "@aws-sdk/client-s3"],
   ...(lowMemoryBuild
     ? {
         experimental: {

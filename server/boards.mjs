@@ -398,7 +398,7 @@ export function registerBoardRoutes(
       ensureWritable(req);
       assertKeys(req.body, new Set(["teamId", "name", "status", "tone"]), HttpError);
       const teamId = parseTeamId(req.body?.teamId, HttpError);
-      requireAccess(db, req.auth, teamId, clock, HttpError, { manage: true, write: true });
+      requireAccess(db, req.auth, teamId, clock, HttpError, { write: true });
       if (!teamExists(db, req.auth.workspaceId, teamId)) throw errorOf(HttpError, 404, "team was not found");
       const name = text(req.body?.name, "name", HttpError, { required: true, max: 120 });
       const status = statusValue(req.body?.status, HttpError);
@@ -434,7 +434,7 @@ export function registerBoardRoutes(
         .prepare("SELECT * FROM board_columns WHERE id = ? AND workspace_id = ?")
         .get(req.params.id, req.auth.workspaceId);
       if (!current) return fail(res, 404, "column was not found");
-      const access = requireAccess(db, req.auth, current.team_id, clock, HttpError, { manage: true, write: true });
+      const access = requireAccess(db, req.auth, current.team_id, clock, HttpError, { write: true });
       if (current.archived_at) throw errorOf(HttpError, 409, "column is archived; restore it before editing");
       const values = [];
       const fields = [];
@@ -478,7 +478,7 @@ export function registerBoardRoutes(
       ensureWritable(req);
       assertKeys(req.body, new Set(["teamId", "ids"]), HttpError);
       const teamId = parseTeamId(req.body?.teamId, HttpError);
-      requireAccess(db, req.auth, teamId, clock, HttpError, { manage: true, write: true });
+      requireAccess(db, req.auth, teamId, clock, HttpError, { write: true });
       if (!Array.isArray(req.body?.ids) || !req.body.ids.length)
         throw errorOf(HttpError, 400, "ids must be a non-empty array");
       const ids = req.body.ids.map((id) => text(id, "ids", HttpError, { required: true, max: 160 }));
@@ -505,7 +505,7 @@ export function registerBoardRoutes(
         .prepare("SELECT * FROM board_columns WHERE id = ? AND workspace_id = ?")
         .get(req.params.id, req.auth.workspaceId);
       if (!current) return fail(res, 404, "column was not found");
-      requireAccess(db, req.auth, current.team_id, clock, HttpError, { manage: true, write: true });
+      requireAccess(db, req.auth, current.team_id, clock, HttpError, { write: true });
       if (current.archived_at) throw errorOf(HttpError, 409, "column is already archived");
       const activeCount = db
         .prepare(
@@ -588,7 +588,7 @@ export function registerBoardRoutes(
         .prepare("SELECT * FROM board_columns WHERE id = ? AND workspace_id = ?")
         .get(req.params.id, req.auth.workspaceId);
       if (!current) return fail(res, 404, "column was not found");
-      requireAccess(db, req.auth, current.team_id, clock, HttpError, { manage: true, write: true });
+      requireAccess(db, req.auth, current.team_id, clock, HttpError, { write: true });
       if (!current.archived_at) throw errorOf(HttpError, 409, "column is already active");
       const now = nowIso(clock);
       withTransaction(db, () => {

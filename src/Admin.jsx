@@ -29,10 +29,15 @@ import {
   CircleDollarSign,
   Eye,
   Sparkles,
+  Moon,
+  Sun,
 } from "lucide-react";
+import { useTheme } from "./theme.js";
+import { ThemeToggleButton } from "./ThemeToggle.jsx";
 import "./admin.css";
 import ErrorPage from "./ErrorPage.jsx";
 import AdminSettings from "./AdminSettings.jsx";
+import AdminPlans from "./AdminPlans.jsx";
 import AdminDetails from "./AdminDetails.jsx";
 import Tickets from "./Tickets.jsx";
 import ActionMenu from "./ActionMenu.jsx";
@@ -63,6 +68,12 @@ const sections = [
     "Theo dõi gói dịch vụ, chu kỳ và thời hạn sử dụng.",
   ],
   [
+    "plans",
+    "Gói thuê bao",
+    CreditCard,
+    "Quản lý danh mục gói, giá bán, quyền lợi và giới hạn thành viên.",
+  ],
+  [
     "orders",
     "Thanh toán",
     Receipt,
@@ -84,7 +95,7 @@ const sections = [
     "settings",
     "Cấu hình",
     Settings2,
-    "Quản lý gói dịch vụ, thông tin ứng dụng và các kết nối hệ thống.",
+    "Quản lý thông tin ứng dụng và các kết nối hệ thống.",
   ],
 ];
 export const adminRoutes = sections.map(([id]) => `admin/${id}`);
@@ -133,6 +144,8 @@ const actionLabels = {
   "user.profile.update": "Cập nhật hồ sơ người dùng",
   "workspace.profile.update": "Cập nhật thông tin doanh nghiệp",
   "settings.update": "Cập nhật cấu hình nền tảng",
+  "plan.create": "Thêm gói thuê bao",
+  "plan.update": "Cập nhật gói thuê bao",
   "storage.update": "Cập nhật lưu trữ tệp",
   "ticket.reply": "Phản hồi yêu cầu hỗ trợ",
   "ticket.update": "Cập nhật yêu cầu hỗ trợ",
@@ -186,6 +199,7 @@ export default function Admin({ page, me, api, go }) {
     [status, setStatus] = useState(""),
     [index, setIndex] = useState(1);
   const [result, setResult] = useState(null),
+    [resultSection, setResultSection] = useState(null),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [revision, setRevision] = useState(0);
@@ -212,7 +226,7 @@ export default function Admin({ page, me, api, go }) {
     savingRef = useRef(false);
   savingRef.current = saving;
   const current = sections.find(([id]) => id === section) || sections[0];
-  const isList = !["overview", "settings", "tickets"].includes(section);
+  const isList = !["overview", "settings", "plans", "tickets"].includes(section);
   useEffect(() => {
     const timer = setTimeout(() => {
       setQuery(q);
@@ -244,7 +258,10 @@ export default function Admin({ page, me, api, go }) {
     });
     api(`/admin/${section}${isList ? `?${params}` : ""}`)
       .then((data) => {
-        if (!canceled) setResult(data);
+        if (!canceled) {
+          setResult(data);
+          setResultSection(section);
+        }
       })
       .catch((e) => {
         if (!canceled)
@@ -448,9 +465,12 @@ export default function Admin({ page, me, api, go }) {
             <ChevronRight size={14} />
             <strong>{current[1]}</strong>
           </div>
-          <span className="admin-top-label">
-            <ShieldCheck size={15} /> Nền tảng Nhắc tôi
-          </span>
+          <div className="top-actions">
+            <ThemeToggleButton />
+            <span className="admin-top-label">
+              <ShieldCheck size={15} /> Nền tảng Nhắc tôi
+            </span>
+          </div>
         </header>
         <div className="page-content admin-content">
           {!detailId && section !== "tickets" && (
@@ -549,7 +569,7 @@ export default function Admin({ page, me, api, go }) {
                 Thử lại
               </button>
             </div>
-          ) : loading ? (
+          ) : loading || resultSection !== section ? (
             <div className="admin-state" role="status">
               <LoaderCircle className="spin" size={28} />
               <p>Đang tải dữ liệu quản trị…</p>
@@ -564,6 +584,13 @@ export default function Admin({ page, me, api, go }) {
                     planNames={planNames}
                   />
                 )}
+                {section === "plans" && (
+                  <AdminPlans data={result} api={api} onSaved={(data) => {
+                    setResult(data);
+                    setPlanNames(Object.fromEntries(data.plans.map((p) => [p.id, p.name])));
+                    setToast("Đã lưu gói thuê bao và ghi nhật ký quản trị.");
+                  }} />
+                )}
                 {section === "settings" && (
                   <AdminSettings
                     data={result}
@@ -577,6 +604,7 @@ export default function Admin({ page, me, api, go }) {
                       );
                       setToast("Đã lưu cấu hình và ghi nhật ký quản trị.");
                     }}
+                    openPlans={() => go("admin/plans")}
                     openPreview={() => go("errors")}
                   />
                 )}
@@ -1342,6 +1370,8 @@ const auditFields = {
   monthly: "Giá tháng",
   yearly: "Giá năm",
   seats: "Giới hạn thành viên",
+  features: "Quyền lợi hiển thị",
+  active: "Trạng thái bán",
   suspendedAt: "Trạng thái doanh nghiệp",
   disabledAt: "Trạng thái tài khoản",
   isPlatformAdmin: "Quyền quản trị",
@@ -1354,6 +1384,8 @@ const auditFields = {
 };
 function auditValue(key, value) {
   key = key.split(".").at(-1);
+  if (key === "active") return { label: value ? "Đang bán" : "Ngừng bán", tone: value ? "good" : "neutral" };
+  if (key === "features") return { label: Array.isArray(value) ? value.join(" · ") : "Chưa thiết lập", tone: "neutral" };
   if (key === "changedSecretFields")
     return {
       label: Array.isArray(value)

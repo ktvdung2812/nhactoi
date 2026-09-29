@@ -793,3 +793,418 @@
     min-width: 0;
   }
 }
+
+
+/* ==========================================================================
+   Tickets Dark Mode Overrides
+   ========================================================================== */
+
+[data-theme="dark"] .tickets,
+.dark .tickets {
+  --ticket-border: var(--border-card);
+  --ticket-muted: var(--muted);
+  color: var(--ink);
+}
+
+[data-theme="dark"] .tickets .page-heading h1,
+.dark .tickets .page-heading h1 {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .tickets .page-heading p,
+.dark .tickets .page-heading p {
+  color: var(--muted);
+}
+
+/* Stat Cards */
+[data-theme="dark"] .ticket-stats button,
+.dark .ticket-stats button {
+  background: var(--bg-card);
+  border-color: var(--border-card);
+  color: var(--ink);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+[data-theme="dark"] .ticket-stats button:hover,
+.dark .ticket-stats button:hover {
+  border-color: var(--green);
+}
+
+[data-theme="dark"] .ticket-stats button.selected,
+.dark .ticket-stats button.selected {
+  background: #f0f2f5;
+  border-color: #f0f2f5;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  color: #101214;
+}
+
+[data-theme="dark"] .ticket-stats button.selected strong,
+.dark .ticket-stats button.selected strong {
+  color: #101214;
+}
+
+[data-theme="dark"] .ticket-stats button.selected > span,
+.dark .ticket-stats button.selected > span {
+  color: #4b5563;
+}
+
+[data-theme="dark"] .ticket-stats strong,
+.dark .ticket-stats strong {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .ticket-stats button > span,
+.dark .ticket-stats button > span {
+  color: var(--muted);
+}
+
+/* Search and Filters */
+[data-theme="dark"] .ticket-search,
+.dark .ticket-search {
+  background: var(--bg-input);
+  border-color: var(--border-card);
+  color: var(--muted);
+}
+
+[data-theme="dark"] .ticket-search input,
+.dark .ticket-search input {
+  background: transparent;
+  color: var(--ink);
+}
+
+[data-theme="dark"] .ticket-search input::placeholder,
+.dark .ticket-search input::placeholder {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .ticket-toolbar select,
+.dark .ticket-toolbar select {
+  background: var(--bg-input);
+  border-color: var(--border-card);
+  color: var(--ink);
+}
+
+/* Ticket List Panel */
+[data-theme="dark"] .ticket-list-panel,
+.dark .ticket-list-panel {
+  background: var(--bg-card);
+  border-color: var(--border-card);
+}
+
+[data-theme="dark"] .ticket-list-panel > header,
+.dark .ticket-list-panel > header {
+  border-bottom-color: var(--line);
+}
+
+[data-theme="dark"] .ticket-list-panel > header h2,
+.dark .ticket-list-panel > header h2 {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .ticket-list-panel > header h2 span,
+.dark .ticket-list-panel > header h2 span {
+  background: var(--bg-subtle);
+  color: var(--muted);
+}
+
+[data-theme="dark"] .ticket-list-panel > header small,
+.dark .ticket-list-panel > header small {
+  color: var(--muted);
+}
+
+/* Empty State */
+[data-theme="dark"] .ticket-empty-symbol,
+.dark .ticket-empty-symbol {
+  background: var(--bg-subtle);
+  color: var(--green);
+}
+
+[data-theme="dark"] .ticket-empty h2,
+.dark .ticket-empty h2 {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .ticket-empty p,
+.dark .ticket-empty p {
+  color: var(--muted);
+}
+
+/* Ticket Rows */
+[data-theme="dark"] .ticket-row,
+.dark .ticket-row {
+  background: var(--bg-card);
+  border-bottom-color: var(--line);
+  color: var(--ink);
+}
+
+[data-theme="dark"] .ticket-row:hover,
+.dark .ticket-row:hover {
+  background: var(--bg-hover);
+}
+
+[data-theme="dark"] .ticket-row-icon,
+.dark .ticket-row-icon,
+[data-theme="dark"] .ticket-symbol,
+.dark .ticket-symbol {
+  background: var(--bg-subtle);
+  color: var(--green);
+}
+
+[data-theme="dark"] .ticket-row-main > strong,
+.dark .ticket-row-main > strong {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .ticket-number,
+.dark .ticket-number {
+  color: var(--green);
+}
+
+[data-theme="dark"] .ticket-number > span,
+.dark .ticket-number > span {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .ticket-status-open,
+.dark .ticket-status-open {
+  background: rgba(88, 126, 208, 0.18);
+  color: #8bbef5;
+}
+
+[data-theme="dark"] .ticket-status-in_progress,
+.dark .ticket-status-in_progress {
+  background: rgba(224, 159, 103, 0.18);
+  color: #f0b27a;
+}
+
+[data-theme="dark"] .ticket-status-waiting_customer,
+.dark .ticket-status-waiting_customer {
+  background: rgba(175, 157, 224, 0.18);
+  color: #c4b5fd;
+}
+
+[data-theme="dark"] .ticket-status-resolved,
+.dark .ticket-status-resolved {
+  background: rgba(47, 185, 154, 0.18);
+  color: #5cdbb5;
+}
+
+/* Pagination */
+[data-theme="dark"] .ticket-pagination,
+.dark .ticket-pagination {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .ticket-pagination .button.secondary,
+.dark .ticket-pagination .button.secondary {
+  background: var(--bg-surface);
+  border-color: var(--border-card);
+  color: var(--ink);
+}
+
+/* Detail & Conversation */
+[data-theme="dark"] .ticket-back,
+.dark .ticket-back {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .ticket-back:hover,
+.dark .ticket-back:hover {
+  color: var(--green);
+}
+
+[data-theme="dark"] .ticket-conversation,
+.dark .ticket-conversation,
+[data-theme="dark"] .ticket-info,
+.dark .ticket-info {
+  background: var(--bg-card);
+  border-color: var(--border-card);
+}
+
+[data-theme="dark"] .ticket-subject,
+.dark .ticket-subject {
+  border-bottom-color: var(--line);
+}
+
+[data-theme="dark"] .ticket-subject h2,
+.dark .ticket-subject h2 {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .ticket-subject p,
+.dark .ticket-subject p {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .ticket-message,
+.dark .ticket-message {
+  background: var(--bg-surface);
+  border-color: var(--border-card);
+}
+
+[data-theme="dark"] .ticket-message.staff,
+.dark .ticket-message.staff {
+  background: var(--bg-subtle);
+  border-color: rgba(47, 185, 154, 0.3);
+}
+
+[data-theme="dark"] .ticket-avatar,
+.dark .ticket-avatar {
+  background: var(--bg-subtle);
+  color: var(--green);
+}
+
+[data-theme="dark"] .ticket-message-heading strong,
+.dark .ticket-message-heading strong {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .ticket-message-heading small,
+.dark .ticket-message-heading small,
+[data-theme="dark"] .ticket-message-heading time,
+.dark .ticket-message-heading time {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .ticket-message > p,
+.dark .ticket-message > p {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .ticket-event,
+.dark .ticket-event {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .ticket-event time,
+.dark .ticket-event time {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .ticket-composer,
+.dark .ticket-composer {
+  background: var(--bg-surface);
+  border-top-color: var(--line);
+}
+
+[data-theme="dark"] .ticket-composer > label,
+.dark .ticket-composer > label {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .ticket-composer textarea,
+.dark .ticket-composer textarea {
+  background: var(--bg-input);
+  border-color: var(--border-card);
+  color: var(--ink);
+}
+
+[data-theme="dark"] .ticket-composer textarea::placeholder,
+.dark .ticket-composer textarea::placeholder {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .ticket-composer footer > span,
+.dark .ticket-composer footer > span {
+  color: var(--muted);
+}
+
+/* Sidebar Info & Help */
+[data-theme="dark"] .ticket-info h3,
+.dark .ticket-info h3,
+[data-theme="dark"] .ticket-help h3,
+.dark .ticket-help h3 {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .ticket-info dt,
+.dark .ticket-info dt {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .ticket-info dd,
+.dark .ticket-info dd {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .ticket-info dd small,
+.dark .ticket-info dd small {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .ticket-help,
+.dark .ticket-help {
+  background: var(--bg-subtle);
+  border-color: var(--border-card);
+  color: var(--muted);
+}
+
+[data-theme="dark"] .ticket-help p,
+.dark .ticket-help p {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .ticket-scope,
+.dark .ticket-scope,
+[data-theme="dark"] .ticket-notice,
+.dark .ticket-notice {
+  background: var(--bg-subtle);
+  color: var(--ink);
+}
+
+[data-theme="dark"] .ticket-scope button,
+.dark .ticket-scope button {
+  color: var(--green);
+}
+
+/* Modal Ticket Create */
+[data-theme="dark"] .ticket-backdrop,
+.dark .ticket-backdrop {
+  background: var(--modal-overlay);
+}
+
+[data-theme="dark"] .ticket-create,
+.dark .ticket-create {
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
+  box-shadow: 0 24px 100px rgba(0, 0, 0, 0.7);
+  color: var(--ink);
+}
+
+[data-theme="dark"] .ticket-create > header,
+.dark .ticket-create > header {
+  border-bottom-color: var(--line);
+}
+
+[data-theme="dark"] .ticket-create h2,
+.dark .ticket-create h2 {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .ticket-create header small,
+.dark .ticket-create header small {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .ticket-create .field label,
+.dark .ticket-create .field label {
+  color: var(--ink);
+}
+
+[data-theme="dark"] .ticket-create .field > input,
+.dark .ticket-create .field > input,
+[data-theme="dark"] .ticket-create .field > select,
+.dark .ticket-create .field > select,
+[data-theme="dark"] .ticket-create .field > textarea,
+.dark .ticket-create .field > textarea {
+  background: var(--bg-input);
+  border-color: var(--border-card);
+  color: var(--ink);
+}
+
+[data-theme="dark"] .ticket-create .button.secondary,
+.dark .ticket-create .button.secondary {
+  background: var(--bg-surface);
+  border-color: var(--border-card);
+  color: var(--ink);
+}

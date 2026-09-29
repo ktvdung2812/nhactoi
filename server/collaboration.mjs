@@ -35,6 +35,26 @@ export function notifyTaskAudience(db, { taskId, actorUserId, summary, createdAt
   }
 }
 
+export function boardMentionMembers(db, workspaceId, teamId) {
+  const rows = teamId
+    ? db.prepare(`
+        SELECT u.id, u.name, u.email
+        FROM team_members tm
+        JOIN users u ON u.id = tm.user_id
+        JOIN workspace_members wm ON wm.user_id = u.id AND wm.workspace_id = tm.workspace_id
+        WHERE tm.team_id = ? AND tm.workspace_id = ? AND u.disabled_at IS NULL
+        ORDER BY CASE tm.role WHEN 'lead' THEN 0 ELSE 1 END, u.name, u.id
+      `).all(teamId, workspaceId)
+    : db.prepare(`
+        SELECT u.id, u.name, u.email
+        FROM workspace_members wm
+        JOIN users u ON u.id = wm.user_id
+        WHERE wm.workspace_id = ? AND u.disabled_at IS NULL
+        ORDER BY u.name, u.id
+      `).all(workspaceId);
+  return rows.filter((member) => canAccessTeamTask(db, workspaceId, member.id, teamId || null));
+}
+
 export function recordCommentMentions(db, { commentId, taskId, actorUserId, ids, createdAt, HttpError }) {
   if (!Array.isArray(ids) || ids.length > 30 || ids.some(id => typeof id !== 'string')) throw new HttpError(400,'Danh sách nhắc tên không hợp lệ');
   const task = db.prepare('SELECT workspace_id,team_id FROM tasks WHERE id=? AND deleted_at IS NULL').get(taskId);
@@ -73,7 +93,7 @@ export function registerCollaborationRoutes(app, {db,clock,requireAuth,ensureWri
     const row=task(req);
     const reactions=db.prepare('SELECT r.comment_id,r.emoji,r.user_id FROM comment_reactions r JOIN task_comments c ON c.id=r.comment_id WHERE c.task_id=?').all(row.id);
     const comments=db.prepare('SELECT id,author_user_id,edited_at FROM task_comments WHERE task_id=?').all(row.id).map(c=>({id:c.id,canEdit:editable(req,c),editedAt:c.edited_at,reactions:['👍','❤️','🎉','👀'].map(emoji=>({emoji,count:reactions.filter(r=>r.comment_id===c.id&&r.emoji===emoji).length,mine:reactions.some(r=>r.comment_id===c.id&&r.emoji===emoji&&r.user_id===req.auth.userId)}))}));
-    const members=db.prepare('SELECT u.id,u.name FROM workspace_members m JOIN users u ON u.id=m.user_id WHERE m.workspace_id=? AND u.disabled_at IS NULL').all(req.auth.workspaceId).filter(u=>canAccessTeamTask(db,req.auth.workspaceId,u.id,row.team_id));
+    const members=boardMentionMembers(db,req.auth.workspaceId,row.team_id);
     res.json({watching:!!db.prepare('SELECT 1 FROM task_watchers WHERE task_id=? AND user_id=?').get(row.id,req.auth.userId),comments,members});
   }catch(e){next(e)}});
   app.put('/api/tasks/:id/watch',requireAuth,(req,res,next)=>{try{
