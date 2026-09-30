@@ -1,14 +1,14 @@
 import {removeRoadmapSchema} from "./migration-helpers.mjs";
-import {SCHEMA_VERSION} from "../server/db.mjs";
+import {SCHEMA_VERSION} from './database-helpers.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDatabase, withTransaction } from "../server/db.mjs";
-import { createApp } from "../server/index.mjs";
+import { openDatabase, withTransaction } from './database-helpers.mjs';
+import { createApp } from './database-helpers.mjs';
 
-test("existing version-1 database migrates without data loss; failed transactions roll back", () => {
+test("[SQLite legacy] existing version-1 database migrates without data loss; failed transactions roll back", () => {
   const dir = mkdtempSync(join(tmpdir(), "nhactoi-migration-"));
   let db;
   try {

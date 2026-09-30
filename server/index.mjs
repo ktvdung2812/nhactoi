@@ -1150,10 +1150,7 @@ function notificationRowsFiltered(db, userId, workspaceId, query) {
     calendarNotificationAccessSql(),
   ];
   const params = [userId, workspaceId];
-  const hasServiceId = db.prepare("PRAGMA table_info(notifications)").all().some((entry) => entry.name === "service_id");
-  if (hasServiceId) {
-    where.push("(n.service_id IS NULL OR EXISTS (SELECT 1 FROM service_contracts sc WHERE sc.id=n.service_id AND sc.workspace_id=n.workspace_id AND sc.archived_at IS NULL AND (sc.team_id IS NULL OR EXISTS (SELECT 1 FROM workspace_members service_admin WHERE service_admin.workspace_id=n.workspace_id AND service_admin.user_id=n.user_id AND service_admin.role IN ('owner','admin')) OR EXISTS (SELECT 1 FROM team_members service_member WHERE service_member.team_id=sc.team_id AND service_member.workspace_id=n.workspace_id AND service_member.user_id=n.user_id))))");
-  }
+  where.push("(n.service_id IS NULL OR EXISTS (SELECT 1 FROM service_contracts sc WHERE sc.id=n.service_id AND sc.workspace_id=n.workspace_id AND sc.archived_at IS NULL AND (sc.team_id IS NULL OR EXISTS (SELECT 1 FROM workspace_members service_admin WHERE service_admin.workspace_id=n.workspace_id AND service_admin.user_id=n.user_id AND service_admin.role IN ('owner','admin')) OR EXISTS (SELECT 1 FROM team_members service_member WHERE service_member.team_id=sc.team_id AND service_member.workspace_id=n.workspace_id AND service_member.user_id=n.user_id))))");
   if (query.type) {
     where.push("n.type = ?");
     params.push(query.type);
@@ -1247,9 +1244,7 @@ function adminListParams(req, allowedStatuses = null) {
   };
 }
 
-// SQLite's built-in LOWER() is ASCII-only. Normalize in the application so
-// searches such as "đỗ" match "Đỗ" consistently, including on macOS and
-// Linux builds with different SQLite ICU settings.
+// Match PostgreSQL unicode_fold() when normalizing Vietnamese search input.
 function adminNormalizeSearch(value) {
   return String(value ?? "")
     .normalize("NFD")
@@ -2362,10 +2357,9 @@ export function processReminders({
         const delivery = db
           .prepare(
             `
-          INSERT OR IGNORE INTO task_reminder_deliveries
+          INSERT INTO task_reminder_deliveries
             (id, task_id, user_id, schedule_key, created_at)
-          VALUES (?, ?, ?, ?, ?)
-        `,
+          VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
           )
           .run(createId("delivery_"), task.id, recipient.id, scheduleKey, now);
         if (!delivery.changes) return null;
@@ -2442,10 +2436,9 @@ export function processReminders({
         const delivery = db
           .prepare(
             `
-          INSERT OR IGNORE INTO task_reminder_deliveries
+          INSERT INTO task_reminder_deliveries
             (id, task_id, user_id, schedule_key, created_at)
-          VALUES (?, ?, ?, ?, ?)
-        `,
+          VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
           )
           .run(createId("delivery_"), item.id, recipient.id, scheduleKey, now);
         if (!delivery.changes) return null;
@@ -2489,10 +2482,10 @@ function createRecurringSuccessor(db, task, actorUserId, now) {
     : null;
   const id = createId("task_");
   const column = resolveTaskColumn(db, { workspaceId: task.workspace_id, teamId: task.team_id, status: "todo", clock: () => new Date(now), HttpError });
-  const inserted = db.prepare(`INSERT OR IGNORE INTO tasks
+  const inserted = db.prepare(`INSERT INTO tasks
     (id,workspace_id,title,description,status,priority,due_at,remind_at,assignee_id,customer_id,team_id,
      category,recurrence,recurrence_options,recurrence_anchor,generated_from_task_id,created_by,created_at,updated_at,column_id,board_position)
-    VALUES (?,?,?,?,'todo',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`)
+    VALUES (?,?,?,?,'todo',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0) ON CONFLICT DO NOTHING`)
     .run(id,task.workspace_id,task.title,task.description,task.priority,due.toISOString(),remind,
       task.assignee_id,task.customer_id,task.team_id,task.category,task.recurrence,
       JSON.stringify(options),options.basis === "completion" ? due.toISOString() : task.recurrence_anchor || task.due_at,task.id,actorUserId,now,now,column.id);
@@ -2538,12 +2531,10 @@ function createApp(options = {}) {
   config.plans = config.plans.map(planWithSeatFeature);
   const dbPath =
     options.dbPath ||
-    config.env.DB_PATH ||
-    config.env.DATABASE_PATH ||
-    resolve(process.cwd(), "data", "nhactoi.sqlite");
+    join(resolve(options.dataDir || config.env.NHACTOI_DATA_DIR || "data"), "storage");
   const db =
     options.db ||
-    openDatabase(dbPath);
+    openDatabase(options.databaseUrl || config.env.DATABASE_URL, { env: config.env });
   const settingsKey = loadSettingsKey({
     env: config.env,
     dbPath,
@@ -4571,7 +4562,7 @@ function createApp(options = {}) {
           );
         }
         db.prepare(
-          `INSERT OR IGNORE INTO workspace_members(workspace_id, user_id, role, created_at) VALUES (?, ?, ?, ?)`,
+          `INSERT INTO workspace_members(workspace_id, user_id, role, created_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
         ).run(invite.workspace_id, userId, invite.role, isoNow(clock));
         const accepted = db
           .prepare(
@@ -5053,7 +5044,7 @@ function createApp(options = {}) {
       return fail(res, 400, "Nội dung JSON không hợp lệ");
     if (error?.type === "entity.too.large" && error.status === 413)
       return fail(res, 413, "Dữ liệu gửi lên vượt quá dung lượng cho phép");
-    if (error?.code === "SQLITE_CONSTRAINT_UNIQUE")
+    if (error?.code === "23505")
       return fail(res, 409, "a record with those values already exists");
     console.error("[nhactoi] request failed:", error);
     return fail(res, 500, "internal server error");

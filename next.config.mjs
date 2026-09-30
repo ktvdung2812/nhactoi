@@ -9,7 +9,7 @@ const nextConfig = {
     return [{ source: '/sw.js', headers: [{ key: 'Cache-Control', value: 'no-cache' }, { key: 'Service-Worker-Allowed', value: '/' }] }];
   },
   allowedDevOrigins: ["nhactoi.test"],
-  serverExternalPackages: ["express", "nodemailer", "google-auth-library", "web-push", "@aws-sdk/client-s3"],
+  serverExternalPackages: ["pg", "synckit", "express", "nodemailer", "google-auth-library", "web-push", "@aws-sdk/client-s3"],
   ...(lowMemoryBuild
     ? {
         experimental: {
@@ -19,6 +19,7 @@ const nextConfig = {
       }
     : {}),
   // Runtime data and credentials are mounted separately, never build assets.
+  outputFileTracingIncludes: { "/*": ["./server/postgres-worker.mjs", "./server/migrations/postgres/*.sql"] },
   outputFileTracingExcludes: {
     "/*": ["./data/**/*", "./demo/**/*", "./mobile/**/*", "./artifacts/**/*", "./.env*", "./*.tar.gz"],
   },

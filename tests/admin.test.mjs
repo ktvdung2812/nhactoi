@@ -4,8 +4,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createApp } from "../server/index.mjs";
-import { openDatabase } from "../server/db.mjs";
+import { createApp } from './database-helpers.mjs';
+import { openDatabase } from './database-helpers.mjs';
 import { createId, hashPassword } from "../server/auth.mjs";
 import { runAdminCommand } from "../server/admin.mjs";
 

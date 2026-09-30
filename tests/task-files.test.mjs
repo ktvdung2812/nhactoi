@@ -9,8 +9,8 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { createApp } from "../server/index.mjs";
-import { openDatabase } from "../server/db.mjs";
+import { createApp } from './database-helpers.mjs';
+import { openDatabase } from './database-helpers.mjs';
 
 function request(base, path, { method = "GET", body, cookie, headers = {} } = {}) {
   const requestHeaders = { ...headers };
@@ -273,7 +273,7 @@ test("upload limits, disabled storage, admin guard and team boundaries reject in
   assert.equal((await upload(server, taskId, owner, "archived.txt", Buffer.from("x"))).response.status, 409);
 });
 
-test("migration 9 adds file metadata and cleanup queue to a fresh database and survives reopen", () => {
+test("[SQLite legacy] migration 9 adds file metadata and cleanup queue to a fresh database and survives reopen", () => {
   const dir = mkdtempSync(join(tmpdir(), "nhactoi-task-files-migration-"));
   const path = join(dir, "legacy.sqlite");
   let db = openDatabase(path);

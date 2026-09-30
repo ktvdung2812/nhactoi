@@ -77,12 +77,15 @@ export default function WorkflowBoard({
   canTrash,
   canMove: canMoveItem,
   captionRight = null,
+  showColumnTabs = false,
+  toolbarRight = null,
   countNoun = "công việc",
   readOnly = false,
   revision = 0,
   scopeKey = "default",
 }) {
   const [board, setBoard] = useState(null);
+  const [columnFilter, setColumnFilter] = useState([]);
   const [taskSnapshot, setTaskSnapshot] = useState(tasks);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -147,6 +150,14 @@ export default function WorkflowBoard({
   const activeColumns = useMemo(() => allColumns.filter(column => !column.archivedAt), [allColumns]);
   const archivedColumns = useMemo(() => allColumns.filter(column => Boolean(column.archivedAt)), [allColumns]);
   const activeIds = useMemo(() => new Set(activeColumns.map(column => String(column.id))), [activeColumns]);
+  const selectedColumnIds = columnFilter.filter(id => activeIds.has(id));
+  const visibleColumnIds = showColumnTabs && selectedColumnIds.length ? selectedColumnIds : null;
+  useEffect(() => setColumnFilter([]), [scopeKey, selectedTaskId]);
+  useEffect(() => setColumnFilter(current => current.filter(id => activeIds.has(id))), [activeIds]);
+
+  function toggleColumnFilter(id) {
+    setColumnFilter(current => current.includes(id) ? current.filter(value => value !== id) : [...current, id]);
+  }
   const getBoardTaskColumn = task => resolveDisplayedColumn(task, activeColumns, { placeByStatus, teamId });
   const visibleTasks = useMemo(() => {
     const originalIndexes = new Map(taskSnapshot.map((task, index) => [String(task.id), index]));
@@ -347,6 +358,17 @@ export default function WorkflowBoard({
 
   return (
     <div className="workflow-board-shell">
+      {showColumnTabs && (
+        <div className="toolbar task-toolbar">
+          <div className="filter-tabs" role="group" aria-label="Lọc theo cột">
+            <button type="button" className={visibleColumnIds == null ? "active" : ""} aria-pressed={visibleColumnIds == null} onClick={() => setColumnFilter([])}>Tất cả</button>
+            {activeColumns.map(column => (
+              <button key={column.id} type="button" className={visibleColumnIds?.includes(column.id) ? "active" : ""} aria-pressed={visibleColumnIds?.includes(column.id) ?? false} onClick={() => toggleColumnFilter(column.id)}>{column.label}</button>
+            ))}
+          </div>
+          {toolbarRight}
+        </div>
+      )}
       {(archivedColumns.length > 0 || canWrite) && (
         <div className="workflow-board-toolbar">
           <div>
@@ -362,6 +384,7 @@ export default function WorkflowBoard({
         showSummary={false}
         scopeKey={scopeKey}
         columns={activeColumns}
+        visibleColumnIds={visibleColumnIds}
         tasks={visibleTasks}
         members={members}
         preferences={canWrite ? board?.preferences : null}
@@ -380,7 +403,7 @@ export default function WorkflowBoard({
         canMove={task => Boolean(canWrite && (canMoveItem ? canMoveItem(task) : !task.teamArchived))}
       />
 
-      {archivedColumns.length > 0 && (
+      {visibleColumnIds == null && archivedColumns.length > 0 && (
         <section className="workflow-board-archived" aria-label="Cột đã lưu trữ">
           <div className="workflow-board-archived-heading"><div><span className="workflow-board-caption">LỊCH SỬ BẢNG</span><h3>Cột đã lưu trữ</h3></div><Archive size={17} /></div>
           <div className="workflow-board-archived-list">

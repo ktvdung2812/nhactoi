@@ -3,27 +3,6 @@ import { canAccessTeamTask } from "./teams.mjs";
 import { isValidCalendarDate } from "../shared/service-renewal.mjs";
 import { createAiModelCatalog } from "./ai-models.mjs";
 
-export const AI_ASSISTANT_SCHEMA = `
-  CREATE TABLE IF NOT EXISTS ai_conversations (
-    id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    title TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS ai_conversations_owner_idx ON ai_conversations(workspace_id, user_id, updated_at);
-  CREATE TABLE IF NOT EXISTS ai_messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    conversation_id TEXT NOT NULL REFERENCES ai_conversations(id) ON DELETE CASCADE,
-    role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
-    content TEXT NOT NULL,
-    metadata TEXT NOT NULL DEFAULT '{}',
-    created_at TEXT NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS ai_messages_conversation_idx ON ai_messages(conversation_id, id);
-`;
-
 const toolDefinitions = [
   {
     name: "search_tasks",
@@ -120,7 +99,7 @@ async function completion(settings, system, messages, fetchImpl, signal, HttpErr
 export function registerAiAssistantRoutes(app, { db, clock, config, requireAuth, requirePlatformAdmin, ensureWritable, HttpError, withTransaction, writeStoredSetting, loadStoredSettings, settingsKey, writeAdminAudit, taskRowsFiltered, refreshAuth, fetchImpl = fetch }) {
   const inFlight = new Set();
   const modelCatalog = createAiModelCatalog(fetchImpl);
-  // One server process owns SQLite and its worker. Use a shared limiter if deployment becomes multi-process.
+  // One server process owns the database connection and its worker. Use a shared limiter if deployment becomes multi-process.
   const rate = new Map();
   const now = () => new Date(clock()).toISOString();
   const settings = () => {
@@ -207,7 +186,7 @@ export function registerAiAssistantRoutes(app, { db, clock, config, requireAuth,
     res.json({ enabled: s.enabled, ready: ready(s), provider: s.provider, model: s.model });
   });
   app.get("/api/ai/conversations", requireAuth, (req, res) => {
-    const conversations = db.prepare("SELECT id,title,updated_at AS updatedAt FROM ai_conversations WHERE workspace_id=? AND user_id=? ORDER BY updated_at DESC,id DESC LIMIT 100").all(req.auth.workspaceId, req.auth.userId);
+    const conversations = db.prepare("SELECT id,title,updated_at AS \"updatedAt\" FROM ai_conversations WHERE workspace_id=? AND user_id=? ORDER BY updated_at DESC,id DESC LIMIT 100").all(req.auth.workspaceId, req.auth.userId);
     res.json({ conversations });
   });
   app.get("/api/ai/conversations/:id", requireAuth, (req, res) => {

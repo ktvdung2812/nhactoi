@@ -1,7 +1,7 @@
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {createApp} from '../server/index.mjs';
+import {createApp} from './database-helpers.mjs';
 export async function boot(t,options={}){const dir=mkdtempSync(join(tmpdir(),'nhactoi-roadmap-'));const app=createApp({dbPath:join(dir,'test.sqlite'),env:{NODE_ENV:'test',FRONTEND_ORIGIN:'http://localhost:5173'},...options});const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s))});t.after(async()=>{await new Promise(resolve=>server.close(resolve));app.locals.close();rmSync(dir,{recursive:true,force:true})});return {app,db:app.locals.db,base:`http://127.0.0.1:${server.address().port}`,dir}}
 export async function call(s,path,{method='GET',body,cookie}={}){const r=await fetch(s.base+'/api'+path,{method,headers:{'content-type':'application/json',...(cookie?{cookie}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{})});const value=await r.json();return {status:r.status,body:value,cookie:r.headers.get('set-cookie')?.split(';')[0]||cookie}}
 export async function user(s,email){const r=await call(s,'/auth/register',{method:'POST',body:{name:email.split('@')[0],email,password:'Password123!',workspaceName:'Test workspace'}});if(r.status!==201)throw new Error(JSON.stringify(r.body));return {...r.body,cookie:r.cookie}}

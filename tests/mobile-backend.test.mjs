@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { rmSync } from "node:fs";
 
-import { createApp } from "../server/index.mjs";
-import { openDatabase } from "../server/db.mjs";
+import { createApp } from './database-helpers.mjs';
+import { openDatabase } from './database-helpers.mjs';
 
 const tempPaths = [];
 
@@ -230,7 +230,7 @@ test("notification outbox is durable, retries failures, and rechecks revoked acc
   assert.equal(server.db.prepare("SELECT COUNT(*) AS n FROM mobile_devices").get().n, 0);
 });
 
-test("mobile migration is additive and preserves legacy rows when replayed", () => {
+test("[SQLite legacy] mobile migration is additive and preserves legacy rows when replayed", () => {
   const path = `/tmp/nhactoi-mobile-migration-${process.pid}-${Date.now()}.sqlite`;
   let db = openDatabase(path);
   try {

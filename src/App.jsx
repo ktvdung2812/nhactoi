@@ -348,8 +348,11 @@ export default function App() {
     [sidebarHidden, setSidebarHidden] = useState(() => {
       if (typeof window !== "undefined") {
         try {
-          return localStorage.getItem("nhactoi_sidebar_hidden") === "true";
+          const saved = localStorage.getItem("nhactoi_sidebar_hidden");
+          if (saved !== null) return saved === "true";
         } catch {}
+        // Tablets keep the icon rail so page content has room to breathe.
+        return window.innerWidth < 1024;
       }
       return false;
     }),
@@ -682,12 +685,6 @@ export default function App() {
   );
   const filteredItems = teamScopedItems.filter(
     (item) =>
-      (filter === "all" ||
-        (filter === "overdue"
-          ? item.status !== "done" && item.dueAt && new Date(item.dueAt) < now
-          : filter === "today"
-            ? isToday(item.dueAt)
-            : item.status === filter)) &&
       `${item.title} ${item.description || ""} ${item.category || ""} ${item.teamName || ""} ${item.kind === "event" ? "lịch hẹn" : item.kind === "renewal" ? "gia hạn" : "công việc"}`
         .toLowerCase()
         .includes(search.toLowerCase()),
@@ -724,29 +721,13 @@ export default function App() {
         ? taskTeamFilter
         : null,
     });
-  function renderTaskTeamFilter() {
-    const activeTeams = teams.filter((t) => !t.archivedAt);
-    if (activeTeams.length <= 1) return null;
-    return (
-      <label className="task-team-filter task-team-filter-caption">
-        <Users size={14} />
-        <span>Team:</span>
-        <select
-          aria-label="Lọc công việc theo team"
-          value={taskTeamFilter}
-          onChange={(e) => setTaskTeamFilter(e.target.value)}
-        >
-          <option value="all">Tất cả team của bạn</option>
-          <option value="common">Việc chung của doanh nghiệp</option>
-          {activeTeams.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </select>
-      </label>
-    );
-  }
+  const activeTaskTeams = teams.filter((t) => !t.archivedAt);
+  const taskTeamOptions = activeTaskTeams.length > 1 ? [
+    ["all", "Tất cả team của bạn"],
+    ["common", "Việc chung của doanh nghiệp"],
+    ...activeTaskTeams.map((t) => [t.id, t.name]),
+  ] : [];
+  const taskTeamLabel = taskTeamFilter === "all" ? "" : taskTeamOptions.find(([id]) => id === taskTeamFilter)?.[1] || "";
   function asBoardEvent(event) {
     return {
       ...event,
@@ -1195,7 +1176,7 @@ export default function App() {
             </span>
             <span className="workspace-details">
               <strong>{me.workspace.name}</strong>
-              <small>Không gian làm việc</small>
+              <small>{taskTeamLabel || "Không gian làm việc"}</small>
             </span>
             <ChevronDown size={14} className="workspace-chevron" />
           </button>
@@ -1225,6 +1206,22 @@ export default function App() {
                   <Building2 size={16} />
                   <strong>{w.name}</strong>
                   {w.id === me.workspace.id && <Check size={15} />}
+                </button>
+              ))}
+              {taskTeamOptions.length > 0 && <span>CHỌN TEAM</span>}
+              {taskTeamOptions.map(([id, label]) => (
+                <button
+                  key={id}
+                  aria-pressed={taskTeamFilter === id}
+                  onClick={() => {
+                    setTaskTeamFilter(id);
+                    setWorkspaces(null);
+                    if (page !== "tasks") go("tasks");
+                  }}
+                >
+                  <Users size={16} />
+                  <strong>{label}</strong>
+                  {taskTeamFilter === id && <Check size={15} />}
                 </button>
               ))}
               <button onClick={() => go("teams")}>
@@ -1697,32 +1694,9 @@ export default function App() {
                 title="Công việc"
                 subtitle="Công việc, lịch hẹn và lịch nhắc trên cùng một bảng."
               />
-              <div className="toolbar task-toolbar">
-                <div className="filter-tabs">
-                  {[
-                    ["all", "Tất cả"],
-                    ["todo", "Cần làm"],
-                    ["doing", "Đang làm"],
-                    ["done", "Hoàn thành"],
-                    ["today", "Hôm nay"],
-                    ["overdue", "Quá hạn"],
-                  ].map(([id, label]) => (
-                    <button
-                      key={id}
-                      className={filter === id ? "active" : ""}
-                      onClick={() => setFilter(id)}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <SearchBox
-                  value={search}
-                  setValue={setSearch}
-                  placeholder="Tìm công việc, lịch hẹn, nhóm dịch vụ…"
-                />
-              </div>
               <WorkflowBoard
+                showColumnTabs
+                toolbarRight={<SearchBox value={search} setValue={setSearch} placeholder="Tìm công việc, lịch hẹn, nhóm dịch vụ…" />}
                 selectedTaskId={selectedAiTaskId}
                 api={api}
                 teamId={teams.some((team) => team.id === taskTeamFilter) ? taskTeamFilter : null}
@@ -1731,7 +1705,6 @@ export default function App() {
                 members={members}
                 placeByStatus
                 countNoun="mục"
-                captionRight={renderTaskTeamFilter()}
                 readOnly={Boolean(me.workspace.suspendedAt)}
                 onOpen={openUnifiedItem}
                 onCreate={createFilteredTask}
@@ -2273,7 +2246,7 @@ export default function App() {
               </button>
             </div>
             <div className={modal.type === "customer" && modal.item ? "customer-detail-layout" : undefined}>
-            <form onSubmit={submitModal}>
+            <form className="modal-form-grid" onSubmit={submitModal}>
               {modal.type === "task" && (
                 <fieldset
                   className="task-editor-fields"
@@ -2286,24 +2259,26 @@ export default function App() {
                         : "Team đã lưu trữ. Bạn có thể xem lịch sử công việc; khôi phục team để tiếp tục cập nhật."}
                     </p>
                   )}
-                  <Field label="Tên *">
-                    <input
-                      autoFocus
-                      required
-                      name="title"
-                      maxLength={200}
-                      defaultValue={modal.item?.title || modal.draft?.title}
-                      placeholder="Ví dụ: Nhắc khách gia hạn dịch vụ"
-                    />
-                  </Field>
-                  <Field label="Mô tả">
-                    <textarea
-                      name="description"
-                      rows={3}
-                      defaultValue={modal.item?.description || modal.draft?.description}
-                      placeholder="Thông tin cần nhớ, yêu cầu hoặc ghi chú…"
-                    />
-                  </Field>
+                  <div className="task-editor-summary">
+                    <Field label="Tên *">
+                      <input
+                        autoFocus
+                        required
+                        name="title"
+                        maxLength={200}
+                        defaultValue={modal.item?.title || modal.draft?.title}
+                        placeholder="Ví dụ: Nhắc khách gia hạn dịch vụ"
+                      />
+                    </Field>
+                    <Field label="Mô tả">
+                      <textarea
+                        name="description"
+                        rows={3}
+                        defaultValue={modal.item?.description || modal.draft?.description}
+                        placeholder="Thông tin cần nhớ, yêu cầu hoặc ghi chú…"
+                      />
+                    </Field>
+                  </div>
                   <div className="form-grid">
                     {!modal.item && (
                       <Field label="Loại">

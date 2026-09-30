@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { rmSync } from "node:fs";
 
-import { createApp } from "../server/index.mjs";
+import { createApp } from './database-helpers.mjs';
 
 const tempPaths = [];
 

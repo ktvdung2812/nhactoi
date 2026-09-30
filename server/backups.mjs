@@ -3,7 +3,7 @@ import {pipeline} from "node:stream/promises";
 import {createWriteStream} from "node:fs";
 import {rmSync,mkdirSync,chmodSync,copyFileSync,readFileSync,writeFileSync,readdirSync,existsSync,renameSync,lstatSync} from 'node:fs';
 import {dirname,join,resolve,isAbsolute} from 'node:path';
-import {DatabaseSync} from 'node:sqlite';
+import { exportSnapshot, validateSnapshot, snapshotRows } from './database-snapshot.mjs';
 import {createHash,randomUUID} from 'node:crypto';
 import {safeStoragePath} from './task-files.mjs';
 const sha=file=>createHash('sha256').update(readFileSync(file)).digest('hex');
@@ -43,35 +43,29 @@ function assertManifestStorageMetadata(entry,row){
 }
 
 function snapshotFileRows(path){
- const snapshot=new DatabaseSync(path,{readOnly:true});
- try{
-  if(snapshot.prepare('PRAGMA integrity_check').get().integrity_check!=='ok')throw new Error('Bản sao cơ sở dữ liệu không toàn vẹn');
-  if(snapshot.prepare('PRAGMA foreign_key_check').all().length)throw new Error('Bản sao cơ sở dữ liệu có liên kết không hợp lệ');
-  if(!snapshot.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_attachments'").get())return [];
-  if(!snapshot.prepare("SELECT 1 FROM pragma_table_info('task_attachments') WHERE name='kind'").get())return [];
-  return snapshot.prepare("SELECT id,kind,storage_root,storage_key,size_bytes FROM task_attachments WHERE kind='file' ORDER BY id").all();
- }finally{snapshot.close()}
+ const snapshot=validateSnapshot(JSON.parse(readFileSync(path,'utf8')));
+ return snapshotRows(snapshot,'task_attachments').filter(row=>row.kind==='file').sort((a,b)=>a.id.localeCompare(b.id));
 }
 
 export async function createBackup({db,dbPath,clock=()=>new Date()}){
- if(dbPath===':memory:')throw new Error('Sao lưu cần cơ sở dữ liệu trên đĩa');const root=backupRoot(dbPath);ensureDir(root);const id=`backup-${new Date(clock()).toISOString().replace(/[:.]/g,'-')}-${randomUUID()}`,stage=join(root,id+'.pending'),target=join(root,id);ensureDir(stage);try{ensureDir(join(stage,'files'));const path=join(stage,'database.sqlite');
- db.prepare('VACUUM INTO ?').run(path);chmodSync(path,0o600);const files=snapshotFileRows(path);
+ if(dbPath===':memory:')throw new Error('Sao lưu cần cơ sở dữ liệu trên đĩa');const root=backupRoot(dbPath);ensureDir(root);const id=`backup-${new Date(clock()).toISOString().replace(/[:.]/g,'-')}-${randomUUID()}`,stage=join(root,id+'.pending'),target=join(root,id);ensureDir(stage);try{ensureDir(join(stage,'files'));const path=join(stage,'database.json');
+ writeFileSync(path,JSON.stringify(exportSnapshot(db)),{mode:0o600});chmodSync(path,0o600);const files=snapshotFileRows(path);
  const entries=[];for(const row of files){const name=`${row.id.replace(/[^a-zA-Z0-9_-]/g,'_')}.bin`,targetFile=join(stage,'files',name);
  assertStorageMetadata(row);
  if(row.storage_root?.startsWith('remote:')){const store=getRemoteStore(db);if(!store)throw new Error('Cần cấu hình kho ngoài để sao lưu đầy đủ tệp');await pipeline(await store.get(row.storage_root,row.storage_key),createWriteStream(targetFile,{flags:'wx',mode:0o600}));}
  else {const source=safeStoragePath(row,Error);const stat=lstatSync(source);if(!stat.isFile()||stat.isSymbolicLink())throw new Error('Tệp sao lưu không hợp lệ');copyFileSync(source,targetFile);chmodSync(targetFile,0o600);}
  const size=lstatSync(targetFile).size;if(size!==row.size_bytes)throw new Error('Tệp sao lưu sai dung lượng');entries.push({id:row.id,file:'files/'+name,sha256:sha(targetFile),size,storageRoot:row.storage_root,storageKey:row.storage_key,storageType:storageKind(row.storage_root)})}
 
- const manifest={version:1,id,createdAt:new Date(clock()).toISOString(),databaseSha256:sha(path),files:entries,remoteFiles:files.filter(f=>f.storage_root?.startsWith("remote:")).length};writeFileSync(join(stage,'manifest.json'),JSON.stringify(manifest,null,2),{mode:0o600});renameSync(stage,target);return {id,createdAt:manifest.createdAt,fileCount:entries.length,remoteFiles:manifest.remoteFiles};}catch(error){rmSync(stage,{recursive:true,force:true});throw error}
+ const manifest={version:2,id,createdAt:new Date(clock()).toISOString(),databaseSha256:sha(path),files:entries,remoteFiles:files.filter(f=>f.storage_root?.startsWith("remote:")).length};writeFileSync(join(stage,'manifest.json'),JSON.stringify(manifest,null,2),{mode:0o600});renameSync(stage,target);return {id,createdAt:manifest.createdAt,fileCount:entries.length,remoteFiles:manifest.remoteFiles};}catch(error){rmSync(stage,{recursive:true,force:true});throw error}
 }
 export function inspectBackup(dbPath,id){
  if(!/^backup-[a-zA-Z0-9-]+$/.test(id))throw new Error('Mã sao lưu không hợp lệ');
  const dir=join(backupRoot(dbPath),id);
  const dirStat=lstatSync(dir);if(!dirStat.isDirectory()||dirStat.isSymbolicLink())throw new Error('Đường dẫn sao lưu không hợp lệ');
  const manifestPath=join(dir,'manifest.json');const manifestStat=lstatSync(manifestPath);if(!manifestStat.isFile()||manifestStat.isSymbolicLink())throw new Error('Manifest sao lưu không hợp lệ');
- const databasePath=join(dir,'database.sqlite');const databaseStat=lstatSync(databasePath);if(!databaseStat.isFile()||databaseStat.isSymbolicLink())throw new Error('Cơ sở dữ liệu trong bản sao không hợp lệ');
+ const databasePath=join(dir,'database.json');const databaseStat=lstatSync(databasePath);if(!databaseStat.isFile()||databaseStat.isSymbolicLink())throw new Error('Cơ sở dữ liệu trong bản sao không hợp lệ');
  const m=JSON.parse(readFileSync(manifestPath,'utf8'));
- if(!m||typeof m!=='object'||Array.isArray(m)||m.version!==1||m.id!==id||!Array.isArray(m.files)||!Number.isSafeInteger(m.remoteFiles)||m.remoteFiles<0||sha(databasePath)!==m.databaseSha256)throw new Error('Bản sao không toàn vẹn');
+ if(!m||typeof m!=='object'||Array.isArray(m)||m.version!==2||m.id!==id||!Array.isArray(m.files)||!Number.isSafeInteger(m.remoteFiles)||m.remoteFiles<0||sha(databasePath)!==m.databaseSha256)throw new Error('Bản sao không toàn vẹn');
  const filesDir=join(dir,'files');const filesDirStat=lstatSync(filesDir);if(!filesDirStat.isDirectory()||filesDirStat.isSymbolicLink())throw new Error('Thư mục tệp trong bản sao không hợp lệ');
  const rows=snapshotFileRows(databasePath);const rowsById=new Map(rows.map(row=>[row.id,row]));
  if(rowsById.size!==rows.length||m.files.length!==rows.length||m.remoteFiles!==rows.filter(row=>storageKind(row.storage_root)==='remote').length)throw new Error('Manifest không đầy đủ hoặc có tệp dư');

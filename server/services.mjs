@@ -1,25 +1,6 @@
 import {createId} from './auth.mjs';
 import {canAccessTeamTask} from './teams.mjs';
 import {licenseTypes,invoiceTypes,serviceStatus,vietnamDate,isValidCalendarDate,nextFutureServiceDate} from '../shared/service-renewal.mjs';
-export const SERVICES_SCHEMA = `
-CREATE TABLE service_contracts (
- id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
- team_id TEXT REFERENCES teams(id) ON DELETE SET NULL, customer_id TEXT REFERENCES customers(id) ON DELETE SET NULL,
- name TEXT NOT NULL, provider TEXT NOT NULL DEFAULT '', contract_number TEXT NOT NULL DEFAULT '',
- amount INTEGER NOT NULL DEFAULT 0 CHECK(amount>=0), next_date TEXT NOT NULL,
- cycle TEXT NOT NULL CHECK(cycle IN ('month','year')), interval_count INTEGER NOT NULL DEFAULT 1,
- remind_days INTEGER NOT NULL DEFAULT 7, assignee_id TEXT REFERENCES users(id) ON DELETE SET NULL,
- note TEXT NOT NULL DEFAULT '', archived_at TEXT, created_by TEXT NOT NULL REFERENCES users(id),created_at TEXT NOT NULL,updated_at TEXT NOT NULL
-);
-CREATE INDEX service_contracts_due ON service_contracts(workspace_id,next_date,archived_at);
-CREATE TABLE service_renewals (
- id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES service_contracts(id) ON DELETE CASCADE,
- previous_date TEXT NOT NULL,next_date TEXT NOT NULL,amount INTEGER NOT NULL,note TEXT NOT NULL DEFAULT '',
- actor_id TEXT REFERENCES users(id) ON DELETE SET NULL,created_at TEXT NOT NULL
-);
-CREATE TABLE service_reminders(service_id TEXT NOT NULL REFERENCES service_contracts(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,schedule_key TEXT NOT NULL,PRIMARY KEY(service_id,user_id,schedule_key));
-CREATE TABLE customer_interactions(id TEXT PRIMARY KEY,customer_id TEXT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,type TEXT NOT NULL,note TEXT NOT NULL,happened_at TEXT NOT NULL,created_by TEXT REFERENCES users(id) ON DELETE SET NULL);
-`;
 const iso = clock => new Date(clock()).toISOString();
 export { nextServiceDate } from '../shared/service-renewal.mjs';
 
@@ -53,9 +34,9 @@ export function processServiceReminders({db,clock=()=>new Date(),sendEmail}) {
       const key=`${service.next_date}/${today}`;
       const message=`${status==='expired'?'Đã quá hạn':'Sắp đến hạn'} gia hạn ${service.name} ngày ${service.next_date}.`;
       let inserted=false;
-      db.exec('BEGIN IMMEDIATE');
+      db.exec('BEGIN');
       try {
-        const claim=db.prepare('INSERT OR IGNORE INTO service_reminders(service_id,user_id,schedule_key) VALUES (?,?,?)').run(service.id,userId,key);
+        const claim=db.prepare('INSERT INTO service_reminders(service_id,user_id,schedule_key) VALUES (?,?,?) ON CONFLICT DO NOTHING').run(service.id,userId,key);
         if(claim.changes) {
           db.prepare(`INSERT INTO notifications(id,workspace_id,user_id,service_id,type,title,message,entity_type,entity_id,created_at)
             VALUES (?,?,?,?,'service_renewal',?,?,'service',?,?)`).run(createId('notice_'),service.workspace_id,userId,service.id,service.name,message,service.id,at);

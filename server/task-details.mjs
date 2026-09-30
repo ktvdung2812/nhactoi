@@ -135,7 +135,7 @@ function cardMembers(db, task) {
        FROM task_assignees a
        JOIN users u ON u.id = a.user_id AND u.disabled_at IS NULL
        WHERE a.task_id = ?
-       ORDER BY a.position ASC, u.name COLLATE NOCASE ASC, u.id ASC`,
+       ORDER BY a.position ASC, lower(u.name) ASC, u.id ASC`,
     )
     .all(task.id);
   const seen = new Set(extras.map((member) => member.id));
@@ -156,7 +156,7 @@ function assigneeMap(db, itemIds) {
        FROM task_checklist_assignees a
        JOIN users u ON u.id = a.user_id
        WHERE a.item_id IN (${itemIds.map(() => "?").join(",")})
-       ORDER BY u.name COLLATE NOCASE ASC, u.id ASC`,
+       ORDER BY lower(u.name) ASC, u.id ASC`,
     )
     .all(...itemIds);
   for (const row of rows) {
@@ -349,7 +349,7 @@ function activityRows(db, taskId, workspaceId) {
         LEFT JOIN users u ON u.id = a.actor_user_id
         JOIN tasks t ON t.id = a.task_id AND t.workspace_id = ?
         WHERE a.task_id = ? AND t.deleted_at IS NULL
-        ORDER BY a.created_at ASC, a.rowid ASC
+        ORDER BY a.created_at ASC, a.insertion_order ASC
       `,
     )
     .all(workspaceId, taskId)

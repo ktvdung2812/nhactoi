@@ -7,105 +7,6 @@ import {
 } from "./auth.mjs";
 import { canAccessTeamTask } from "./teams.mjs";
 
-/**
- * The mobile schema is deliberately additive.  Existing notifications are
- * not copied into the outbox: the trigger below only runs for notifications
- * inserted after migration 18 has been applied.
- */
-export const MOBILE_DELIVERY_SCHEMA = `
-CREATE TABLE IF NOT EXISTS notification_outbox_deliveries (
-  outbox_id TEXT NOT NULL REFERENCES notification_outbox(id) ON DELETE CASCADE,
-  installation_id TEXT NOT NULL REFERENCES mobile_devices(installation_id) ON DELETE CASCADE,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed', 'skipped')),
-  attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
-  next_attempt_at TEXT NOT NULL,
-  last_error TEXT,
-  sent_at TEXT,
-  created_at TEXT NOT NULL,
-  PRIMARY KEY (outbox_id, installation_id)
-);
-
-CREATE INDEX IF NOT EXISTS notification_outbox_deliveries_due_idx
-  ON notification_outbox_deliveries(status, next_attempt_at, created_at, outbox_id);
-CREATE INDEX IF NOT EXISTS notification_outbox_deliveries_installation_idx
-  ON notification_outbox_deliveries(installation_id, status, outbox_id);
-`;
-
-export const MOBILE_SCHEMA = `
-CREATE TABLE IF NOT EXISTS mobile_devices (
-  installation_id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  fcm_token TEXT NOT NULL,
-  platform TEXT NOT NULL DEFAULT 'android',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS mobile_devices_user_idx
-  ON mobile_devices(user_id, created_at, installation_id);
-CREATE INDEX IF NOT EXISTS mobile_devices_session_idx
-  ON mobile_devices(session_id, user_id);
-CREATE UNIQUE INDEX IF NOT EXISTS mobile_devices_token_idx
-  ON mobile_devices(fcm_token);
-
-CREATE TABLE IF NOT EXISTS notification_outbox (
-  id TEXT PRIMARY KEY,
-  notification_id TEXT NOT NULL UNIQUE REFERENCES notifications(id) ON DELETE CASCADE,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  channel TEXT NOT NULL DEFAULT 'fcm' CHECK (channel IN ('fcm')),
-  payload_json TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'skipped', 'failed')),
-  attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
-  next_attempt_at TEXT NOT NULL,
-  last_error TEXT,
-  sent_at TEXT,
-  created_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS notification_outbox_due_idx
-  ON notification_outbox(status, next_attempt_at, created_at, id);
-CREATE INDEX IF NOT EXISTS notification_outbox_user_idx
-  ON notification_outbox(user_id, workspace_id, created_at);
-
-${MOBILE_DELIVERY_SCHEMA}
-
-CREATE TRIGGER IF NOT EXISTS notifications_mobile_outbox_ai
-AFTER INSERT ON notifications
-WHEN NEW.type IN ('task_reminder', 'task_update', 'calendar_event')
-BEGIN
-  INSERT OR IGNORE INTO notification_outbox
-    (id, notification_id, workspace_id, user_id, channel, payload_json,
-     status, attempts, next_attempt_at, created_at)
-  VALUES (
-    'outbox_' || NEW.id,
-    NEW.id,
-    NEW.workspace_id,
-    NEW.user_id,
-    'fcm',
-    json_object(
-      'notificationId', NEW.id,
-      'workspaceId', NEW.workspace_id,
-      'userId', NEW.user_id,
-      'type', NEW.type,
-      'title', NEW.title,
-      'message', NEW.message,
-      'taskId', NEW.task_id,
-      'entityType', NEW.entity_type,
-      'entityId', NEW.entity_id
-    ),
-    'pending',
-    0,
-    NEW.created_at,
-    NEW.created_at
-  );
-END;
-`;
-
-export const SERVICE_MOBILE_SCHEMA = `DROP TRIGGER IF EXISTS notifications_mobile_outbox_ai;
-` + MOBILE_SCHEMA.slice(MOBILE_SCHEMA.indexOf('CREATE TRIGGER')).replace("('task_reminder', 'task_update', 'calendar_event')", "('task_reminder', 'task_update', 'calendar_event', 'service_renewal')");
-
 const MOBILE_TYPES = new Set([
   "service_renewal",
   "task_reminder",
@@ -353,7 +254,7 @@ function parseNotificationQuery(req, HttpError) {
 }
 
 function notificationRows(db, userId, query) {
-  const hasServiceId = db.prepare("PRAGMA table_info(notifications)").all().some((entry) => entry.name === "service_id");
+  const hasServiceId = true;
   const where = [notificationAccessSql(hasServiceId)];
   const params = [userId];
   if (query.workspaceId) {
@@ -516,9 +417,9 @@ export async function processNotificationOutbox({
     // Materialize one delivery row per installation.  A successful device is
     // never retried when another installation fails later.
     const ensureDelivery = db.prepare(
-      `INSERT OR IGNORE INTO notification_outbox_deliveries
+      `INSERT INTO notification_outbox_deliveries
        (outbox_id, installation_id, status, attempts, next_attempt_at, created_at)
-       VALUES (?, ?, 'pending', 0, ?, ?)`,
+       VALUES (?, ?, 'pending', 0, ?, ?) ON CONFLICT DO NOTHING`,
     );
     for (const device of devices)
       ensureDelivery.run(outbox.id, device.installation_id, outbox.next_attempt_at, outbox.created_at);
@@ -610,9 +511,9 @@ export async function processNotificationOutbox({
     if (db.prepare('SELECT status FROM notification_outbox WHERE id=?').get(outbox.id)?.status !== 'pending') { skipped++; continue; }
     const state = db.prepare(
       `SELECT
-         SUM(status='pending') AS pending,
-         SUM(status='sent') AS sent,
-         SUM(status='failed') AS failed,
+         SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN status='sent' THEN 1 ELSE 0 END) AS sent,
+         SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed,
          MIN(CASE WHEN status='pending' THEN next_attempt_at END) AS next_attempt_at
        FROM notification_outbox_deliveries WHERE outbox_id=?`,
     ).get(outbox.id);
@@ -919,7 +820,7 @@ export function registerMobileRoutes(app, {
     try {
       const id = clean(req.params.id, 200, "id");
       const readAt = nowIso(clock);
-      const hasServiceId = db.prepare("PRAGMA table_info(notifications)").all().some((entry) => entry.name === "service_id");
+      const hasServiceId = true;
       const existing = db.prepare(
         `SELECT n.id FROM notifications n WHERE n.id=? AND ${notificationAccessSql(hasServiceId)}`,
       ).get(id, req.auth.userId);

@@ -1,13 +1,13 @@
 import {removeRoadmapSchema} from "./migration-helpers.mjs";
-import {SCHEMA_VERSION} from "../server/db.mjs";
+import {SCHEMA_VERSION} from './database-helpers.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { createApp } from "../server/index.mjs";
-import { openDatabase } from "../server/db.mjs";
+import { createApp } from './database-helpers.mjs';
+import { openDatabase } from './database-helpers.mjs';
 
 async function boot() {
   const dir = mkdtempSync(join(tmpdir(), "nhactoi-trash-"));
@@ -270,7 +270,7 @@ test("members see only their own visible task trash, never customer or finance t
   assert.equal(ownerTrash.json.summary.total, 3);
 });
 
-test("opening an old database backfills legacy soft deletes for admins only", () => {
+test("[SQLite legacy] opening an old database backfills legacy soft deletes for admins only", () => {
   const dir = mkdtempSync(join(tmpdir(), "nhactoi-trash-migration-"));
   const dbPath = join(dir, "legacy.sqlite");
   let db = openDatabase(dbPath);

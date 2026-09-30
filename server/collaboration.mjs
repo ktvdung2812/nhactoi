@@ -2,26 +2,6 @@ import {extraAssigneeIds} from "./task-extras.mjs";
 import { createId } from './auth.mjs';
 import { canAccessTeamTask } from './teams.mjs';
 
-export const COLLABORATION_SCHEMA = `
-CREATE TABLE task_watchers (
- task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
- user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
- created_at TEXT NOT NULL, PRIMARY KEY(task_id,user_id)
-);
-CREATE TABLE comment_reactions (
- comment_id TEXT NOT NULL REFERENCES task_comments(id) ON DELETE CASCADE,
- user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
- emoji TEXT NOT NULL CHECK(emoji IN ('👍','❤️','🎉','👀')),
- PRIMARY KEY(comment_id,user_id,emoji)
-);
-CREATE TABLE comment_mentions (
- comment_id TEXT NOT NULL REFERENCES task_comments(id) ON DELETE CASCADE,
- user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
- PRIMARY KEY(comment_id,user_id)
-);
-ALTER TABLE task_comments ADD COLUMN edited_at TEXT;
-`;
-
 export function notifyTaskAudience(db, { taskId, actorUserId, summary, createdAt, recipients = [], type = 'task_update' }) {
   const task = db.prepare('SELECT * FROM tasks WHERE id=? AND deleted_at IS NULL').get(taskId);
   if (!task) return;
@@ -98,14 +78,14 @@ export function registerCollaborationRoutes(app, {db,clock,requireAuth,ensureWri
   }catch(e){next(e)}});
   app.put('/api/tasks/:id/watch',requireAuth,(req,res,next)=>{try{
     task(req,true); if(typeof req.body?.watching!=='boolean') throw new HttpError(400,'Trạng thái theo dõi không hợp lệ');
-    if(req.body.watching) db.prepare('INSERT OR IGNORE INTO task_watchers(task_id,user_id,created_at) VALUES (?,?,?)').run(req.params.id,req.auth.userId,now());
+    if(req.body.watching) db.prepare('INSERT INTO task_watchers(task_id,user_id,created_at) VALUES (?,?,?) ON CONFLICT DO NOTHING').run(req.params.id,req.auth.userId,now());
     else db.prepare('DELETE FROM task_watchers WHERE task_id=? AND user_id=?').run(req.params.id,req.auth.userId);
     res.json({watching:req.body.watching});
   }catch(e){next(e)}});
   app.put('/api/tasks/:id/comments/:commentId/reaction',requireAuth,(req,res,next)=>{try{
     task(req,true);comment(req); const {emoji,active}=req.body||{};
     if(!['👍','❤️','🎉','👀'].includes(emoji)||typeof active!=='boolean') throw new HttpError(400,'Phản ứng không hợp lệ');
-    if(active) db.prepare('INSERT OR IGNORE INTO comment_reactions(comment_id,user_id,emoji) VALUES (?,?,?)').run(req.params.commentId,req.auth.userId,emoji);
+    if(active) db.prepare('INSERT INTO comment_reactions(comment_id,user_id,emoji) VALUES (?,?,?) ON CONFLICT DO NOTHING').run(req.params.commentId,req.auth.userId,emoji);
     else db.prepare('DELETE FROM comment_reactions WHERE comment_id=? AND user_id=? AND emoji=?').run(req.params.commentId,req.auth.userId,emoji);
     res.json({ok:true});
   }catch(e){next(e)}});

@@ -1,56 +1,5 @@
 import { createId } from './auth.mjs';
 import { canAccessTeamTask, canManageAllTeams, getTeamAccess } from './teams.mjs';
-
-export const REMINDER_WORKFLOW_SCHEMA = `
-CREATE TABLE IF NOT EXISTS reminder_policies (
- workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
- scope TEXT NOT NULL DEFAULT '', policy_json TEXT NOT NULL, updated_at TEXT NOT NULL,
- PRIMARY KEY(workspace_id,scope)
-);
-CREATE TABLE IF NOT EXISTS task_reminder_settings (
- task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
- settings_json TEXT NOT NULL, updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS task_reminder_responses (
- task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
- user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
- acknowledged_at TEXT, snoozed_until TEXT, snooze_sent_at TEXT,
- PRIMARY KEY(task_id,user_id)
-);
-CREATE TABLE IF NOT EXISTS reminder_email_outbox (
- notification_id TEXT PRIMARY KEY REFERENCES notifications(id) ON DELETE CASCADE,
- status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','sent','failed','skipped')),
- attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT NOT NULL,
- sent_at TEXT, last_error TEXT
-);
-CREATE TABLE IF NOT EXISTS reminder_notice_context (
- notification_id TEXT PRIMARY KEY REFERENCES notifications(id) ON DELETE CASCADE,
- due_at TEXT, audience TEXT NOT NULL DEFAULT 'assignees', condition TEXT NOT NULL DEFAULT 'incomplete'
-);
-CREATE INDEX IF NOT EXISTS reminder_email_due ON reminder_email_outbox(status,next_attempt_at);
-CREATE TRIGGER IF NOT EXISTS reminder_email_enqueue AFTER INSERT ON notifications
-WHEN NEW.type IN ('task_reminder','service_renewal')
-BEGIN
- INSERT INTO reminder_email_outbox(notification_id,next_attempt_at) VALUES(NEW.id,NEW.created_at);
- INSERT INTO reminder_notice_context(notification_id,due_at) VALUES(NEW.id,
- CASE WHEN NEW.type='service_renewal' THEN (SELECT next_date FROM service_contracts WHERE id=NEW.entity_id)
- ELSE (SELECT due_at FROM tasks WHERE id=NEW.task_id) END);
-END;
-CREATE TRIGGER IF NOT EXISTS reminder_response_reset AFTER UPDATE OF due_at,assignee_id,team_id ON tasks
-WHEN OLD.due_at IS NOT NEW.due_at OR OLD.assignee_id IS NOT NEW.assignee_id OR OLD.team_id IS NOT NEW.team_id
-BEGIN
- DELETE FROM task_reminder_responses WHERE task_id=NEW.id;
- DELETE FROM task_reminder_deliveries WHERE task_id=NEW.id AND schedule_key LIKE 'workflow:%';
- UPDATE reminder_email_outbox SET status='skipped' WHERE status='pending' AND notification_id IN
- (SELECT id FROM notifications WHERE task_id=NEW.id AND type='task_reminder');
- UPDATE notification_outbox SET status='skipped' WHERE status='pending' AND notification_id IN
- (SELECT id FROM notifications WHERE task_id=NEW.id AND type='task_reminder');
-END;
-CREATE TRIGGER IF NOT EXISTS reminder_extra_response_reset AFTER DELETE ON task_assignees
-BEGIN
- DELETE FROM task_reminder_responses WHERE task_id=OLD.task_id AND user_id=OLD.user_id;
-END;
-`;
 export const DEFAULT_REMINDER_POLICY = {
  enabled: false, allowMemberOverride: false, quietStart: null, quietEnd: null,
  minIntervalMinutes: 60,
@@ -105,17 +54,17 @@ function activity(db,task,userId,action,summary,now) {
  .run(createId('activity_'),task.id,userId,action,summary,now);
 }
 function notify(db,task,userId,key,title,message,now,step=null) {
- db.exec('SAVEPOINT reminder_notice');
+ db.exec('BEGIN');
  try {
-  const claimed=db.prepare('INSERT OR IGNORE INTO task_reminder_deliveries(id,task_id,user_id,schedule_key,created_at) VALUES(?,?,?,?,?)')
+  const claimed=db.prepare('INSERT INTO task_reminder_deliveries(id,task_id,user_id,schedule_key,created_at) VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING')
    .run(createId('delivery_'),task.id,userId,key,now);
-  if(!claimed.changes){db.exec('RELEASE reminder_notice');return null;}
+  if(!claimed.changes){db.exec('COMMIT');return null;}
   const id=createId('notice_');
   db.prepare(`INSERT INTO notifications(id,workspace_id,user_id,task_id,type,title,message,entity_type,entity_id,created_at)
    VALUES(?,?,?,?,'task_reminder',?,?,'task',?,?)`).run(id,task.workspace_id,userId,task.id,title,message,task.id,now);
   if(step)db.prepare('UPDATE reminder_notice_context SET audience=?,condition=? WHERE notification_id=?').run(step.audience,step.condition,id);
-  db.exec('RELEASE reminder_notice');return {taskId:task.id,userId,notificationId:id};
- }catch(e){db.exec('ROLLBACK TO reminder_notice');db.exec('RELEASE reminder_notice');throw e;}
+  db.exec('COMMIT');return {taskId:task.id,userId,notificationId:id};
+ }catch(e){db.exec('ROLLBACK');throw e;}
 }
 export function processWorkflowReminders({db,clock=()=>new Date()}) {
  const now=at(clock),sent=[];
@@ -131,7 +80,7 @@ export function processWorkflowReminders({db,clock=()=>new Date()}) {
    const response=db.prepare('SELECT * FROM task_reminder_responses WHERE task_id=? AND user_id=?').get(task.id,recipient.id);
    if(response?.snoozed_until && response.snoozed_until<=now && !response.snooze_sent_at){
     const notice=notify(db,task,recipient.id,`workflow:snooze:${response.snoozed_until}`,'Đến giờ nhắc lại',task.title,now);
-    if(task.remind_at && task.remind_at<=now) db.prepare('INSERT OR IGNORE INTO task_reminder_deliveries(id,task_id,user_id,schedule_key,created_at) VALUES(?,?,?,?,?)').run(createId('delivery_'),task.id,recipient.id,task.remind_at,now);
+    if(task.remind_at && task.remind_at<=now) db.prepare('INSERT INTO task_reminder_deliveries(id,task_id,user_id,schedule_key,created_at) VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING').run(createId('delivery_'),task.id,recipient.id,task.remind_at,now);
     db.prepare('UPDATE task_reminder_responses SET snooze_sent_at=? WHERE task_id=? AND user_id=?').run(now,task.id,recipient.id);
     if(notice)sent.push(notice);
    }
@@ -276,7 +225,7 @@ export function registerReminderRoutes(app,{db,clock,requireAuth,ensureWritable,
    until=new Date(Date.parse(now)+minutes*60000).toISOString();
   }
   withTransaction(db,()=>{
-   db.prepare('INSERT OR IGNORE INTO task_reminder_responses(task_id,user_id) VALUES(?,?)').run(t.id,req.auth.userId);
+   db.prepare('INSERT INTO task_reminder_responses(task_id,user_id) VALUES(?,?) ON CONFLICT DO NOTHING').run(t.id,req.auth.userId);
    if(action==='acknowledge'){
     const result=db.prepare('UPDATE task_reminder_responses SET acknowledged_at=? WHERE task_id=? AND user_id=? AND acknowledged_at IS NULL').run(now,t.id,req.auth.userId);
     if(result.changes)activity(db,t,req.auth.userId,'task_acknowledged','đã xác nhận nhận việc',now);

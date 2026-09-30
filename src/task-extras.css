@@ -379,3 +379,8 @@
   color: var(--ink);
   background: var(--bg-hover);
 }
+
+@media (max-width: 600px) {
+  .task-templates-toolbar { flex-wrap: wrap; }
+  .task-templates-filters { flex-wrap: wrap; overflow-x: visible; }
+}

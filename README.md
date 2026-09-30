@@ -12,6 +12,7 @@ Website trên máy này: **https://nhactoi.test**.
 - nginx của EnvKit chuyển tiếp toàn bộ website tới cổng này. Không còn Vite hay API riêng tại cổng 3100.
 - Trong Configuration chọn framework **Next.js**; trong Overview bật Dev server, dùng script `dev`, cổng `5170`. Tắt tiến trình **Nhac Toi API** cũ; `envkit.json` không khai báo worker riêng vì worker đã nằm trong Next. Máy hiện tại đã được chuyển theo cấu hình này.
 - Chọn runtime Node 24 trở lên trong EnvKit. Đặt `PUBLIC_APP_URL=https://nhactoi.test` và thêm tên miền vào `FRONTEND_ORIGIN` trong `.env`.
+- Bật PostgreSQL trong EnvKit, cấu hình `DATABASE_URL` và giữ `NHACTOI_DATA_DIR=./data`; xem [thiết lập và chuyển dữ liệu cũ](docs/POSTGRESQL.md).
 - `.env.example` liệt kê các biến cấu hình; không đưa `.env` vào Git.
 
 Tài khoản dữ liệu mẫu sau khi chạy `npm run seed`:
@@ -31,11 +32,14 @@ Cần Node.js **24 trở lên**, khuyến nghị bản Node đã cài trong EnvK
 ```sh
 npm install
 cp .env.example .env
+# Tạo database PostgreSQL và điền DATABASE_URL trong .env trước khi seed.
 npm run seed
 npm run dev
 ```
 
 Trước khi chạy trực tiếp, dừng tiến trình Nhắc tôi trong EnvKit để tránh chạy trùng worker/database. Với `.env.example`, ứng dụng và API cùng ở `http://localhost:3000`. Biến `PORT` trong `.env` hoặc `npm run dev -- --port 5170` chọn cổng khác; cập nhật `PUBLIC_APP_URL` và `FRONTEND_ORIGIN` tương ứng.
+
+Tạo `.env.test.local` với `TEST_DATABASE_URL` trỏ đến database kiểm thử riêng theo [hướng dẫn PostgreSQL](docs/POSTGRESQL.md).
 
 ```sh
 npm test
@@ -53,11 +57,11 @@ Quy trình Git Manager, webhook và vận hành `nhactoi.ktvdung.io.vn`: [Triể
 - `app/`: App Router, layout tiếng Việt, trang ứng dụng, trang lỗi và HTTP 404 cho URL không được hỗ trợ. Các màn hình nghiệp vụ hiện có trong `src/` là Client Components, điều hướng bằng Next.js.
 - `pages/api/[[...path]].js`: Next API Route xử lý mọi `/api/*` trong cùng máy chủ. Router Express trong `server/index.mjs` giữ hợp đồng API, middleware phân quyền và nghiệp vụ; không mở cổng API riêng, không proxy tới dịch vụ khác.
 - API tắt bộ đọc body mặc định của Next để giữ đúng byte webhook HMAC và stream tải tệp. Giới hạn JSON/tệp tiếp tục được kiểm tra trong tầng API.
-- `server/runtime.mjs` giữ một kết nối SQLite và một worker cho mỗi tiến trình. `instrumentation.js` khởi động worker khi Next server sẵn sàng, kể cả khi chưa có request; build không khởi tạo DB hay worker.
+- `server/runtime.mjs` giữ một kết nối PostgreSQL và một worker cho mỗi tiến trình. `instrumentation.js` khởi động worker khi Next server sẵn sàng, kể cả khi chưa có request; build không khởi tạo DB hay worker.
 - `server/`, `shared/`: nghiệp vụ, database, tích hợp và hợp đồng chung với mobile. Các lệnh seed, admin và restore vẫn chạy ngoại tuyến bằng Node.
 - `npm test`: bộ kiểm thử nghiệp vụ với DB tạm. `npm run test:next`: kiểm thử tích hợp qua máy chủ Next production sau `npm run build`, dùng DB riêng.
 
-Triển khai trên một Node server chạy liên tục, có volume lưu `data/` và các kho tệp đã cấu hình. SQLite, tệp riêng và lịch chạy nền hiện tại cần môi trường này; không triển khai bằng static export, Edge runtime hoặc hàm serverless tạm thời. Sau khi thay đổi mã nghiệp vụ backend trong lúc phát triển, khởi động lại `npm run dev` để nạp lại singleton và worker.
+Triển khai trên một Node server chạy liên tục, có volume lưu `data/` và các kho tệp đã cấu hình. PostgreSQL, tệp riêng và lịch chạy nền hiện tại cần môi trường này; không triển khai bằng static export, Edge runtime hoặc hàm serverless tạm thời. Sau khi thay đổi mã nghiệp vụ backend trong lúc phát triển, khởi động lại `npm run dev` để nạp lại singleton và worker.
 
 ## Các luồng đã có
 
@@ -97,7 +101,7 @@ Triển khai trên một Node server chạy liên tục, có volume lưu `data/`
 - Thông báo ngoài ứng dụng chỉ có nội dung chung. Bấm thông báo sẽ xác thực lại, chuyển đến workspace và mở công việc/lịch hẹn/dịch vụ tương ứng nếu còn quyền. Không tự đánh dấu đã đọc. Trình duyệt/hệ điều hành có thể trì hoãn thông báo; cần máy chủ/worker đang chạy, không bảo đảm gửi khi trình duyệt bị buộc dừng.
 - **Cài ứng dụng web**: dùng nút “Cài Nhắc tôi” khi trình duyệt cung cấp, hoặc menu Cài ứng dụng/Thêm vào Màn hình chính. Trên iPhone/iPad hỗ trợ Web Push, mở ứng dụng từ Màn hình chính rồi bật thông báo. Manifest, icon và service worker đi kèm; mất mạng hiển thị trang hướng dẫn kết nối lại. Không cache API, trang có xác thực hay dữ liệu công việc; chưa hỗ trợ ghi offline.
 - Migration **31** thêm đăng ký trình duyệt và hàng đợi theo từng thông báo/trình duyệt. Chỉ xếp hàng các thông báo mới sau khi đăng ký; không gửi lại lịch sử. Kiểm tra lại tài khoản, phiên, workspace/team, trạng thái việc và chính sách hoãn/giờ yên lặng trước mỗi lần gửi. Thành công ở một trình duyệt không bị gửi lại khi trình duyệt khác lỗi; lỗi tạm thời retry tối đa 5 lần, đăng ký 404/410 tự xóa, thông báo chờ hơn 24 giờ bị bỏ qua. Push service giữ thông báo tối đa 1 giờ. Network timeout vẫn có thể dẫn đến gửi trùng; notification tag gộp cùng một thông báo.
-- Địa chỉ đăng ký chỉ chấp nhận các push service Chrome/Firefox/Edge/Safari được hỗ trợ, không gửi HTTP đến URL tùy ý do client cung cấp. Khóa VAPID riêng không trả về client, không ghi endpoint/khóa vào lỗi worker. Hiện giữ mô hình một tiến trình worker với SQLite như FCM/email.
+- Địa chỉ đăng ký chỉ chấp nhận các push service Chrome/Firefox/Edge/Safari được hỗ trợ, không gửi HTTP đến URL tùy ý do client cung cấp. Khóa VAPID riêng không trả về client, không ghi endpoint/khóa vào lỗi worker. Hiện giữ mô hình một tiến trình worker như FCM/email.
 
 Cấu hình máy chủ (không cần Firebase cho Web Push):
 
@@ -179,7 +183,7 @@ Mở **Quản lý gia hạn** (`/services`) để theo dõi thuê bao, tên mi�
 - Mỗi người dùng chỉ xem được yêu cầu do mình gửi trong không gian hiện tại. Hỗ trợ vẫn hoạt động khi doanh nghiệp tạm ngưng hoặc thuê bao hết hạn; tài khoản đã khóa vẫn bị chặn đăng nhập.
 - Quản trị SaaS mở **Tickets hỗ trợ** để tìm kiếm, lọc theo chủ đề/trạng thái, phản hồi và cập nhật ưu tiên. Có thể mở danh sách ticket liên quan từ hồ sơ doanh nghiệp hoặc người dùng.
 - Luồng xử lý: **Mới tiếp nhận → Đang xử lý → Chờ khách phản hồi → Đã giải quyết**. Khách hàng phản hồi một yêu cầu đang chờ hoặc đã giải quyết sẽ mở lại yêu cầu đó.
-- Nội dung trao đổi, người thực hiện và lịch sử thay đổi được lưu trong SQLite. Ticket chỉ phục vụ hỗ trợ dịch vụ; không truy cập công việc, khách hàng, nhân sự hoặc sổ thu–chi nội bộ của doanh nghiệp.
+- Nội dung trao đổi, người thực hiện và lịch sử thay đổi được lưu trong PostgreSQL. Ticket chỉ phục vụ hỗ trợ dịch vụ; không truy cập công việc, khách hàng, nhân sự hoặc sổ thu–chi nội bộ của doanh nghiệp.
 - Phiên bản này trao đổi trong ứng dụng, chưa có tệp đính kèm hoặc thông báo email tự động.
 
 ## Trợ lý AI dạng chat
@@ -214,6 +218,12 @@ Tài khoản chưa có quyền thấy màn hình “Không phận sự miễn v�
 
 Danh sách có tìm kiếm, bộ lọc phù hợp và phân trang 20 dòng. MRR là ước tính từ giá gói hiện tại, gói năm chia 12; không phải doanh thu kế toán. Giao diện dùng múi giờ của thiết bị.
 
+Migration (`npm run db:migrate` hoặc lúc khởi động) tự tạo admin SaaS khi chưa
+có admin hoạt động, giữ nguyên tài khoản/mật khẩu đã có. Có thể đặt thông tin
+qua `BOOTSTRAP_ADMIN_*`; mặc định email `admin@nhactoi.local` và mật khẩu ngẫu
+nhiên được lưu trong `data/bootstrap-admin-user_*.json` (quyền `0600`). Xem
+[hướng dẫn khởi tạo admin](docs/POSTGRESQL.md#admin-saas-ban-đầu).
+
 Cấp hoặc thu hồi quyền cho tài khoản đã tồn tại bằng lệnh trên máy chủ:
 
 ```sh
@@ -221,7 +231,7 @@ npm run admin -- grant demo@nhactoi.local
 npm run admin -- revoke user@example.com
 ```
 
-Quyền được kiểm tra lại từ DB ở mỗi yêu cầu API. Không có API công khai để tự cấp quyền; lệnh thu hồi bảo vệ admin hoạt động cuối cùng. Lệnh seed không tự cấp admin. Môi trường EnvKit trên máy hiện tại đã cấp quyền cho tài khoản mẫu `demo@nhactoi.local` để kiểm thử các trang quản trị; không dùng tài khoản mẫu khi triển khai thật.
+Quyền được kiểm tra lại từ DB ở mỗi yêu cầu API. Không có API công khai để tự cấp quyền; lệnh thu hồi bảo vệ admin hoạt động cuối cùng. Seed không cấp quyền admin cho người dùng mẫu; migration có thể tạo admin riêng trước khi seed. Môi trường EnvKit trên máy hiện tại đã cấp quyền cho tài khoản mẫu `demo@nhactoi.local` để kiểm thử các trang quản trị; không dùng tài khoản mẫu khi triển khai thật.
 
 ## Quy ước menu thao tác
 
@@ -265,9 +275,11 @@ BillGateway không nhận callback localhost/IP riêng. `nhactoi.test` chỉ ph�
 
 ## Dữ liệu và phạm vi bản đầu
 
-Stack: Next.js 16 + React 19 (App Router), Next API Routes với router nghiệp vụ Express 5, SQLite (`node:sqlite`), Nodemailer tùy chọn. Font tiếng Việt được đóng gói cùng app. Không cần MySQL để chạy bản thử nghiệm này.
+Các số migration 1–31 trong mô tả tính năng là lịch sử SQLite. PostgreSQL dùng baseline 1 với đầy đủ các tính năng này; các migration SQLite được giữ riêng để nhập dữ liệu cũ.
 
-Dữ liệu mặc định ở `data/nhactoi.sqlite`. Migration theo phiên bản chạy khi mở DB. Kiểm thử dùng DB tạm, không dùng DB đang chạy. Khóa kết nối lưu trong DB được mã hóa AES-256-GCM. Mặc định khóa mã hóa được tạo tại `data/.nhactoi-settings.key` với quyền `0600`; có thể dùng `NHACTOI_SETTINGS_KEY` hoặc `NHACTOI_SETTINGS_KEY_FILE` trên máy chủ. Khi sao lưu thủ công, dừng API rồi sao lưu toàn bộ thư mục `data/`, bao gồm tệp khóa ẩn; nếu dùng khóa từ môi trường hoặc đường dẫn riêng, lưu bản sao khóa đó an toàn cùng quy trình sao lưu. Cần đúng khóa để giải mã khi phục hồi; không đổi hoặc xóa khóa nếu đã lưu thông tin kết nối. Phục hồi khi API đang dừng. Không xóa DB để cập nhật phiên bản.
+Stack: Next.js 16 + React 19 (App Router), Next API Routes với router nghiệp vụ Express 5, PostgreSQL 15+ (`pg`), Nodemailer tùy chọn. Font tiếng Việt được đóng gói cùng app. Không cần MySQL để chạy bản thử nghiệm này.
+
+Kết nối database qua `DATABASE_URL`; cần tạo database PostgreSQL trước khi chạy. Thiết lập local bằng EnvKit và chuyển dữ liệu cũ: [hướng dẫn PostgreSQL](docs/POSTGRESQL.md). `NHACTOI_DATA_DIR` (mặc định `data/`) chứa tệp và khóa, độc lập với database. Migration theo phiên bản chạy khi mở DB. Kiểm thử dùng `TEST_DATABASE_URL` và schema riêng, không dùng DB đang chạy. Khóa kết nối lưu trong DB được mã hóa AES-256-GCM. Mặc định khóa mã hóa được tạo tại `data/.nhactoi-settings.key` với quyền `0600`; có thể dùng `NHACTOI_SETTINGS_KEY` hoặc `NHACTOI_SETTINGS_KEY_FILE` trên máy chủ. Khi sao lưu thủ công, dừng API rồi sao lưu PostgreSQL bằng `pg_dump` cùng toàn bộ thư mục `data/`, bao gồm tệp khóa ẩn; nếu dùng khóa từ môi trường hoặc đường dẫn riêng, lưu bản sao khóa đó an toàn cùng quy trình sao lưu. Cần đúng khóa để giải mã khi phục hồi; không đổi hoặc xóa khóa nếu đã lưu thông tin kết nối. Phục hồi khi API đang dừng. Không xóa DB để cập nhật phiên bản.
 
 Đây là bản MVP chạy local cho các luồng cốt lõi. Chưa có SMS/Zalo, hóa đơn điện tử hay hệ thống vận hành production nhiều máy. Dữ liệu, thư mục `demo/` và tệp nén tham khảo không được phục vụ công khai. Next.js chỉ phục vụ các trang, tài nguyên build và tài nguyên chủ động đặt trong `public/`; tệp đính kèm luôn đi qua API có xác thực.
 
@@ -310,6 +322,6 @@ API: `GET/PUT/DELETE /api/appearance?teamId=…` quản lý cấu hình của ng
 
 ### Nâng cấp và kiểm tra
 
-Migration **27–28** thêm chính sách, phản hồi, ngữ cảnh giao nhận, hàng đợi email và thay trigger FCM; không xóa dữ liệu nghiệp vụ hiện có. Sao lưu DB và kho tệp theo quy trình vận hành trước khi triển khai; khởi động lại tiến trình Next để nạp backend/migration. Bản Android cần build lại để có màn hình mới. Không dùng nhiều tiến trình worker cùng chia sẻ DB SQLite; khóa gửi email/FCM hiện bảo vệ trong một tiến trình.
+Migration **27–28** thêm chính sách, phản hồi, ngữ cảnh giao nhận, hàng đợi email và thay trigger FCM; không xóa dữ liệu nghiệp vụ hiện có. Sao lưu DB và kho tệp theo quy trình vận hành trước khi triển khai; khởi động lại tiến trình Next để nạp backend/migration. Bản Android cần build lại để có màn hình mới. Không dùng nhiều tiến trình worker cùng chia sẻ database; khóa gửi email/FCM hiện bảo vệ trong một tiến trình.
 
 Kiểm tra: `npm test`, `npm run build`, `npm run test:next`; trong `mobile/`: `npm run typecheck`, `npm run lint`, `npm test`. Mọi test nhắc dùng DB cô lập và transport giả, không gửi email/push thật. Lịch lặp ngày làm việc, ủy quyền khi vắng và báo cáo SLA chuyên sâu vẫn thuộc đợt tiếp theo.

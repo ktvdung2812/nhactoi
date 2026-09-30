@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {boot,call,user,task,addMember} from './roadmap-helpers.mjs';
 import {DEFAULT_REMINDER_POLICY,inQuietHours,processWorkflowReminders,reminderDeliveryAllowed} from '../server/reminder-workflow.mjs';
-import {migrateDatabase,SCHEMA_VERSION} from '../server/db.mjs';
+import {migrateDatabase,SCHEMA_VERSION} from './database-helpers.mjs';
 const initial='2026-09-27T02:00:00.000Z';
 async function fixture(t,options={}){
  let now=initial;
@@ -84,7 +84,7 @@ test('team lead configures own team; removed membership, archive and expired sub
  s.db.prepare("UPDATE subscriptions SET status='expired' WHERE workspace_id=?").run(s.owner.workspace.id);
  assert.equal(s.app.locals.processReminders().length,0);
 });
-test('revoking overrides restores policy and migration upgrades retain records',async t=>{
+test("[SQLite legacy] revoking overrides restores policy and migration upgrades retain records",async t=>{
  const s=await fixture(t);await policy(s,{enabled:true,allowMemberOverride:true});
  assert.equal((await call(s,s.path,{method:'PUT',cookie:s.owner.cookie,body:{enabled:false,steps:DEFAULT_REMINDER_POLICY.steps}})).status,200);
  assert.equal((await call(s,s.path,{cookie:s.owner.cookie})).body.effectivePolicy.enabled,false);

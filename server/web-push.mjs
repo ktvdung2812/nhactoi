@@ -4,48 +4,6 @@ import { createId } from './auth.mjs';
 import { canAccessTeamTask } from './teams.mjs';
 import { reminderDeliveryAllowed, legacyReminderAllowed } from './reminder-workflow.mjs';
 
-export const WEB_PUSH_SCHEMA = `
-CREATE TABLE IF NOT EXISTS web_push_subscriptions (
- id TEXT PRIMARY KEY, endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL, auth TEXT NOT NULL,
- user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
- session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
- created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS web_push_user_idx ON web_push_subscriptions(user_id);
-CREATE TABLE IF NOT EXISTS web_push_deliveries (
- notification_id TEXT NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
- subscription_id TEXT NOT NULL REFERENCES web_push_subscriptions(id) ON DELETE CASCADE,
- status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','sent','skipped','failed')),
- attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT NOT NULL, sent_at TEXT, last_error TEXT,
- PRIMARY KEY(notification_id,subscription_id)
-);
-CREATE INDEX IF NOT EXISTS web_push_due_idx ON web_push_deliveries(status,next_attempt_at);
-CREATE TRIGGER IF NOT EXISTS notifications_web_push_ai AFTER INSERT ON notifications
-WHEN NEW.type IN ('task_reminder','task_update','calendar_event','service_renewal')
-BEGIN
- INSERT INTO web_push_deliveries(notification_id,subscription_id,next_attempt_at)
- SELECT NEW.id,id,NEW.created_at FROM web_push_subscriptions WHERE user_id=NEW.user_id;
-END;
-CREATE TRIGGER IF NOT EXISTS web_push_task_reset AFTER UPDATE OF due_at,assignee_id,team_id ON tasks
-WHEN OLD.due_at IS NOT NEW.due_at OR OLD.assignee_id IS NOT NEW.assignee_id OR OLD.team_id IS NOT NEW.team_id
-BEGIN
- UPDATE web_push_deliveries SET status='skipped' WHERE status='pending' AND notification_id IN
- (SELECT id FROM notifications WHERE task_id=NEW.id AND type='task_reminder');
-END;
-CREATE TRIGGER IF NOT EXISTS web_push_event_reset AFTER UPDATE OF starts_at,ends_at,remind_at,team_id ON calendar_events
-WHEN OLD.starts_at IS NOT NEW.starts_at OR OLD.ends_at IS NOT NEW.ends_at OR OLD.remind_at IS NOT NEW.remind_at OR OLD.team_id IS NOT NEW.team_id
-BEGIN
- UPDATE web_push_deliveries SET status='skipped' WHERE status='pending' AND notification_id IN
- (SELECT id FROM notifications WHERE entity_id=NEW.id AND type='calendar_event');
-END;
-CREATE TRIGGER IF NOT EXISTS web_push_snooze AFTER UPDATE OF snoozed_until ON task_reminder_responses
-WHEN NEW.snoozed_until IS NOT NULL AND OLD.snoozed_until IS NOT NEW.snoozed_until
-BEGIN
- UPDATE web_push_deliveries SET status='skipped' WHERE status='pending' AND notification_id IN
- (SELECT id FROM notifications WHERE task_id=NEW.task_id AND user_id=NEW.user_id AND type='task_reminder');
-END;
-`;
-
 // Only browser push services are network targets. Never send to arbitrary
 // subscription URLs (including private networks or lookalike hostnames).
 export function validPushEndpoint(value) {

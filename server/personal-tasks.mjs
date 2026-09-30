@@ -1,16 +1,6 @@
 import { canAccessTeamTask } from './teams.mjs';
 import { isValidCalendarDate } from '../shared/service-renewal.mjs';
 
-export const PERSONAL_TASKS_SCHEMA = `
-  CREATE TABLE IF NOT EXISTS personal_task_plans (
-    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    planned_date TEXT NOT NULL,
-    PRIMARY KEY (task_id, user_id)
-  );
-  CREATE INDEX IF NOT EXISTS personal_task_plans_user_idx ON personal_task_plans(user_id, planned_date);
-`;
-
 export function registerPersonalTaskRoutes(app, { db, requireAuth, ensureWritable, HttpError, taskJson }) {
   // Personal views project existing permissions; they do not make tasks private.
   const rows = (auth, id = null) => db.prepare(`
@@ -18,7 +8,7 @@ export function registerPersonalTaskRoutes(app, { db, requireAuth, ensureWritabl
     FROM tasks t
     LEFT JOIN teams tm ON tm.id=t.team_id AND tm.workspace_id=t.workspace_id
     LEFT JOIN personal_task_plans p ON p.task_id=t.id AND p.user_id=?
-    WHERE t.workspace_id=? AND t.deleted_at IS NULL AND (? IS NULL OR t.id=?) AND
+    WHERE t.workspace_id=? AND t.deleted_at IS NULL AND (CAST(? AS TEXT) IS NULL OR t.id=?) AND
       (t.assignee_id=? OR EXISTS(SELECT 1 FROM task_assignees a WHERE a.task_id=t.id AND a.user_id=?)
        OR (t.assignee_id IS NULL AND t.created_by=? AND NOT EXISTS(SELECT 1 FROM task_assignees a WHERE a.task_id=t.id)))
     ORDER BY t.created_at DESC, t.id

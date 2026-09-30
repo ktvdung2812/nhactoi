@@ -4,8 +4,8 @@ import { createServer } from "node:http";
 import { createHmac } from "node:crypto";
 import { join } from "node:path";
 import { boot, call, user, addMember } from "./roadmap-helpers.mjs";
-import { createApp } from "../server/index.mjs";
-import { migrateDatabase } from "../server/db.mjs";
+import { createApp } from './database-helpers.mjs';
+import { migrateDatabase } from './database-helpers.mjs';
 import { isValidRoute, readRoute } from "../src/routes.js";
 
 const draft = { id: "enterprise", name: "Doanh nghiệp lớn", monthly: 1500000, yearly: 15000000, seats: 100, features: ["Hỗ trợ ưu tiên"], active: true, reason: "Bổ sung gói cho doanh nghiệp" };
@@ -59,7 +59,7 @@ test("plan catalog validates and persists admin changes, enforces seats and keep
   assert.equal(persisted.name, "Enterprise Plus");
   assert.equal(persisted.active, false);
   assert.equal(persisted.features.length, 31);
-  const audit = s.db.prepare("SELECT * FROM admin_audit_logs WHERE action = 'plan.update' ORDER BY rowid DESC LIMIT 1").get();
+  const audit = s.db.prepare("SELECT * FROM admin_audit_logs WHERE action = 'plan.update' ORDER BY created_at DESC, id DESC LIMIT 1").get();
   assert.equal(audit.target_id, "enterprise");
   assert.equal(JSON.parse(audit.after_json).yearly, 16000000);
   assert.equal((await write("/admin/plans/enterprise", { active: true, reason: "Bật bán lại" })).status, 200);
@@ -101,7 +101,7 @@ test("custom plan checkout preserves quotes and settles after the plan stops sel
   assert.equal(s.db.prepare("SELECT plan FROM subscriptions WHERE workspace_id = ?").get(admin.workspace.id).plan, "enterprise");
 });
 
-test("plan migration preserves existing billing rows, indexes and foreign keys", async (t) => {
+test("[SQLite legacy] plan migration preserves existing billing rows, indexes and foreign keys", async (t) => {
   const s = await boot(t);
   const owner = await user(s, "migration-plans@example.test");
   s.db.prepare(`INSERT INTO billing_orders(id, workspace_id, plan, cycle, amount, status, provider_payment_id, created_at, checkout_url) VALUES ('old-order', ?, 'starter', 'monthly', 199000, 'pending', 'old-payment', '2026-01-01', 'https://example.test/pay')`).run(owner.workspace.id);

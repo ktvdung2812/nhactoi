@@ -45,8 +45,8 @@ test('renewal notices open their service and disappear after team access is revo
   assert.equal((await call(s, `/notifications/${notices[0].id}/read`, { method: 'PATCH', cookie: member.cookie })).status, 404);
 });
 
-test('migration preserves existing service data and legacy records remain editable', async t => {
-  const { migrateDatabase } = await import('../server/db.mjs');
+test("[SQLite legacy] migration preserves existing service data and legacy records remain editable", async t => {
+  const { migrateDatabase } = await import('./database-helpers.mjs');
   const s = await boot(t, { clock }), owner = await user(s, 'upgrade-service@example.test');
   const row = await create(s, owner, { amount: 890000 });
   // Reconstruct the actual pre-renewal schema in this disposable database.

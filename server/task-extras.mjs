@@ -8,73 +8,6 @@ import {
   getTeamAccess,
 } from "./teams.mjs";
 
-/*
- * Migration 15 is intentionally exported instead of registered here.  The
- * application owns migration ordering; index.mjs imports this constant and
- * appends it to the database migration list.
- */
-export const EXTRAS_SCHEMA = `
-  CREATE TABLE IF NOT EXISTS task_assignees (
-    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    position REAL NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL,
-    PRIMARY KEY (task_id, user_id)
-  );
-
-  CREATE INDEX IF NOT EXISTS task_assignees_user_idx
-    ON task_assignees(user_id, task_id, position);
-
-  CREATE TABLE IF NOT EXISTS task_labels (
-    id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 80),
-    color TEXT NOT NULL CHECK (length(color) BETWEEN 1 AND 40),
-    created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-
-  CREATE UNIQUE INDEX IF NOT EXISTS task_labels_workspace_name_idx
-    ON task_labels(workspace_id, name COLLATE NOCASE);
-
-  CREATE TABLE IF NOT EXISTS task_label_links (
-    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    label_id TEXT NOT NULL REFERENCES task_labels(id) ON DELETE CASCADE,
-    created_at TEXT NOT NULL,
-    PRIMARY KEY (task_id, label_id)
-  );
-
-  CREATE INDEX IF NOT EXISTS task_label_links_label_idx
-    ON task_label_links(label_id, task_id);
-
-  CREATE TABLE IF NOT EXISTS task_templates (
-    id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    team_id TEXT,
-    source_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('task', 'checklist')),
-    name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 120),
-    payload_json TEXT NOT NULL,
-    created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    FOREIGN KEY (team_id, workspace_id)
-      REFERENCES teams(id, workspace_id) ON DELETE CASCADE
-  );
-
-  CREATE INDEX IF NOT EXISTS task_templates_scope_idx
-    ON task_templates(workspace_id, team_id, kind, created_at DESC, id);
-
-  ALTER TABLE task_checklists ADD COLUMN position REAL NOT NULL DEFAULT 0;
-  ALTER TABLE task_checklist_items ADD COLUMN position REAL NOT NULL DEFAULT 0;
-
-  CREATE INDEX IF NOT EXISTS task_checklists_task_position_idx
-    ON task_checklists(task_id, position, created_at, id);
-  CREATE INDEX IF NOT EXISTS task_checklist_items_position_idx
-    ON task_checklist_items(checklist_id, position, created_at, id);
-`;
-
 const MAX_LABELS = 50;
 const MAX_ASSIGNEES = 50;
 const MAX_CHECKLISTS = 50;
@@ -210,7 +143,7 @@ function labelRows(db, workspaceId, taskId) {
        FROM task_label_links ll
        JOIN task_labels l ON l.id = ll.label_id AND l.workspace_id = ?
        WHERE ll.task_id = ?
-       ORDER BY l.name COLLATE NOCASE ASC, l.id ASC`,
+       ORDER BY lower(l.name) ASC, l.id ASC`,
     )
     .all(workspaceId, taskId);
 }
@@ -227,7 +160,7 @@ function memberRows(db, workspaceId, teamId) {
          FROM team_members tm
          JOIN users u ON u.id = tm.user_id
          WHERE tm.workspace_id = ? AND tm.team_id = ? AND u.disabled_at IS NULL
-         ORDER BY u.name COLLATE NOCASE ASC, u.id ASC`,
+         ORDER BY lower(u.name) ASC, u.id ASC`,
       )
       .all(workspaceId, teamId);
   }
@@ -238,7 +171,7 @@ function memberRows(db, workspaceId, teamId) {
        JOIN users u ON u.id = wm.user_id
        WHERE wm.workspace_id = ? AND u.disabled_at IS NULL
        ORDER BY CASE wm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,
-                u.name COLLATE NOCASE ASC, u.id ASC`,
+                lower(u.name) ASC, u.id ASC`,
     )
     .all(workspaceId);
 }
@@ -779,7 +712,7 @@ export function registerTaskExtrasRoutes(
         .prepare(
           `SELECT id, name, color, created_at, updated_at
            FROM task_labels WHERE workspace_id = ?
-           ORDER BY name COLLATE NOCASE ASC, id ASC`,
+           ORDER BY lower(name) ASC, id ASC`,
         )
         .all(req.auth.workspaceId)
         .map((row) => ({ id: row.id, name: row.name, color: row.color }));

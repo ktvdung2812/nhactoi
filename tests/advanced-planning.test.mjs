@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { boot, call, user, task, addMember } from './roadmap-helpers.mjs';
-import { migrateDatabase } from '../server/db.mjs';
+import { migrateDatabase } from './database-helpers.mjs';
 
 const weekly = { interval: 2, weekdays: [1, 3], basis: 'due' };
 test('advanced recurrence survives old clients, completion paths, copies, templates and board transfer', async t => {
@@ -92,7 +92,7 @@ test('time blocks preserve reminders and user isolation, validate boundaries and
   assert.equal((await plan({ plannedDate })).status, 409);
 });
 
-test('migration 30 preserves tasks, plans, dependencies and supports yearly recurrence', async t => {
+test("[SQLite legacy] migration 30 preserves tasks, plans, dependencies and supports yearly recurrence", async t => {
   const s = await boot(t), owner = await user(s, 'upgrade30@test.local'), card = await task(s, owner), cookie = owner.cookie;
   await call(s, `/tasks/${card.id}`, { cookie, method: 'PATCH', body: { recurrence: 'monthly' } });
   await call(s, `/tasks/${card.id}/plan`, { cookie, method: 'PATCH', body: { plannedDate: '2030-01-02' } });

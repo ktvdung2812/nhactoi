@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createApp } from "../server/index.mjs";
-import { openDatabase, SCHEMA_VERSION } from "../server/db.mjs";
+import { createApp } from './database-helpers.mjs';
+import { openDatabase, SCHEMA_VERSION } from './database-helpers.mjs';
 import { createAiModelCatalog } from "../server/ai-models.mjs";
 
 const answer = content => Response.json({ choices: [{ message: { role: "assistant", content } }] });
@@ -159,7 +159,7 @@ test("Anthropic tool protocol and malformed/unknown tools are handled without mu
   assert.equal(step, 2);
 });
 
-test("AI migration upgrades existing SQLite without losing data and survives reopen", () => {
+test("[SQLite legacy] AI migration upgrades existing SQLite without losing data and survives reopen", () => {
   const dir = mkdtempSync(join(tmpdir(), "nhactoi-ai-"));
   const path = join(dir, "db.sqlite");
   try {

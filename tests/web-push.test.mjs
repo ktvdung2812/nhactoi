@@ -4,7 +4,7 @@ import { createECDH, randomBytes } from 'node:crypto';
 import webpush from 'web-push';
 import { boot, call, user, task, addMember } from './roadmap-helpers.mjs';
 import { processWebPush, validatePushSubscription, validPushEndpoint, webPushConfig } from '../server/web-push.mjs';
-import { migrateDatabase } from '../server/db.mjs';
+import { migrateDatabase } from './database-helpers.mjs';
 
 const vapid = webpush.generateVAPIDKeys();
 const env = { NODE_ENV: 'test', FRONTEND_ORIGIN: 'http://localhost:5173', WEB_PUSH_PUBLIC_KEY: vapid.publicKey, WEB_PUSH_PRIVATE_KEY: vapid.privateKey, WEB_PUSH_SUBJECT: 'mailto:admin@example.test' };
@@ -46,7 +46,7 @@ test('subscriptions are user/session scoped, persist across workspace switch, an
   assert.equal((await status({ ...owner, cookie: switched.cookie })).body.subscribed, true);
   await call(s, '/auth/logout', { cookie: switched.cookie, method: 'POST' });
   assert.equal(s.db.prepare('SELECT count(*) n FROM web_push_subscriptions').get().n, 0);
-  assert.deepEqual(s.db.prepare('PRAGMA foreign_key_check').all(), []);
+  assert.equal(s.db.prepare("SELECT count(*) n FROM web_push_subscriptions p LEFT JOIN sessions s ON s.id=p.session_id WHERE s.id IS NULL").get().n, 0);
 });
 
 test('delivery retries only failed browsers, is serialized, deduplicates, and has generic payloads', async t => {
@@ -108,7 +108,7 @@ test('delivery rechecks completion, permission and session revocation; invalid e
   await run(); assert.equal(sent, 0);
 });
 
-test('migration 31 is additive, replayable, and preserves existing notifications without sending history', async t => {
+test("[SQLite legacy] migration 31 is additive, replayable, and preserves existing notifications without sending history", async t => {
   const s = await boot(t, { env }), owner = await user(s, 'migration31@test.local'), card = await task(s, owner);
   s.db.exec('DROP TRIGGER notifications_web_push_ai; DROP TRIGGER web_push_task_reset; DROP TRIGGER web_push_snooze; DROP TRIGGER web_push_event_reset; DROP TABLE web_push_deliveries; DROP TABLE web_push_subscriptions; DELETE FROM schema_migrations WHERE version=31;');
   notice(s, owner, card, 'historical');
@@ -116,7 +116,7 @@ test('migration 31 is additive, replayable, and preserves existing notifications
   assert.equal(s.db.prepare('SELECT count(*) n FROM notifications WHERE id=?').get('historical').n, 1);
   await register(s, owner, subscription('migrated'));
   assert.equal(s.db.prepare('SELECT count(*) n FROM web_push_deliveries').get().n, 0);
-  assert.deepEqual(s.db.prepare('PRAGMA foreign_key_check').all(), []);
+  assert.equal(s.db.prepare("SELECT count(*) n FROM web_push_subscriptions p LEFT JOIN sessions s ON s.id=p.session_id WHERE s.id IS NULL").get().n, 0);
 });
 
 test('event and renewal pushes resolve targets and skip rescheduled, archived or inaccessible data', async t => {

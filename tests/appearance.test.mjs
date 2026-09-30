@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { boot, call, user, addMember } from './roadmap-helpers.mjs';
-import { migrateDatabase, openDatabase } from '../server/db.mjs';
+import { migrateDatabase, openDatabase } from './database-helpers.mjs';
 import { APPEARANCE_DEFAULTS as defaults, validateAppearance, resolveAppearance } from '../shared/appearance.mjs';
 import { accentColors, themeDisabledReason } from '../src/appearance.js';
 
@@ -76,7 +76,7 @@ test('team admins grant fields, members cannot bypass locks, policy changes over
   assert.equal((await call(s, path, { cookie: member.cookie })).status, 404);
 });
 
-test('appearance migration is additive, replayable and cleans up deleted parents', () => {
+test("[SQLite legacy] appearance migration is additive, replayable and cleans up deleted parents", () => {
   const db = openDatabase(':memory:');
   try {
     db.exec('DROP TABLE user_appearance; DROP TABLE team_appearance; DELETE FROM schema_migrations WHERE version=25;');

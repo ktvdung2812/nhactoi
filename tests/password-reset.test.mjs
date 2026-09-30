@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { boot, call, user } from "./roadmap-helpers.mjs";
-import { migrateDatabase, SCHEMA_VERSION } from "../server/db.mjs";
-import { createApp } from "../server/index.mjs";
+import { migrateDatabase, SCHEMA_VERSION } from './database-helpers.mjs';
+import { createApp } from './database-helpers.mjs';
 import { join } from "node:path";
 
 async function setup(t, options = {}) {
@@ -137,7 +137,7 @@ test("missing SMTP is actionable; delivery failures are neutral and invalidate u
   assert.equal(failed.db.prepare("SELECT COUNT(*) n FROM password_reset_codes").get().n, 0);
 });
 
-test("migration adds reset storage to existing databases without losing accounts", async (t) => {
+test("[SQLite legacy] migration adds reset storage to existing databases without losing accounts", async (t) => {
   const s = await setup(t);
   const actor = await user(s, "migration-recovery@example.test");
   s.db.exec("DROP TABLE password_reset_codes; DROP TABLE auth_request_limits; DELETE FROM schema_migrations WHERE version=21;");

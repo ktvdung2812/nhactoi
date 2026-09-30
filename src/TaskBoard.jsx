@@ -1,7 +1,7 @@
 import React, { useEffect, useId, useRef, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CalendarDays, Check, ChevronRight, Eye, GripVertical, PanelLeftClose, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Bell, CalendarDays, Check, ChevronDown, ChevronRight, ChevronUp, Eye, GripVertical, PanelLeftClose, Plus, Trash2 } from "lucide-react";
 import ActionMenu from "./ActionMenu.jsx";
-import { reorderBeforeId, reorderIsNoop, moveColumnId, moveColumnToEndId } from "./board-order.js";
+import { taskDropTarget, reorderIsNoop, columnDropTarget, moveColumnId } from "./board-order.js";
 import "./task-board.css";
 
 export const DEFAULT_STATUSES = [
@@ -13,6 +13,8 @@ export const DEFAULT_STATUSES = [
 const STATUS_LABELS = { todo: "Cần làm", doing: "Đang làm", done: "Hoàn thành" };
 const STATUS_TONES = { todo: "blue", doing: "orange", done: "green" };
 const priorities = { low: "Thấp", medium: "Trung bình", high: "Cao" };
+const CARD_LIMIT = 5;
+const DAY_MS = 86400000;
 
 function initialView(scope, columns) {
   return { scope, order: columns.map(column => column.id), collapsed: [] };
@@ -36,6 +38,7 @@ export default function TaskBoard({
   members = [],
   statuses = DEFAULT_STATUSES,
   columns: managedColumns = null,
+  visibleColumnIds = null,
   preferences = null,
   onPreferencesChange,
   onColumnReorder,
@@ -63,11 +66,13 @@ export default function TaskBoard({
   const [over, setOver] = useState(null);
   const [draggedColumn, setDraggedColumn] = useState(null);
   const [overColumn, setOverColumn] = useState(null);
+  const [panning, setPanning] = useState(false);
+  const [expanded, setExpanded] = useState([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const moving = useRef(false);
-  const draggedRef = useRef(null);
-  const draggedColumnRef = useRef(null);
+  const suppressClickRef = useRef(false);
+  const boardPointerRef = useRef(null);
   const boardRef = useRef(null);
   const scopeRef = useRef(scopeKey);
   const helpId = useId();
@@ -88,12 +93,8 @@ export default function TaskBoard({
   useEffect(() => {
     setMessage("");
     setError("");
-    draggedRef.current = null;
-    setDragged(null);
-    setOver(null);
-    draggedColumnRef.current = null;
-    setDraggedColumn(null);
-    setOverColumn(null);
+    endBoardPointer();
+    setExpanded([]);
   }, [scopeKey]);
 
   const currentView = view.scope === scopeKey ? view : initialView(scopeKey, sourceColumns);
@@ -105,7 +106,7 @@ export default function TaskBoard({
   const collapsedIds = preferences && Array.isArray(preferences.collapsedIds)
     ? preferences.collapsedIds.map(String)
     : currentView.collapsed;
-  const canArrangeColumns = !readOnly && (onColumnReorder ? (canReorderColumns ?? true) : true) && columns.length > 1;
+  const canArrangeColumns = !readOnly && visibleColumnIds == null && (onColumnReorder ? (canReorderColumns ?? true) : true) && columns.length > 1;
 
   const taskColumnId = task => {
     const value = getTaskColumn?.(task) ?? (managedColumns ? task?.columnId ?? task?.status : task?.status);
@@ -133,13 +134,6 @@ export default function TaskBoard({
   function moveColumn(activeId, targetId, before) {
     const order = columns.map(column => column.id);
     const next = moveColumnId(order, activeId, targetId, before);
-    if (!next || next.every((id, index) => id === order[index])) return;
-    applyOrder(next);
-  }
-
-  function moveColumnToEnd(activeId) {
-    const order = columns.map(column => column.id);
-    const next = moveColumnToEndId(order, activeId);
     if (!next || next.every((id, index) => id === order[index])) return;
     applyOrder(next);
   }
@@ -174,6 +168,7 @@ export default function TaskBoard({
       if (onTaskMove) await onTaskMove(task, columnId, beforeTaskId ?? null);
       else await onMove(task, columnId);
       if (scopeRef.current === scope) {
+        setExpanded(current => current.includes(columnId) ? current : [...current, columnId]);
         const target = columns.find(column => column.id === columnId);
         setMessage(fromColumnId === columnId
           ? `Đã sắp xếp “${task.title}” trong cột ${target?.label || columnId}.`
@@ -200,64 +195,117 @@ export default function TaskBoard({
     });
   }
 
-  function placeOver(event, columnId) {
-    const activeId = draggedRef.current;
-    if (!activeId) return;
-    const list = event.currentTarget.querySelector(":scope > .task-board-cards");
-    const beforeTaskId = reorderBeforeId(cardRects(list), activeId, event.clientY);
-    setOver(current => current?.columnId === columnId && String(current.beforeTaskId ?? "") === String(beforeTaskId ?? "")
-      ? current
-      : { columnId, beforeTaskId });
-  }
-
-  function drop(event, columnId, cards) {
-    event.preventDefault();
-    event.stopPropagation();
-    const activeId = draggedRef.current;
-    const list = event.currentTarget.querySelector(":scope > .task-board-cards");
-    const beforeTaskId = reorderBeforeId(cardRects(list), activeId, event.clientY);
-    const task = tasks.find(item => String(item.id) === String(activeId));
-    draggedRef.current = null;
-    setDragged(null);
-    setOver(null);
-    if (task && !reorderIsNoop(cards, task.id, beforeTaskId)) move(task, columnId, beforeTaskId);
+  function startTaskDrag(event, task) {
+    if (boardPointerRef.current || pending || moving.current || !movable(task) || event.button !== 0 || !event.isPrimary || event.pointerType === "touch") return;
+    if (event.target.closest(".action-menu, button, a, input, select, textarea")) return;
+    // Capture on the original target so a click without dragging still opens the task.
+    const captureTarget = event.target;
+    boardPointerRef.current = { kind: "task", id: task.id, pointerId: event.pointerId, x: event.clientX, y: event.clientY, active: false, captureTarget };
+    captureTarget.setPointerCapture(event.pointerId);
   }
 
   function startColumnDrag(event, column) {
-    if (pending || moving.current || event.target.closest(".action-menu")) {
-      event.preventDefault();
-      return;
-    }
-    const source = event.target.closest(".task-board-column");
-    if (source) source.draggable = true;
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", `column:${column.id}`);
-    draggedColumnRef.current = column.id;
-    setDraggedColumn(column.id);
-    setError("");
+    if (!canArrangeColumns || pending || moving.current || event.button !== 0 || !event.isPrimary) return;
+    event.preventDefault();
+    boardPointerRef.current = { kind: "column", id: column.id, pointerId: event.pointerId, x: event.clientX, y: event.clientY, active: false };
+    boardRef.current.setPointerCapture(event.pointerId);
+    boardRef.current.focus({ preventScroll: true });
   }
 
-  function endColumnDrag() {
-    [...(boardRef.current?.querySelectorAll('[data-column][draggable="true"]') || [])].forEach(node => { node.draggable = false; });
-    draggedColumnRef.current = null;
+  function startBoardPan(event) {
+    suppressClickRef.current = false;
+    if (boardPointerRef.current || event.pointerType !== "mouse" || event.button !== 0 || !event.isPrimary) return;
+    if (!event.target.matches(".task-board, .task-board-column, .task-board-column-header, .task-board-cards, .task-board-empty")) return;
+    const board = boardRef.current;
+    if (board.scrollWidth <= board.clientWidth) return;
+    event.preventDefault();
+    boardPointerRef.current = { kind: "pan", pointerId: event.pointerId, x: event.clientX, scrollLeft: board.scrollLeft, active: false };
+    board.setPointerCapture(event.pointerId);
+    board.focus({ preventScroll: true });
+  }
+
+  function endBoardPointer() {
+    const drag = boardPointerRef.current;
+    boardPointerRef.current = null;
+    setPanning(false);
+    setDragged(null);
+    setOver(null);
     setDraggedColumn(null);
     setOverColumn(null);
+    const captureTarget = drag?.captureTarget || boardRef.current;
+    if (drag && captureTarget?.hasPointerCapture(drag.pointerId)) captureTarget.releasePointerCapture(drag.pointerId);
   }
 
-  function placeOverColumn(event, columnId) {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const before = event.clientX < rect.left + rect.width / 2;
-    setOverColumn(current => current?.id === columnId && current.before === before ? current : { id: columnId, before });
+  function taskTargetAt(event, activeId) {
+    const board = boardRef.current;
+    const rect = board.getBoundingClientRect();
+    if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) return null;
+    const targets = [...board.querySelectorAll(":scope > [data-column]")].map(node => {
+      const bounds = node.getBoundingClientRect();
+      const list = node.querySelector(":scope > .task-board-cards");
+      return { id: node.dataset.column, left: bounds.left, width: bounds.width, cards: cardRects(list), firstHiddenId: list?.dataset.firstHiddenId };
+    });
+    return taskDropTarget(targets, activeId, event.clientX, event.clientY);
   }
 
-  function dropColumn(event, columnId) {
+  function columnTargetAt(event, activeId) {
+    const board = boardRef.current;
+    const rect = board.getBoundingClientRect();
+    if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) return null;
+    const rects = [...board.querySelectorAll(":scope > [data-column]")].map(node => {
+      const bounds = node.getBoundingClientRect();
+      return { id: node.dataset.column, left: bounds.left, width: bounds.width };
+    });
+    return columnDropTarget(rects, activeId, event.clientX);
+  }
+
+  function moveBoardPointer(event) {
+    const drag = boardPointerRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (drag.kind === "pan") {
+      if (!drag.active && Math.abs(event.clientX - drag.x) < 6) return;
+      drag.active = true;
+      setPanning(true);
+      event.preventDefault();
+      boardRef.current.scrollLeft = drag.scrollLeft + drag.x - event.clientX;
+      return;
+    }
+    if (!drag.active) {
+      if (Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 6) return;
+      drag.active = true;
+      suppressClickRef.current = true;
+      if (drag.kind === "task") {
+        setDragged(drag.id);
+        boardRef.current.focus({ preventScroll: true });
+      } else setDraggedColumn(drag.id);
+      setError("");
+    }
     event.preventDefault();
-    event.stopPropagation();
-    const rect = event.currentTarget.getBoundingClientRect();
-    const before = event.clientX < rect.left + rect.width / 2;
-    const activeId = draggedColumnRef.current;
-    endColumnDrag();
-    if (activeId != null) moveColumn(activeId, columnId, before);
+    const board = boardRef.current;
+    const rect = board.getBoundingClientRect();
+    if (event.clientY >= rect.top && event.clientY <= rect.bottom) {
+      board.scrollLeft += event.clientX < rect.left + 32 ? -16 : event.clientX > rect.right - 32 ? 16 : 0;
+    }
+    if (drag.kind === "task") {
+      const target = taskTargetAt(event, drag.id);
+      setOver(current => current?.columnId === target?.columnId && current?.beforeTaskId === target?.beforeTaskId ? current : target);
+    } else {
+      const target = columnTargetAt(event, drag.id);
+      setOverColumn(current => current?.id === target?.id && current?.before === target?.before ? current : target);
+    }
+  }
+
+  function finishBoardPointer(event) {
+    const drag = boardPointerRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const target = drag.active ? (drag.kind === "task" ? taskTargetAt(event, drag.id) : drag.kind === "column" ? columnTargetAt(event, drag.id) : null) : null;
+    endBoardPointer();
+    if (!target || pending || moving.current) return;
+    if (drag.kind === "task") {
+      const task = tasks.find(task => String(task.id) === String(drag.id));
+      const cards = tasks.filter(task => taskColumnId(task) === target.columnId);
+      if (task && !reorderIsNoop(cards, task.id, target.beforeTaskId)) move(task, target.columnId, target.beforeTaskId);
+    } else if (canArrangeColumns) moveColumn(drag.id, target.id, target.before);
   }
 
   const hasHelpText = Boolean(captionRight || readOnly);
@@ -278,28 +326,32 @@ export default function TaskBoard({
       {error && <div className="task-board-error" role="alert">{error}</div>}
       <p className="task-board-announcement" role="status" aria-live="polite">{message}</p>
       <div
-        className="task-board"
+        className={`task-board${panning ? " is-panning" : ""}${dragged != null ? " is-task-dragging" : ""}`}
         ref={boardRef}
         tabIndex={0}
         role="region"
         aria-label="Bảng công việc theo cột"
         aria-describedby={hasHelpText ? helpId : undefined}
-        onDragOver={event => {
-          if (draggedColumnRef.current == null || !canArrangeColumns || pending) return;
+        onPointerDown={startBoardPan}
+        onPointerMove={moveBoardPointer}
+        onPointerUp={finishBoardPointer}
+        onPointerCancel={endBoardPointer}
+        onLostPointerCapture={endBoardPointer}
+        onKeyDown={event => { if (event.key === "Escape") endBoardPointer(); }}
+        onClickCapture={event => {
+          if (!suppressClickRef.current || event.detail === 0) return;
+          suppressClickRef.current = false;
           event.preventDefault();
-          event.dataTransfer.dropEffect = "move";
-        }}
-        onDrop={event => {
-          if (draggedColumnRef.current == null || !canArrangeColumns || pending) return;
-          event.preventDefault();
-          const activeId = draggedColumnRef.current;
-          endColumnDrag();
-          moveColumnToEnd(activeId);
+          event.stopPropagation();
         }}
       >
         {columns.map((column, index) => {
+          if (visibleColumnIds != null && !visibleColumnIds.includes(column.id)) return null;
           const cards = tasks.filter(task => taskColumnId(task) === column.id);
           const collapsed = collapsedIds.includes(column.id) && !cards.some(task => task.id === selectedTaskId);
+          const showAll = cards.length <= CARD_LIMIT || expanded.includes(column.id) || cards.slice(CARD_LIMIT).some(task => task.id === selectedTaskId);
+          const shownCards = showAll ? cards : cards.slice(0, CARD_LIMIT);
+          const firstHiddenId = showAll ? null : cards[CARD_LIMIT].id;
           const actions = [
             !readOnly && onCreate && { label: "Thêm công việc", icon: Plus, disabled: !!pending, onSelect: () => onCreate(column.status || column.id, column.id) },
             { label: "Thu gọn cột", icon: PanelLeftClose, onSelect: () => collapse(column.id, true) },
@@ -315,55 +367,30 @@ export default function TaskBoard({
               data-column={column.id}
               className={`task-board-column tone-${column.tone || "blue"}${collapsed ? " is-collapsed" : ""}${over?.columnId === column.id ? " is-drop-target" : ""}${String(draggedColumn) === String(column.id) ? " is-column-dragging" : ""}${overColumn?.id === column.id ? (overColumn.before ? " is-column-drop-before" : " is-column-drop-after") : ""}`}
               aria-label={`${column.label}: ${cards.length} mục`}
-              onDragOver={event => {
-                if (draggedColumnRef.current != null) {
-                  if (!canArrangeColumns || pending || String(draggedColumnRef.current) === String(column.id)) return;
-                  event.preventDefault();
-                  event.dataTransfer.dropEffect = "move";
-                  placeOverColumn(event, column.id);
-                  return;
-                }
-                const task = tasks.find(item => String(item.id) === String(draggedRef.current));
-                if (!task || !movable(task) || pending) return;
-                event.preventDefault();
-                event.dataTransfer.dropEffect = "move";
-                placeOver(event, column.id);
-              }}
-              onDragLeave={event => {
-                if (event.currentTarget.contains(event.relatedTarget)) return;
-                setOver(null);
-                setOverColumn(null);
-              }}
-              onDrop={event => {
-                if (draggedColumnRef.current != null) {
-                  if (canArrangeColumns && !pending) dropColumn(event, column.id);
-                  return;
-                }
-                const task = tasks.find(item => String(item.id) === String(draggedRef.current));
-                if (task && movable(task) && !pending) drop(event, column.id, cards);
-              }}
-              draggable={canArrangeColumns && !pending}
-              onDragEnd={endColumnDrag}
             >
               {collapsed ? (
                 <button className="task-board-expand" type="button" aria-label={`Mở rộng cột ${column.label}`} onClick={() => collapse(column.id, false)}>
                   <ChevronRight size={17} /><i className="task-board-dot" /><strong>{column.label}</strong><span>{cards.length}</span>
                 </button>
               ) : <>
-                <header
-                  className={`task-board-column-header${canArrangeColumns ? " is-draggable" : ""}`}
-                  onDragStart={event => startColumnDrag(event, column)}
-                >
-                  {canArrangeColumns && <span className="task-board-column-grip" aria-hidden="true"><GripVertical size={15} /></span>}
-                  <h3><i className="task-board-dot" /><span>{column.label}</span></h3>
-                  <span className="task-board-count">{cards.length}</span>
+                <header className="task-board-column-header">
+                  <div
+                    className="task-board-column-handle"
+                    data-draggable={canArrangeColumns && !pending}
+                    onPointerDown={event => startColumnDrag(event, column)}
+                  >
+                    {canArrangeColumns && <span className="task-board-column-grip" aria-hidden="true"><GripVertical size={15} /></span>}
+                    <h3><i className="task-board-dot" /><span>{column.label}</span><span className="task-board-count">{cards.length}</span></h3>
+                  </div>
                   <ActionMenu label={`Thao tác cột ${column.label}`} items={actions} />
                 </header>
-                <div className={`task-board-cards${over?.columnId === column.id && over.beforeTaskId == null ? " is-drop-end" : ""}`} tabIndex={0} role="region" aria-label={`Thẻ trong cột ${column.label}`}>
-                  {cards.map((task, taskIndex) => {
+                {!readOnly && onCreate && <button className="task-board-add" type="button" onClick={() => onCreate(column.status || column.id, column.id)} disabled={!!pending} aria-label={`Thêm công việc vào ${column.label}`} title="Thêm công việc"><Plus size={18} /></button>}
+                <div className={`task-board-cards${over?.columnId === column.id && (over.beforeTaskId == null || String(over.beforeTaskId) === String(firstHiddenId)) ? " is-drop-end" : ""}`} data-first-hidden-id={firstHiddenId ?? undefined} tabIndex={0} role="region" aria-label={`Thẻ trong cột ${column.label}`}>
+                  {shownCards.map((task, taskIndex) => {
                     const assignee = members.find(member => String(member.id) === String(task.assigneeId));
                     const name = assignee?.name || assignee?.email;
                     const late = (column.status || task.status) !== "done" && task.dueAt && new Date(task.dueAt).getTime() < Date.now();
+                    const lateDays = late ? Math.max(1, Math.floor((Date.now() - new Date(task.dueAt).getTime()) / DAY_MS)) : 0;
                     const taskActions = [{ label: "Xem chi tiết", icon: Eye, onSelect: () => onOpen?.(task) }];
                     if (onTaskMove && movable(task)) {
                       const previous = cards[taskIndex - 1];
@@ -383,17 +410,11 @@ export default function TaskBoard({
                         key={task.id}
                         data-task-id={task.id}
                         className={`task-board-card${task.id === selectedTaskId ? " is-ai-selected" : ""}${done ? " is-done" : ""}${String(dragged) === String(task.id) ? " is-dragging" : ""}${pending === task.id ? " is-pending" : ""}${over?.columnId === column.id && String(over.beforeTaskId ?? "") === String(task.id) ? " is-drop-before" : ""}`}
-                        draggable={movable(task) && !pending}
+                        draggable={false}
+                        data-draggable={Boolean(movable(task) && !pending)}
                         aria-busy={pending === task.id}
-                        onDragStart={event => {
-                          if (event.target.closest(".action-menu") || !movable(task) || moving.current) { event.preventDefault(); return; }
-                          event.dataTransfer.effectAllowed = "move";
-                          event.dataTransfer.setData("text/plain", String(task.id));
-                          draggedRef.current = task.id;
-                          setDragged(task.id);
-                          setError("");
-                        }}
-                        onDragEnd={() => { draggedRef.current = null; setDragged(null); setOver(null); }}
+                        onPointerDown={event => startTaskDrag(event, task)}
+                        onDragStart={event => event.preventDefault()}
                       >
                         <div className="task-board-card-top">
                           <span className={`task-board-kind kind-${kindClass}`}>{kindLabel}</span>
@@ -404,18 +425,24 @@ export default function TaskBoard({
                           <strong>{task.title}</strong>
                           {task.description && <span className="task-board-description">{task.description}</span>}
                         </div>
-                        <span className="task-board-category">{task.teamName || "Việc chung"}{task.category ? ` · ${task.category}` : ""}</span>
+                        <div className="task-board-meta">
+                          <span className={late ? "is-overdue" : ""} title={task.dueAt ? new Date(task.dueAt).toLocaleString("vi-VN") : undefined}><CalendarDays size={14} />{late ? `Trễ ${lateDays} ngày` : task.dueAt ? new Date(task.dueAt).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" }) : "Chưa đặt hạn"}{task.kind === "event" && task.endsAt && <small> {new Date(task.dueAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}–{new Date(task.endsAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</small>}</span>
+                          <b>{task.teamName || "Việc chung"}{task.category ? ` · ${task.category}` : ""}</b>
+                        </div>
                         <footer className="task-board-card-footer">
-                          <span className={late ? "is-overdue" : ""}><CalendarDays size={13} />{task.dueAt ? new Date(task.dueAt).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" }) : "Chưa đặt hạn"}{task.kind === "event" && task.endsAt && <small> {new Date(task.dueAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}–{new Date(task.endsAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</small>}</span>
-                          {task.remindAt && <span className="task-board-reminder" title={`Nhắc ${new Date(task.remindAt).toLocaleString("vi-VN")}`}>Nhắc {new Date(task.remindAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</span>}
                           {name ? <span className="task-board-person" title={name}><span className="task-board-avatar" aria-hidden="true">{name.split(/\s+/).filter(Boolean).slice(-2).map(part => part[0]).join("").toUpperCase()}</span><span>{name}</span></span> : <span>{task.kind === "renewal" ? "Theo dõi dịch vụ" : "Chưa giao"}</span>}
+                          {task.remindAt && <span className="task-board-reminder" title={`Nhắc ${new Date(task.remindAt).toLocaleString("vi-VN")}`}><Bell size={13} />{new Date(task.remindAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</span>}
                         </footer>
                       </article>
                     );
                   })}
                   {!cards.length && <div className="task-board-empty">{readOnly ? "Chưa có mục" : "Thả mục vào đây"}</div>}
                 </div>
-                {!readOnly && onCreate && <button className="task-board-add" type="button" onClick={() => onCreate(column.status || column.id, column.id)} disabled={!!pending} aria-label={`Thêm công việc vào ${column.label}`}><Plus size={17} />Thêm công việc</button>}
+                {cards.length > CARD_LIMIT && (
+                  <button className="task-board-more" type="button" aria-expanded={showAll} onClick={() => setExpanded(current => showAll ? current.filter(id => id !== column.id) : [...current, column.id])}>
+                    {showAll ? <>Thu gọn <ChevronUp size={15} /></> : <>Hiện thêm {cards.length - CARD_LIMIT} <ChevronDown size={15} /></>}
+                  </button>
+                )}
               </>}
             </section>
           );

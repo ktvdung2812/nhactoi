@@ -2,10 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import net from "node:net";
+import { openDatabase } from "../database-helpers.mjs";
 
 const projectRoot = process.cwd();
 const nextBuildId = join(projectRoot, process.env.NHACTOI_DIST_DIR || ".next", "BUILD_ID");
@@ -108,7 +109,9 @@ test(
     const port = await freePort();
     const base = `http://127.0.0.1:${port}`;
     const tempRoot = mkdtempSync(join(tmpdir(), "nhactoi-next-runtime-"));
-    const databasePath = join(tempRoot, "nhactoi.sqlite");
+    const database = openDatabase();
+    const schema = database.schema;
+    database.close();
     const output = [];
     const child = spawn(
       process.execPath,
@@ -125,8 +128,12 @@ test(
         env: {
           ...process.env,
           NODE_ENV: "production",
-          DATABASE_PATH: databasePath,
-          DB_PATH: databasePath,
+          DATABASE_URL: process.env.TEST_DATABASE_URL,
+          DATABASE_SCHEMA: schema,
+          NHACTOI_DATA_DIR: tempRoot,
+          BOOTSTRAP_ADMIN_NAME: "",
+          BOOTSTRAP_ADMIN_EMAIL: "",
+          BOOTSTRAP_ADMIN_PASSWORD: "",
           PUBLIC_APP_URL: base,
           FRONTEND_ORIGIN: base,
           COOKIE_SECURE: "false",
@@ -162,6 +169,13 @@ test(
     assert.equal(ready.status, 200);
     const readyPage = await ready.text();
     assert.match(readyPage, /Đang mở không gian làm việc/);
+
+    const credentialsFile = readdirSync(tempRoot).find(name => name.startsWith('bootstrap-admin-'));
+    assert.ok(credentialsFile, 'startup saves generated admin credentials');
+    const credentials = JSON.parse(readFileSync(join(tempRoot, credentialsFile), 'utf8'));
+    const adminLogin = await request(base, '/api/auth/login', { method: 'POST', body: credentials });
+    assert.equal(adminLogin.status, 200);
+    assert.equal((await request(base, '/api/admin/overview', { cookie: sessionCookie(adminLogin) })).status, 200);
 
     const manifestResponse = await request(base, '/manifest.webmanifest');
     assert.equal(manifestResponse.status, 200);

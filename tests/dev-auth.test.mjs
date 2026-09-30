@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createApp } from "../server/index.mjs";
+import { createApp } from './database-helpers.mjs';
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 

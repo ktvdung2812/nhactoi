@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { boot, call, user, addMember } from "./roadmap-helpers.mjs";
-import { migrateDatabase } from "../server/db.mjs";
+import { migrateDatabase } from './database-helpers.mjs';
 
 const clock = () => new Date("2030-01-01T09:00:00Z");
 const fields = {
@@ -80,7 +80,7 @@ test("completed appointments stop reminders and reopening retains idempotent del
   assert.equal(s.app.locals.processEventReminders(), 0);
 });
 
-test("board migration preserves existing appointments and may be safely replayed", async t => {
+test("[SQLite legacy] board migration preserves existing appointments and may be safely replayed", async t => {
   const s = await boot(t, { clock });
   const actor = await user(s, "board-migration@example.test");
   const id = await create(s, actor);

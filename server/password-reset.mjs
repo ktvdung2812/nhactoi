@@ -1,23 +1,6 @@
 import { createHmac, randomInt } from "node:crypto";
 import { hashPassword, safeEqualText } from "./auth.mjs";
 
-export const PASSWORD_RESET_SCHEMA = `
-CREATE TABLE IF NOT EXISTS password_reset_codes (
-  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  email TEXT NOT NULL,
-  code_hash TEXT NOT NULL,
-  expires_at INTEGER NOT NULL,
-  attempts INTEGER NOT NULL DEFAULT 0,
-  created_at INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS auth_request_limits (
-  bucket TEXT PRIMARY KEY,
-  expires_at INTEGER NOT NULL,
-  count INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS auth_request_limits_expiry_idx ON auth_request_limits(expires_at);
-`;
-
 // Persist limits so restarting the server or changing IP cannot reset the
 // per-address send limit or the number of guesses for a recovery code.
 export function authRequestLimiter({ db, clock, settingsKey, withTransaction, HttpError }) {
@@ -43,7 +26,7 @@ export function authRequestLimiter({ db, clock, settingsKey, withTransaction, Ht
         }
         for (const bucket of buckets) {
           db.prepare(`INSERT INTO auth_request_limits(bucket, expires_at, count) VALUES (?, ?, 1)
-            ON CONFLICT(bucket) DO UPDATE SET count = count + 1`)
+            ON CONFLICT(bucket) DO UPDATE SET count = auth_request_limits.count + 1`)
             .run(bucket.key, now + bucket.windowMs);
         }
       });

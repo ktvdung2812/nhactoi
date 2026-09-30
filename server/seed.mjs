@@ -14,11 +14,11 @@ function dateAt(base, days, hour = 9) {
 
 export function seedDemo({
   db: explicitDb,
-  dbPath = resolve(process.cwd(), "data", "nhactoi.sqlite"),
+  databaseUrl = process.env.DATABASE_URL,
   clock = () => new Date(),
 } = {}) {
   const shouldClose = !explicitDb;
-  const db = explicitDb || openDatabase(dbPath);
+  const db = explicitDb || openDatabase(databaseUrl);
   const now = new Date(typeof clock === "function" ? clock() : clock);
   const nowIso = now.toISOString();
   const existing = db
@@ -246,12 +246,7 @@ if (
   process.argv[1] &&
   resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)
 ) {
-  const result = seedDemo({
-    dbPath:
-      process.env.DB_PATH ||
-      process.env.DATABASE_PATH ||
-      resolve(process.cwd(), "data", "nhactoi.sqlite"),
-  });
+  const result = seedDemo();
   console.log(
     result.created
       ? `Demo workspace created. Login: ${result.email} / ${result.password}`

@@ -29,7 +29,7 @@ test("shared renewal contract keeps exact enums, statuses, and anchored dates", 
   assert.equal(nextFutureServiceDate("2026-01-31", "month", 1, "2026-03-01"), "2026-03-31");
 });
 
-test("service migration/API backfills legacy amount and computes quantity totals", async (t) => {
+test("[SQLite legacy] service migration/API backfills legacy amount and computes quantity totals", async (t) => {
   const s = await boot(t, { clock: fixedClock("2026-09-21T02:00:00.000Z") });
   const owner = await user(s, "service-fields@example.test");
   const legacy = await call(s, "/services", {

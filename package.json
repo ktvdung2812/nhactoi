@@ -8,14 +8,19 @@
   },
   "scripts": {
     "dev": "node --env-file-if-exists=.env node_modules/next/dist/bin/next dev --hostname 127.0.0.1",
-    "build": "next build",
+    "build": "next build --webpack",
     "build:server": "NODE_OPTIONS=--max-old-space-size=512 NHACTOI_LOW_MEMORY_BUILD=1 next build --webpack",
     "start": "node --env-file-if-exists=.env node_modules/next/dist/bin/next start --hostname 127.0.0.1",
     "seed": "node --env-file-if-exists=.env server/seed.mjs",
-    "test": "node --test tests/*.test.mjs",
+    "test": "npm run test:postgres && npm run test:legacy",
     "admin": "node --env-file-if-exists=.env server/admin.mjs",
-    "test:next": "node --test tests/integration/next-runtime.test.mjs",
-    "web-push:keys": "web-push generate-vapid-keys --json"
+    "test:next": "node --env-file-if-exists=.env.test.local --test tests/integration/next-runtime.test.mjs",
+    "web-push:keys": "web-push generate-vapid-keys --json",
+    "test:postgres": "node --env-file-if-exists=.env.test.local --test --test-concurrency=4 --test-timeout=60000 --test-skip-pattern='\\[SQLite legacy\\]' tests/*.test.mjs",
+    "test:legacy": "NHACTOI_LEGACY_TESTS=1 node --test --test-concurrency=4 --test-name-pattern='\\[SQLite legacy\\]' tests/*.test.mjs",
+    "db:migrate": "node --env-file-if-exists=.env scripts/migrate.mjs",
+    "db:import-sqlite": "node --env-file-if-exists=.env scripts/migrate-sqlite.mjs",
+    "db:restore": "node --env-file-if-exists=.env scripts/restore-backup.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1136.0",
@@ -26,10 +31,12 @@
     "lucide-react": "^0.468.0",
     "next": "^16.3.5",
     "nodemailer": "^10.0.10",
+    "pg": "^8.23.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "synckit": "^0.11.13",
     "web-push": "^3.6.7"
   }
 }

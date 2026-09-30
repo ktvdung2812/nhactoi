@@ -1,7 +1,6 @@
 import {OAuth2Client} from 'google-auth-library';
 import {createHash,randomBytes} from 'node:crypto';
 import {createId,hashPassword} from './auth.mjs';
-export const GOOGLE_SCHEMA=`CREATE TABLE google_identities(sub TEXT PRIMARY KEY,user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,created_at TEXT NOT NULL);CREATE TABLE google_oauth_states(state_hash TEXT PRIMARY KEY,nonce TEXT NOT NULL,verifier TEXT NOT NULL,user_id TEXT REFERENCES users(id) ON DELETE CASCADE,expires_at TEXT NOT NULL);`;
 const hash=v=>createHash('sha256').update(v).digest('hex');
 export function registerGoogleRoutes(app,{db,config,clock,requirePlatformAdmin,requireAuth,HttpError,withTransaction,writeStoredSetting,loadStoredSettings,settingsKey,writeAdminAudit,createSession,setSessionCookie}){
  const settings=()=>{const s=loadStoredSettings(db,settingsKey).get('googleLogin');return s?JSON.parse(s):{enabled:false,clientId:'',clientSecret:''}};

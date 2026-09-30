@@ -196,7 +196,7 @@ function ticketDetail(db, id, scope = {}) {
       FROM ticket_messages m
       JOIN users u ON u.id = m.author_user_id
       WHERE m.ticket_id = ?
-      ORDER BY m.created_at ASC, m.rowid ASC
+      ORDER BY m.created_at ASC, m.insertion_order ASC
     `,
     )
     .all(id)
@@ -220,7 +220,7 @@ function ticketDetail(db, id, scope = {}) {
       FROM ticket_events e
       LEFT JOIN users u ON u.id = e.actor_user_id
       WHERE e.ticket_id = ?
-      ORDER BY e.created_at ASC, e.rowid ASC
+      ORDER BY e.created_at ASC, e.insertion_order ASC
     `,
     )
     .all(id)
@@ -242,7 +242,7 @@ function ticketDetail(db, id, scope = {}) {
 
 function nextTicketNumber(db) {
   const row = db
-    .prepare("SELECT next_number FROM ticket_sequence WHERE id = 1")
+    .prepare("SELECT next_number FROM ticket_sequence WHERE id = 1 FOR UPDATE")
     .get();
   if (!row) {
     db.prepare(

@@ -11,7 +11,8 @@ Máy chủ dùng Node **24.14.1** và ít nhất Node 24.
 - Symlink release trước: `/www/wwwroot/nhactoi.ktvdung.io.vn/previous`
 - Release và dữ liệu dùng chung: `/www/wwwroot/nhactoi.ktvdung.io.vn/shared`
 - File môi trường: `/www/wwwroot/nhactoi.ktvdung.io.vn/shared/.env` (không commit)
-- SQLite production: `/www/wwwroot/nhactoi.ktvdung.io.vn/shared/data/nhactoi.sqlite`
+- PostgreSQL: kết nối bằng `DATABASE_URL`; cần tạo database và role riêng.
+- Tệp/khóa/snapshot: `/www/wwwroot/nhactoi.ktvdung.io.vn/shared/data`
 - npm cache dùng khi build: `/www/wwwroot/nhactoi.ktvdung.io.vn/shared/npm-cache`
 - Node: `/www/server/nodejs/v24.14.1/bin`
 
@@ -44,7 +45,8 @@ PORT=3100
 PUBLIC_APP_URL=https://nhactoi.ktvdung.io.vn
 FRONTEND_ORIGIN=https://nhactoi.ktvdung.io.vn
 COOKIE_SECURE=true
-DATABASE_PATH=/www/wwwroot/nhactoi.ktvdung.io.vn/shared/data/nhactoi.sqlite
+DATABASE_URL=postgresql://nhactoi:REPLACE_WITH_SECRET@127.0.0.1:5432/nhactoi
+NHACTOI_DATA_DIR=/www/wwwroot/nhactoi.ktvdung.io.vn/shared/data
 DISABLE_BACKGROUND_WORKER=false
 ```
 
@@ -85,7 +87,7 @@ Script không `git pull`. Nó khóa deploy bằng `flock`, archive đúng `HEAD`
 `shared/releases`, liên kết `.env`, chạy `npm ci --omit=dev` và
 `npm run build:server` dưới user `www`, rồi mới đổi symlink `current` atomically.
 Script build này dùng webpack, một CPU worker và heap Node 512 MiB để phù hợp
-VPS ít RAM; `npm run build` mặc định và development vẫn giữ nguyên.
+VPS ít RAM; `npm run build` cũng dùng webpack, development giữ bundler Next mặc định.
 Build hỏng giữ nguyên release đang chạy. Sau khi đổi symlink, script gọi
 `restart_project(get)` của aaPanel và thử lần lượt `/` và
 `/api/auth/google/config` tại `127.0.0.1:3100`. Nếu khởi động hoặc probe hỏng,
@@ -105,10 +107,17 @@ find /www/wwwroot/nhactoi.ktvdung.io.vn/shared/releases -mindepth 1 -maxdepth 1 
 
 ## Tài khoản đầu tiên
 
-Deploy sạch không seed dữ liệu và không tạo admin tự động. Người vận hành đăng
-ký tài khoản đầu tiên trên website bằng email, mật khẩu và workspace mình chọn.
-Email người vận hành chọn trở thành định danh để cấp quyền. Khi tài khoản đã
-tồn tại, cấp quyền admin SaaS từ máy chủ:
+Migration tự khởi tạo một admin SaaS nếu chưa có admin hoạt động. Đặt
+`BOOTSTRAP_ADMIN_NAME`, `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD`
+trong môi trường trước lần khởi động đầu, rồi chạy `npm run db:migrate` hoặc
+khởi động Next. Nếu để trống mật khẩu, hệ thống sinh mật khẩu ngẫu nhiên và
+lưu tại `NHACTOI_DATA_DIR/bootstrap-admin-user_*.json` (quyền `0600`); đường dẫn
+được in trong log. Mặc định email là `admin@nhactoi.local`. Lưu thông tin đăng
+nhập vào nơi quản lý mật khẩu rồi xóa tệp khi không còn cần.
+
+Chạy lại migration không đổi admin/mật khẩu hiện có. Email cấu hình trùng tài
+khoản đã có sẽ báo lỗi thay vì tự nâng quyền. Xem [quy tắc bootstrap](POSTGRESQL.md#admin-saas-ban-đầu).
+Nếu muốn cấp quyền cho tài khoản đã đăng ký, dùng lệnh trên máy chủ:
 
 ```sh
 runuser -u www -- env PATH=/www/server/nodejs/v24.14.1/bin:$PATH \
@@ -119,14 +128,18 @@ runuser -u www -- env PATH=/www/server/nodejs/v24.14.1/bin:$PATH \
 Thay `EMAIL_DA_DANG_KY` bằng đúng email người dùng đã chọn; lệnh không tạo
 tài khoản mới. Không chạy `npm run seed` trên production.
 
-## SQLite, worker và rollback
+## PostgreSQL, worker và rollback
 
-SQLite, WAL/SHM, settings encryption key, tệp đính kèm và snapshot phải nằm
-trong vùng persistent và được sao lưu cùng nhau. Migration chạy khi mở DB;
-script deploy không tự rollback DB khi code rollback. Muốn phục hồi DB phải
-dừng Node/worker, kiểm tra bản sao lưu và thực hiện quy trình offline của
-`scripts/restore-backup.mjs`, sau đó khởi động lại và kiểm tra health. Không xóa
-DB để “hạ phiên bản”.
+Trước lần triển khai bản PostgreSQL, dừng Node, tạo database/role riêng, sao lưu
+SQLite và nhập bằng [hướng dẫn PostgreSQL](POSTGRESQL.md). Script deploy không
+tự chuyển dữ liệu hoặc tạo database. Cấu hình DATABASE_URL và giữ thư mục tệp,
+settings encryption key. Đây là chuyển đổi engine: rollback về release SQLite
+chỉ dùng được bản SQLite trước chuyển đổi và không bao gồm ghi mới trên PostgreSQL.
+
+Sao lưu PostgreSQL và thư mục dữ liệu persistent cùng nhau. Migration chạy khi
+mở DB; deploy không tự rollback DB. Khôi phục bằng `npm run db:restore -- backup-ID
+--offline-confirm-restore` khi Node/worker đã dừng, PostgreSQL vẫn hoạt động.
+Giữ một tiến trình ứng dụng vì khóa gửi FCM/email/push vẫn nằm trong tiến trình.
 
 Sau deploy, kiểm tra cả `https://nhactoi.ktvdung.io.vn/` và
 `https://nhactoi.ktvdung.io.vn/api/auth/google/config`; endpoint thứ hai chỉ

@@ -4,8 +4,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { withTransaction } from "../server/db.mjs";
-import { createApp } from "../server/index.mjs";
+import { withTransaction } from './database-helpers.mjs';
+import { createApp } from './database-helpers.mjs';
 
 async function boot(dbPath = ":memory:") {
   const app = createApp({ dbPath, env: { NODE_ENV: "test" } });

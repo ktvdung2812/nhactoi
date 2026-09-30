@@ -1853,6 +1853,7 @@ progress::-moz-progress-bar {
   display: flex;
 }
 .pricing-period button {
+  white-space: nowrap;
   font-size: var(--text-xs);
   color: #8b9f77;
   padding: 11px 17px;
@@ -2087,59 +2088,12 @@ progress::-moz-progress-bar {
 .task-editor-fields:disabled {
   opacity: 0.8;
 }
-.task-team-filter {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 17px;
-  font-size: var(--text-sm);
-  color: #718579;
-}
-.task-team-filter select {
-  min-width: 220px;
-  max-width: 100%;
-  border: 1px solid #dae5de;
-  border-radius: 8px;
-  padding: 10px 12px;
-  background: #fff;
-  color: #3f6452;
-  font: inherit;
-}
-.task-search-toolbar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px 20px;
-  margin-bottom: 20px;
-}
-.task-search-toolbar > .search-box {
-  flex: 1 1 280px;
-  min-width: 0;
-  max-width: none;
-  margin-bottom: 0;
-}
-.task-search-toolbar > .task-team-filter {
-  margin: 0 0 0 auto;
-  min-width: 0;
-}
-.task-search-toolbar .task-team-filter > span {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-}
 .unified-add-menu { position: relative; }
 .unified-add-options { position: absolute; z-index: 20; top: calc(100% + 7px); right: 0; display: grid; min-width: 170px; padding: 6px; border: 1px solid var(--line); border-radius: 9px; background: #fff; box-shadow: 0 12px 30px #244b3418; }
 .unified-add-options button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--ink); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; }
 .unified-add-options button:hover { background: #f1f7f2; color: var(--green); }
 .unified-kind-event { color: #6f82a8; background: #eef2fb; }
 .unified-kind-renewal { color: #9b805d; background: #faf3e6; }
-@media (max-width: 600px) {
-  .task-search-toolbar > .task-team-filter { width: 100%; }
-  .task-search-toolbar .task-team-filter select { flex: 1; min-width: 0; }
-}
 .field {
   display: flex;
   min-width: 0;
@@ -2939,6 +2893,10 @@ progress::-moz-progress-bar {
 @media (max-width: 760px) {
   .app-shell {
     padding-top: 65px;
+  }
+  /* The admin topbar stays in flow, so it needs no fixed-header offset. */
+  .app-shell.admin-shell {
+    padding-top: 0;
   }
   .brand-box {
     width: auto;
@@ -4612,18 +4570,6 @@ progress::-moz-progress-bar {
   color: var(--muted);
 }
 
-[data-theme="dark"] .task-team-filter,
-.dark .task-team-filter {
-  color: var(--muted);
-}
-
-[data-theme="dark"] .task-team-filter select,
-.dark .task-team-filter select {
-  background: var(--bg-input);
-  border-color: var(--line);
-  color: var(--ink);
-}
-
 [data-theme="dark"] .unified-add-options,
 .dark .unified-add-options {
   background: var(--bg-surface);
@@ -4957,110 +4903,6 @@ progress::-moz-progress-bar {
 }
 
 /* Task Board Dark Overrides */
-[data-theme="dark"] .task-board,
-.dark .task-board {
-  scrollbar-color: #353b45 #131518;
-}
-
-[data-theme="dark"] .task-board-column,
-.dark .task-board-column {
-  background: var(--bg-subtle);
-  border-color: var(--line);
-}
-
-[data-theme="dark"] .task-board-column.is-drop-target,
-.dark .task-board-column.is-drop-target {
-  border-color: var(--green);
-  background: rgba(47, 185, 154, 0.14);
-  box-shadow: inset 0 0 0 1px var(--green);
-}
-
-[data-theme="dark"] .task-board-column-header h3,
-.dark .task-board-column-header h3 {
-  color: var(--ink);
-}
-
-[data-theme="dark"] .task-board-count,
-.dark .task-board-count {
-  background: var(--bg-surface);
-  color: var(--muted);
-}
-
-[data-theme="dark"] .task-board-cards,
-.dark .task-board-cards {
-  scrollbar-color: #353b45 transparent;
-}
-
-[data-theme="dark"] .task-board-card,
-.dark .task-board-card {
-  background: var(--bg-card);
-  border-color: var(--line);
-  color: var(--ink);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
-}
-
-[data-theme="dark"] .task-board-card:hover,
-.dark .task-board-card:hover {
-  border-color: var(--green);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
-}
-
-[data-theme="dark"] .task-board-card.is-done .task-board-open strong,
-.dark .task-board-card.is-done .task-board-open strong {
-  color: var(--muted);
-}
-
-[data-theme="dark"] .task-board-description,
-.dark .task-board-description {
-  color: var(--muted);
-}
-
-[data-theme="dark"] .task-board-category,
-.dark .task-board-category {
-  color: var(--muted);
-}
-
-[data-theme="dark"] .task-board-card-footer,
-.dark .task-board-card-footer {
-  color: var(--muted);
-}
-
-[data-theme="dark"] .task-board-priority.priority-low,
-.dark .task-board-priority.priority-low {
-  background: rgba(47, 185, 154, 0.18);
-  color: #5cdbb5;
-}
-
-[data-theme="dark"] .task-board-priority.priority-medium,
-.dark .task-board-priority.priority-medium {
-  background: rgba(114, 164, 217, 0.18);
-  color: #74a4d9;
-}
-
-[data-theme="dark"] .task-board-priority.priority-high,
-.dark .task-board-priority.priority-high {
-  background: rgba(224, 115, 103, 0.18);
-  color: #f28b80;
-}
-
-[data-theme="dark"] .task-board-kind.kind-task,
-.dark .task-board-kind.kind-task {
-  background: rgba(47, 185, 154, 0.18);
-  color: #5cdbb5;
-}
-
-[data-theme="dark"] .task-board-kind.kind-event,
-.dark .task-board-kind.kind-event {
-  background: rgba(114, 164, 217, 0.18);
-  color: #74a4d9;
-}
-
-[data-theme="dark"] .task-board-kind.kind-renewal,
-.dark .task-board-kind.kind-renewal {
-  background: rgba(224, 159, 103, 0.18);
-  color: #f0b27a;
-}
-
 [data-theme="dark"] .task-board-column.tone-orange,
 .dark .task-board-column.tone-orange { --column-color: #e09f67; }
 [data-theme="dark"] .task-board-column.tone-green,
@@ -5930,7 +5772,6 @@ progress::-moz-progress-bar {
   .admin-details-stat,
   .stat-card,
   .task-board-card,
-  .task-board-column,
   .pricing-card,
   .info-card,
   .theme-option-card,
@@ -5964,7 +5805,6 @@ progress::-moz-progress-bar {
   .admin-details-stat,
   .stat-card,
   .task-board-card,
-  .task-board-column,
   .pricing-card,
   .info-card,
   .theme-option-card,
@@ -5977,4 +5817,10 @@ progress::-moz-progress-bar {
   .dev-account-card
 ) {
   border: 1px solid var(--border-card, var(--line));
+}
+
+/* Narrow phones: the billing toggle and its savings tag share one line. */
+@media (max-width: 380px) {
+  .pricing-period button { padding: 10px 11px; }
+  .pricing-period span { margin-left: 3px; }
 }

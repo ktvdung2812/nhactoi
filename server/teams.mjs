@@ -77,7 +77,7 @@ function teamRow(db, workspaceId, teamId) {
 function memberIds(db, teamId) {
   return db
     .prepare(
-      "SELECT user_id FROM team_members WHERE team_id = ? ORDER BY rowid",
+      "SELECT user_id FROM team_members WHERE team_id = ? ORDER BY insertion_order",
     )
     .all(teamId)
     .map((row) => row.user_id);
@@ -458,7 +458,7 @@ export function registerTeamRoutes(
       const next = parseMembers(req.body.members);
       assertWorkspaceMembers(db, req.auth.workspaceId, next);
       const current = db
-        .prepare("SELECT user_id AS userId, role FROM team_members WHERE team_id = ?")
+        .prepare("SELECT user_id AS \"userId\", role FROM team_members WHERE team_id = ?")
         .all(req.params.id);
       if (!access.isWorkspaceAdmin)
         assertLeadCanChange(current, next, req.auth.userId);

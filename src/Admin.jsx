@@ -1032,7 +1032,7 @@ export default function Admin({ page, me, api, go }) {
                 onClose={() => setDialog(null)}
               />
             ) : (
-              <form onSubmit={submit}>
+              <form className="modal-form-grid" onSubmit={submit}>
                 <div className="admin-dialog-context">
                   <strong>
                     {dialog.item.name || dialog.item.workspaceName}

@@ -183,3 +183,12 @@
   border-color: rgba(224, 115, 103, 0.25);
   color: #f28b80;
 }
+
+/* Search keeps a readable width; filters wrap below it on narrow screens. */
+.services-page .services-filters > input { flex: 1 1 260px; min-width: min(260px, 100%); }
+.services-page .services-filters > select { flex: 0 1 auto; }
+@media (max-width: 600px) {
+  .services-filters { gap: 12px; }
+  .services-page .services-filters > input { flex-basis: 100%; }
+  .services-page .services-filters > select { flex: 1 1 140px; }
+}

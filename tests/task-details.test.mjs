@@ -1,13 +1,13 @@
 import {removeRoadmapSchema} from "./migration-helpers.mjs";
-import {SCHEMA_VERSION} from "../server/db.mjs";
+import {SCHEMA_VERSION} from './database-helpers.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createApp } from "../server/index.mjs";
-import { openDatabase } from "../server/db.mjs";
+import { createApp } from './database-helpers.mjs';
+import { openDatabase } from './database-helpers.mjs';
 
 const tempPaths = [];
 
@@ -77,7 +77,7 @@ async function register(server, email, name = "Người dùng") {
   });
 }
 
-test("task detail migration is present on fresh and upgraded databases", async () => {
+test("[SQLite legacy] task detail migration is present on fresh and upgraded databases", async () => {
   const dir = mkdtempSync(join(tmpdir(), "nhactoi-task-detail-migration-"));
   const path = join(dir, "task-detail.sqlite");
   let db;

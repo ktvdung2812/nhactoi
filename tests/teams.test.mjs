@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createApp } from "../server/index.mjs";
+import { createApp } from './database-helpers.mjs';
 
 async function boot() {
   let now = new Date("2026-09-21T12:00:00.000Z");

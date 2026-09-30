@@ -273,3 +273,100 @@ body :is(.button, .teams-button, .icon-button, .icon-btn, .action-menu-trigger,
 @media (max-width: 400px) {
   .app-shell .topbar .brand-box { display: none; }
 }
+
+/* Dialogs use the available desktop width; phone/tablet layouts stay local. */
+@media (min-width: 1024px) {
+  body :is(.modal, .teams-modal, .ticket-create, .workflow-board-modal,
+    .task-extras-modal, .trash-dialog) {
+    width: min(1040px, calc(100vw - 64px));
+    max-width: 100%;
+  }
+
+  body :is(.modal:has(.task-editor-fields), .services-modal, .customer-detail-modal) {
+    width: min(1240px, calc(100vw - 64px));
+  }
+
+  body :is(.modal-form-grid, .services-modal fieldset, .service-form-grid,
+    .teams-form, .task-extras-modal-body, .workflow-board-modal-body) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 24px;
+    align-items: start;
+  }
+
+  :is(.modal-form-grid, .services-modal fieldset, .service-form-grid,
+    .teams-form, .task-extras-modal-body, .workflow-board-modal-body) > * {
+    min-width: 0;
+    grid-column: 1 / -1;
+  }
+
+  :is(.modal-form-grid, .services-modal fieldset, .service-form-grid,
+    .teams-form, .task-extras-modal-body, .workflow-board-modal-body)
+    > :is(.field, label, .teams-field, .task-extras-field, .workflow-board-field) {
+    grid-column: auto;
+  }
+
+  .modal-form-grid > .form-grid { display: contents; }
+  :is(.modal-form-grid, .services-modal fieldset, .service-form-grid) > :is(.field, label):has(textarea) {
+    grid-column: 1 / -1;
+  }
+  .modal-form-grid > .modal-actions { margin-top: 8px; }
+
+  /* Keep task context beside its scheduling and assignment fields. */
+  .task-editor-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+    gap: 0 28px;
+    align-items: start;
+  }
+  .task-editor-fields > * { min-width: 0; }
+  .task-editor-fields > .hint { grid-column: 1 / -1; }
+  .task-editor-fields > .form-grid { column-gap: 20px; }
+
+  body :is(.services-form-grid, .renewal-detail) {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .service-modal > form, .services-modal > form { padding: 0; }
+  .services-modal .renewal-options {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+
+  /* Lists and read-only details follow the same two-column rhythm. */
+  body :is(.teams-roster-list, .services-modal .services-history, .calendar-event-detail,
+    .trash-detail-fields, .admin-detail dl, .audit-detail) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px 24px;
+    align-items: start;
+  }
+  :is(.teams-roster-list, .services-modal .services-history, .calendar-event-detail,
+    .trash-detail-fields, .admin-detail dl, .audit-detail) > * { min-width: 0; }
+  .calendar-event-detail > .service-card-description { grid-column: 1 / -1; }
+  .trash-detail-fields > div { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .admin-detail dl > div { flex-direction: column; gap: 6px; }
+  .admin-detail dd { text-align: left; }
+  .audit-detail > * { grid-column: 1 / -1; }
+  .audit-detail > :is(.audit-meta-grid, .audit-reason-box) { grid-column: auto; margin: 0; }
+
+  /* Place the support message alongside the ticket's short fields. */
+  .ticket-create form {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 24px;
+    align-items: start;
+  }
+  .ticket-create form > * { min-width: 0; grid-column: 1 / -1; }
+  .ticket-create form > .field:first-child,
+  .ticket-create .ticket-form-row { grid-column: 1; }
+  .ticket-create form > .field:has(textarea) { grid-column: 2; grid-row: 1 / 3; }
+  .ticket-create form > footer { margin-top: 16px; }
+
+  .task-detail-modal .td-layout { grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr); }
+  .task-detail-modal .td-discussion { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (min-width: 1280px) {
+  .task-editor-fields > .form-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}

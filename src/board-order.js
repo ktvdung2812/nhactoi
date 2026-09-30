@@ -18,6 +18,23 @@ export function reorderIsNoop(cards, draggedId, beforeId) {
   return String(nextId ?? "") === String(beforeId ?? "");
 }
 
+export function taskDropTarget(columns, draggedId, clientX, clientY) {
+  const column = columns.find(column => clientX >= column.left && clientX <= column.left + column.width);
+  if (!column) return null;
+  return {
+    columnId: column.id,
+    beforeTaskId: reorderBeforeId(column.cards, draggedId, clientY) ?? column.firstHiddenId ?? null,
+  };
+}
+
+export function columnDropTarget(columns, draggedId, clientX) {
+  const targets = columns.filter(column => String(column.id) !== String(draggedId));
+  const before = targets.find(column => clientX < column.left + column.width / 2);
+  if (before) return { id: before.id, before: true };
+  const last = targets.at(-1);
+  return last ? { id: last.id, before: false } : null;
+}
+
 export function moveColumnId(order, draggedId, targetId, before) {
   const rows = Array.isArray(order) ? order.map(String) : [];
   const from = rows.indexOf(String(draggedId));

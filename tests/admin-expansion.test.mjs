@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createApp } from "../server/index.mjs";
+import { createApp } from './database-helpers.mjs';
 import { createId, hashPassword, hashToken } from "../server/auth.mjs";
 
 async function boot({ env = {} } = {}) {

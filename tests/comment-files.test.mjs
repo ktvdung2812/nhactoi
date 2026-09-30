@@ -1,12 +1,12 @@
-import {SCHEMA_VERSION} from "../server/db.mjs";
+import {SCHEMA_VERSION} from './database-helpers.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createApp } from "../server/index.mjs";
-import { openDatabase } from "../server/db.mjs";
+import { createApp } from './database-helpers.mjs';
+import { openDatabase } from './database-helpers.mjs';
 
 async function start(dbPath) {
   const app = createApp({
@@ -213,7 +213,7 @@ test("file comment ownership and invalid IDs roll back without stealing files", 
   assert.equal(db.prepare("SELECT comment_id FROM task_attachments WHERE id = ?").get(ownerFile.id).comment_id, null);
 });
 
-test("migration 10 adds comment links to a legacy v9 attachment without losing it", () => {
+test("[SQLite legacy] migration 10 adds comment links to a legacy v9 attachment without losing it", () => {
   const dir = mkdtempSync(join(tmpdir(), "nhactoi-comment-files-migration-"));
   const dbPath = join(dir, "legacy.sqlite");
   let db = openDatabase(dbPath);

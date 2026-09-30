@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { addMember, boot, call, task, user } from './roadmap-helpers.mjs';
 import { DEFAULT_REMINDER_POLICY } from '../server/reminder-workflow.mjs';
-import { migrateDatabase } from '../server/db.mjs';
+import { migrateDatabase } from './database-helpers.mjs';
 
 test('undated tasks survive create, update, copy, template and board transfer without phantom reminders', async t => {
   const s = await boot(t), owner = await user(s, 'inbox@test.local');
@@ -73,7 +73,7 @@ function previousSchema(db) {
   db.exec('DROP TABLE personal_task_plans; DELETE FROM schema_migrations WHERE version>=29; COMMIT; PRAGMA legacy_alter_table=OFF; PRAGMA foreign_keys=ON;');
 }
 
-test('migration 29 preserves dependent records and triggers and reopens idempotently', async t => {
+test("[SQLite legacy] migration 29 preserves dependent records and triggers and reopens idempotently", async t => {
   const s = await boot(t), owner = await user(s, 'migration-plan@test.local'), card = await task(s, owner);
   const cookie = owner.cookie;
   assert.equal((await call(s, `/tasks/${card.id}/comments`, { cookie, method: 'POST', body: { body: 'Giữ bình luận' } })).status, 201);
@@ -94,7 +94,7 @@ test('migration 29 preserves dependent records and triggers and reopens idempote
   assert.equal((await call(s, `/tasks/${card.id}/comments`, { cookie, method: 'POST', body: { body: 'Vẫn ghi được' } })).status, 201);
 });
 
-test('failed migration rolls back the parent rebuild and restores foreign key enforcement', async t => {
+test("[SQLite legacy] failed migration rolls back the parent rebuild and restores foreign key enforcement", async t => {
   const s = await boot(t), owner = await user(s, 'rollback-plan@test.local'), card = await task(s, owner);
   previousSchema(s.db);
   s.db.exec('PRAGMA foreign_keys=OFF;');

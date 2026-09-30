@@ -1,25 +1,6 @@
 import { getTeamAccess } from './teams.mjs';
 import { APPEARANCE_DEFAULTS, validateAppearance, validateAppearancePolicy } from '../shared/appearance.mjs';
 
-export const APPEARANCE_SCHEMA = `
-  CREATE TABLE IF NOT EXISTS team_appearance (
-    team_id TEXT PRIMARY KEY REFERENCES teams(id) ON DELETE CASCADE,
-    preferences TEXT NOT NULL,
-    editable_fields TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS user_appearance (
-    workspace_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    scope TEXT NOT NULL DEFAULT '',
-    team_id TEXT REFERENCES teams(id) ON DELETE CASCADE,
-    preferences TEXT NOT NULL,
-    PRIMARY KEY (workspace_id, user_id, scope),
-    FOREIGN KEY (workspace_id, user_id) REFERENCES workspace_members(workspace_id, user_id) ON DELETE CASCADE,
-    CHECK (scope = COALESCE(team_id, ''))
-  );
-  CREATE INDEX IF NOT EXISTS user_appearance_team_idx ON user_appearance(team_id);
-`;
-
 export function registerAppearanceRoutes(app, { db, requireAuth, HttpError }) {
   function teamPolicy(workspaceId, userId, teamId) {
     const access = getTeamAccess(db, workspaceId, userId, teamId);

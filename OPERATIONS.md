@@ -2,28 +2,30 @@
 
 ## Máy chủ Next.js
 
-Chạy `npm run build` rồi `npm start` trên Node 24 trở lên. Giao diện và API cùng tiến trình/cổng; không chạy Vite hay `server/index.mjs` bên cạnh Next. `PORT` trong `.env` chọn cổng (mặc định 3000). Reverse proxy HTTPS phải chuyển cả trang, `/_next/*` và `/api/*` tới cùng cổng. Với EnvKit, chọn framework Next.js, bật Dev server với script `dev`, cổng 5170; tắt tiến trình API cũ. `envkit.json` không khai báo worker riêng.
+Thiết lập `DATABASE_URL` theo [PostgreSQL](docs/POSTGRESQL.md). Chạy `npm run build` rồi `npm start` trên Node 24 trở lên. Giao diện và API cùng tiến trình/cổng; không chạy Vite hay `server/index.mjs` bên cạnh Next. `PORT` trong `.env` chọn cổng (mặc định 3000). Reverse proxy HTTPS phải chuyển cả trang, `/_next/*` và `/api/*` tới cùng cổng. Với EnvKit, chọn framework Next.js, bật Dev server với script `dev`, cổng 5170; tắt tiến trình API cũ. `envkit.json` không khai báo worker riêng.
 
-Chỉ vận hành một tiến trình dùng cùng database: instrumentation khởi động worker cho lịch nhắc, thông báo mobile, sao lưu và dọn tệp. Không dùng cluster nhiều worker hoặc triển khai serverless cho cấu hình SQLite/tệp hiện tại. Build không mở database; mỗi lần khởi động server chạy migration hiện có. Sao lưu trước khi cập nhật và giữ nguyên thư mục dữ liệu cùng khóa mã hóa.
+Chỉ vận hành một tiến trình dùng cùng database: instrumentation khởi động worker cho lịch nhắc, thông báo mobile, sao lưu và dọn tệp. Không dùng cluster nhiều worker hoặc triển khai serverless cho cấu hình worker/tệp hiện tại. Build không mở database; mỗi lần khởi động server chạy migration hiện có. Sao lưu trước khi cập nhật và giữ nguyên thư mục dữ liệu cùng khóa mã hóa.
 
-Giới hạn đăng ký và khôi phục mật khẩu được lưu trong SQLite. Ứng dụng chỉ tin header IP chuyển tiếp từ proxy kết nối qua loopback (`127.0.0.1` / `::1`); reverse proxy cần đặt `X-Forwarded-For` theo địa chỉ client thực để mỗi người dùng có giới hạn riêng. SMTP phải được bật để gửi mã khôi phục. Lỗi gửi email được ghi dưới dạng thông báo chung, không ghi email hoặc mã vào log.
+`npm run db:migrate` và migration lúc khởi động tự tạo admin SaaS nếu chưa có admin hoạt động. Cấu hình `BOOTSTRAP_ADMIN_*` hoặc lấy mật khẩu sinh tự động từ tệp `bootstrap-admin-user_*.json` trong thư mục dữ liệu (đường dẫn trong log). Admin đã có được giữ nguyên. Khi chuyển SQLite, chạy import trước lần khởi động đầu; công cụ chỉ kiểm tra/tạo admin sau khi nhập. Xem [PostgreSQL](docs/POSTGRESQL.md#admin-saas-ban-đầu).
+
+Giới hạn đăng ký và khôi phục mật khẩu được lưu trong PostgreSQL. Ứng dụng chỉ tin header IP chuyển tiếp từ proxy kết nối qua loopback (`127.0.0.1` / `::1`); reverse proxy cần đặt `X-Forwarded-For` theo địa chỉ client thực để mỗi người dùng có giới hạn riêng. SMTP phải được bật để gửi mã khôi phục. Lỗi gửi email được ghi dưới dạng thông báo chung, không ghi email hoặc mã vào log.
 
 Khi phát triển, thay đổi module backend cần khởi động lại Next để nạp lại runtime singleton. Sau cập nhật, chạy `npm test`, `npm run build`, `npm run test:next` trước khi khởi động bản production.
 
 ## Sao lưu và khôi phục
 
-Admin SaaS → Cấu hình → Sao lưu hệ thống cho phép tạo bản sao ngay và đặt lịch 6/12/24 giờ hoặc hằng tuần. Lịch chạy khi dịch vụ Node đang hoạt động. Bản sao gồm SQLite bằng `VACUUM INTO`, các tệp đính kèm trên máy chủ và kho ngoài và SHA-256 kiểm tra toàn vẹn. Bản sao đang chạy dùng thư mục `.pending`; nếu lỗi, dữ liệu tạm được dọn và không được liệt kê là bản sao hoàn chỉnh. Chưa tự xóa bản sao cũ; cần theo dõi dung lượng đĩa.
+Admin SaaS → Cấu hình → Sao lưu hệ thống cho phép tạo bản sao ngay và đặt lịch 6/12/24 giờ hoặc hằng tuần. Lịch chạy khi dịch vụ Node đang hoạt động. Bản sao manifest v2 gồm dữ liệu PostgreSQL dạng JSON từ transaction `REPEATABLE READ`, các tệp đính kèm trên máy chủ và kho ngoài và SHA-256 kiểm tra toàn vẹn. Bản sao đang chạy dùng thư mục `.pending`; nếu lỗi, dữ liệu tạm được dọn và không được liệt kê là bản sao hoàn chỉnh. Chưa tự xóa bản sao cũ; cần theo dõi dung lượng đĩa.
 
 Giữ riêng khóa mã hóa cấu hình của máy chủ. Tệp S3/Drive cũng được tải vào bản sao. Nếu kho không truy cập được, bản sao bị đánh dấu chưa hoàn tất. Khi khôi phục, mọi tệp được chép vào thư mục riêng mới trên máy chủ.
 
 Khôi phục được thực hiện ngoại tuyến để tránh ghi đè dữ liệu đang sử dụng:
 
-1. Dừng dịch vụ Nhắc tôi trong EnvKit, đảm bảo không còn tiến trình dùng DB. Công cụ từ chối nếu còn WAL/SHM; không tự xóa các tệp này.
-2. Chạy `node scripts/restore-backup.mjs /duong-dan/nhactoi.sqlite backup-ID --offline-confirm-restore`.
-3. Công cụ xác minh DB/tệp, chép tệp vào kho riêng mới, giữ DB trước khôi phục, vô hiệu các phiên cũ và lịch sao lưu, rồi thay DB.
+1. Dừng dịch vụ Nhắc tôi trong EnvKit, đảm bảo không còn tiến trình ứng dụng/worker ghi DB. Giữ PostgreSQL hoạt động.
+2. Đặt `DATABASE_URL`, `NHACTOI_DATA_DIR` đúng môi trường rồi chạy `npm run db:restore -- backup-ID --offline-confirm-restore`.
+3. Công cụ xác minh DB/tệp, lưu snapshot database hiện tại vào `restore-backups/` và giữ nguyên các tệp cũ, chép tệp vào kho riêng mới rồi thay dữ liệu trong một transaction. Lỗi nhập sẽ rollback; thành công sẽ vô hiệu phiên cũ và lịch sao lưu.
 4. Khởi động lại trong EnvKit, đăng nhập và kiểm tra dữ liệu. Đặt lại lịch sao lưu phù hợp.
 
-Không khôi phục bản sao từ nguồn không tin cậy. Công cụ chỉ dùng bản sao trong thư mục `snapshots` cạnh DB, có manifest hợp lệ.
+Không khôi phục bản sao từ nguồn không tin cậy. Công cụ chỉ dùng bản sao trong thư mục `NHACTOI_DATA_DIR/snapshots`, có manifest hợp lệ.
 
 ## Google
 

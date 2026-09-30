@@ -32,8 +32,8 @@ function audit(db, { action, targetId, reason, before, after, createdAt }) {
 /**
  * Grant or revoke platform-admin access for a user identified by email.
  *
- * The CLI is intentionally the only place that can change platform-admin
- * membership. Every change is transactional and leaves an audit row with a
+ * Apart from initial migration bootstrap, the CLI is the only place that
+ * changes platform-admin membership. Every change leaves an audit row with a
  * NULL actor because the actor is the server operator rather than a session.
  */
 export function runAdminCommand({
@@ -119,13 +119,9 @@ if (
     console.error(usage());
     process.exitCode = 1;
   } else {
-    const dbPath =
-      process.env.DB_PATH ||
-      process.env.DATABASE_PATH ||
-      resolve(process.cwd(), "data", "nhactoi.sqlite");
     let db;
     try {
-      db = openDatabase(dbPath);
+      db = openDatabase(undefined, { bootstrapAdmin: false });
       const result = runAdminCommand({
         db,
         command,
