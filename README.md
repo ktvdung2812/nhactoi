@@ -48,7 +48,7 @@ npm run test:next
 npm start
 ```
 
-`npm start` phục vụ bản build Next.js và API trên cùng cổng (`PORT`, mặc định 3000). Production cần HTTPS reverse proxy; đặt `PUBLIC_APP_URL` và `FRONTEND_ORIGIN` theo tên miền thật. Cookie production có cờ Secure nên không dùng HTTP trực tiếp để đăng nhập production.
+`npm start` và `npm run dev` kiểm tra PostgreSQL rồi áp dụng migration trước khi mở Next. `npm start` phục vụ bản build Next.js và API trên cùng cổng (`PORT`, mặc định 3000). Production cần HTTPS reverse proxy; đặt `PUBLIC_APP_URL` và `FRONTEND_ORIGIN` theo tên miền thật. Cookie production có cờ Secure nên không dùng HTTP trực tiếp để đăng nhập production.
 
 Quy trình Git Manager, webhook và vận hành `nhactoi.ktvdung.io.vn`: [Triển khai trên aaPanel](docs/DEPLOYMENT.md).
 

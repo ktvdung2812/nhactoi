@@ -6,7 +6,7 @@ Thiết lập `DATABASE_URL` theo [PostgreSQL](docs/POSTGRESQL.md). Chạy `npm 
 
 Chỉ vận hành một tiến trình dùng cùng database: instrumentation khởi động worker cho lịch nhắc, thông báo mobile, sao lưu và dọn tệp. Không dùng cluster nhiều worker hoặc triển khai serverless cho cấu hình worker/tệp hiện tại. Build không mở database; mỗi lần khởi động server chạy migration hiện có. Sao lưu trước khi cập nhật và giữ nguyên thư mục dữ liệu cùng khóa mã hóa.
 
-`npm run db:migrate` và migration lúc khởi động tự tạo admin SaaS nếu chưa có admin hoạt động. Cấu hình `BOOTSTRAP_ADMIN_*` hoặc lấy mật khẩu sinh tự động từ tệp `bootstrap-admin-user_*.json` trong thư mục dữ liệu (đường dẫn trong log). Admin đã có được giữ nguyên. Khi chuyển SQLite, chạy import trước lần khởi động đầu; công cụ chỉ kiểm tra/tạo admin sau khi nhập. Xem [PostgreSQL](docs/POSTGRESQL.md#admin-saas-ban-đầu).
+`npm start` và `npm run dev` chạy `db:migrate` trước khi mở Next. Lệnh này và migration lúc khởi động tự tạo admin SaaS nếu chưa có admin hoạt động. Cấu hình `BOOTSTRAP_ADMIN_*` hoặc lấy mật khẩu sinh tự động từ tệp `bootstrap-admin-user_*.json` trong thư mục dữ liệu (đường dẫn trong log). Admin đã có được giữ nguyên. Khi chuyển SQLite, chạy import trước lần khởi động đầu; công cụ chỉ kiểm tra/tạo admin sau khi nhập. Xem [PostgreSQL](docs/POSTGRESQL.md#admin-saas-ban-đầu).
 
 Giới hạn đăng ký và khôi phục mật khẩu được lưu trong PostgreSQL. Ứng dụng chỉ tin header IP chuyển tiếp từ proxy kết nối qua loopback (`127.0.0.1` / `::1`); reverse proxy cần đặt `X-Forwarded-For` theo địa chỉ client thực để mỗi người dùng có giới hạn riêng. SMTP phải được bật để gửi mã khôi phục. Lỗi gửi email được ghi dưới dạng thông báo chung, không ghi email hoặc mã vào log.
 
