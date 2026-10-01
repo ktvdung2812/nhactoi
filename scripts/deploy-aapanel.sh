@@ -109,9 +109,13 @@ log 'installing production dependencies as www'
 if ! run_npm_as_www ci --omit=dev; then
   die 'npm ci failed; active release was left unchanged'
 fi
-log 'building the production release as www'
-if ! run_npm_as_www run build:server; then
-  die 'production build failed; active release was left unchanged'
+if [[ -s "$RELEASE/.next/BUILD_ID" && -d "$RELEASE/.next/server" && -d "$RELEASE/.next/static" ]]; then
+  log "using prebuilt Next.js output $(tr -d '[:space:]' < "$RELEASE/.next/BUILD_ID")"
+else
+  log 'building the production release as www'
+  if ! run_npm_as_www run build:server; then
+    die 'production build failed; active release was left unchanged'
+  fi
 fi
 
 atomic_link() {

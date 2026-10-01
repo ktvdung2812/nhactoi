@@ -62,7 +62,9 @@ Git Manager dùng script `NhacToi_production`. Webhook của GitHub gửi sự k
 `push`, bật xác minh SSL. Giữ URL webhook trong cấu hình GitHub/aaPanel, không
 đưa URL chứa access key vào Git hoặc tài liệu chia sẻ.
 
-Nội dung script trong aaPanel đồng bộ `main` trước khi chạy bản deploy đã commit:
+Nội dung script trong aaPanel đồng bộ nhánh `deploy` trước khi chạy bản deploy đã commit.
+Nhánh đó chứa source và thư mục `.next` đã build trên máy phát triển. Script thấy
+`BUILD_ID` thì bỏ qua `build:server`, chỉ `npm ci --omit=dev` rồi khởi động.
 
 ```sh
 #!/bin/bash
@@ -72,23 +74,24 @@ flock -x 8
 cd /www/wwwroot/nhactoi.ktvdung.io.vn/nhactoi
 export GIT_SSH_COMMAND='ssh -i /root/.ssh/aapanel/163061073068_95627 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes'
 source_git() { git -c safe.directory=/www/wwwroot/nhactoi.ktvdung.io.vn/nhactoi "$@"; }
-source_git fetch origin main
-source_git checkout main
-source_git merge --ff-only origin/main
+source_git fetch origin deploy
+source_git checkout deploy
+source_git merge --ff-only origin/deploy
 bash scripts/deploy-aapanel.sh 8>&-
 ```
 
 Đường dẫn SSH key ở trên là key hiện được chọn trong Git Manager; cập nhật
-đồng bộ nếu đổi key. Wrapper này luôn triển khai `main`; khôi phục code cũ bằng
-commit revert trên `main` hoặc symlink `previous`, không dùng nút Run để chọn
-một commit lịch sử. Plugin webhook hiện giới hạn mỗi lần chạy ở 600 giây.
+đồng bộ nếu đổi key. Wrapper này luôn triển khai nhánh `deploy`. `main` là nơi
+phát triển. Bản plug-and-play được build bằng `npm run build` rồi commit `.next`
+lên `deploy`. Khôi phục code cũ bằng commit trên `deploy` hoặc symlink
+`previous`, không dùng nút Run để chọn một commit lịch sử. Plugin webhook hiện
+giới hạn mỗi lần chạy ở 600 giây; bỏ bước build trên VPS để nằm trong giới hạn đó.
 
 Script không `git pull`. Nó khóa deploy bằng `flock`, archive đúng `HEAD` vào
-`shared/releases`, liên kết `.env`, chạy `npm ci --omit=dev` và
-`npm run build:server` dưới user `www`, rồi mới đổi symlink `current` atomically.
-Script build này dùng webpack, một CPU worker và heap Node 512 MiB để phù hợp
-VPS ít RAM; `npm run build` cũng dùng webpack, development giữ bundler Next mặc định.
-Build hỏng giữ nguyên release đang chạy. Sau khi đổi symlink, script gọi
+`shared/releases`, liên kết `.env`, chạy `npm ci --omit=dev` dưới user `www`.
+Nếu archive đã có `.next/BUILD_ID`, script không build lại. Archive thiếu bản
+build thì mới chạy `npm run build:server`. Sau đó script đổi symlink `current`
+atomically. Build hỏng giữ nguyên release đang chạy. Sau khi đổi symlink, script gọi
 `restart_project(get)` của aaPanel và thử lần lượt `/` và
 `/api/auth/google/config` tại `127.0.0.1:3100`. Nếu khởi động hoặc probe hỏng,
 script trả `current` về release cũ và restart lại. Lỗi rollback cần xem log
