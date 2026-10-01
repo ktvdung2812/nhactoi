@@ -17,7 +17,11 @@ Máy chủ dùng Node **24.14.1** và ít nhất Node 24.
 - Node: `/www/server/nodejs/v24.14.1/bin`
 
 Project aaPanel tên `nhactoi`, user chạy là `www`, port nội bộ `3100`, một
-instance. Lệnh chạy của project là:
+instance. Trong mục khởi động của project Node, chọn script npm `start`.
+aaPanel đặt `node_modules/.bin` lên đầu `PATH`; giá trị `next` thành
+`nohup next` và thất bại với `Permission denied` vì shim đó không thực thi
+được trên `/www`. Script deploy ghi lại `project_script=start` và port `3100`
+trước mỗi lần restart. Lệnh tương đương:
 
 ```sh
 npm --prefix /www/wwwroot/nhactoi.ktvdung.io.vn/current start

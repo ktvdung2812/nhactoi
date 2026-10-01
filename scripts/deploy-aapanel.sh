@@ -127,6 +127,43 @@ atomic_link() {
   mv -Tf "$tmp" "$link"
 }
 
+configure_panel_start() {
+  # aaPanel puts node_modules/.bin first on PATH. A startup value of "next"
+  # becomes `nohup next`, which execs the shim and fails with EACCES when /www
+  # is noexec. "start" is an npm script, so the panel runs npm instead.
+  "$PANEL_PYTHON" - "$PROJECT_NAME" "$CURRENT_LINK" "$PORT" "$PANEL_DIR" "$NODE_MODEL" 9>&- <<'PY'
+import json
+import os
+import sys
+from contextlib import nullcontext
+
+project_name, project_path, port, panel_dir, model_path = sys.argv[1:]
+if not os.path.isfile(model_path):
+    raise SystemExit("aaPanel Node model is missing")
+os.chdir(panel_dir)
+sys.path[:0] = ["class", "class_v2"]
+from BTPanel import app  # noqa: E402
+import public  # noqa: E402
+from projectModelV2.nodejsModel import main  # noqa: E402
+
+context = app.test_request_context("/") if hasattr(app, "test_request_context") else nullcontext()
+with context:
+    project = main().get_project_find(project_name)
+if not project:
+    raise SystemExit("aaPanel Node project is missing")
+config = project["project_config"]
+previous = config.get("project_script")
+config["project_script"] = "start"
+config["port"] = int(port)
+config["project_cwd"] = project_path
+public.M("sites").where("name=?", (project_name,)).update({
+    "path": project_path,
+    "project_config": json.dumps(config),
+})
+print("aaPanel startup script: %s -> start, port %s" % (previous, port))
+PY
+}
+
 panel_action() {
   local action=$1
   "$PANEL_PYTHON" - "$PROJECT_NAME" "$action" "$PANEL_DIR" "$NODE_MODEL" 9>&- <<'PY'
@@ -205,6 +242,11 @@ rollback() {
 
 log 'switching current to the built release'
 atomic_link "$RELEASE" "$CURRENT_LINK"
+log 'pointing aaPanel at npm start'
+if ! configure_panel_start; then
+  rollback || true
+  die 'could not set the aaPanel startup script to start; previous release restored when possible'
+fi
 if start_or_restart && wait_health; then
   if [[ -n "$old_target" ]]; then
     atomic_link "$old_target" "$PREVIOUS_LINK"
