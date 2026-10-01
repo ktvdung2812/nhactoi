@@ -174,3 +174,7 @@ Cần HTTPS ngoài localhost, một worker Node đang chạy và outbound HTTPS 
 Kiểm tra thủ công sau triển khai: đăng nhập → Tài khoản → Bật thông báo → tạo lời nhắc cho mình → đóng tab → kiểm tra nhận và mở đúng nội dung/workspace. Kiểm tra cài PWA trên thiết bị mục tiêu; iOS/iPadOS cần trình duyệt/OS hỗ trợ và thêm vào Màn hình chính trước. Push phụ thuộc chính sách nền của hệ điều hành, không cam kết hoạt động khi trình duyệt bị force-stop. Đăng xuất/reset mật khẩu thu hồi đăng ký máy chủ; sau đăng nhập lại cần bật lại. Nếu xoay VAPID, người dùng phải bật lại; giữ key cũ trong secret backup cho đến khi hoàn tất chuyển đổi.
 
 Rollback mã nguồn nên giữ nguyên các bảng migration 31 (additive), không hạ schema/xóa dữ liệu đang chạy. Dừng worker mới trước khi rollback; service worker không cache dữ liệu nghiệp vụ và mọi thông báo còn trong hàng đợi chỉ chứa nội dung chung.
+
+## GitHub Actions
+
+Mỗi push lên `main` chạy workflow **Publish deploy**. Workflow cài dependency, chạy `npm run build`, rồi cập nhật nhánh `deploy` với thư mục `.next` đã build. aaPanel lắng nghe push của nhánh `deploy`; script deploy bỏ qua `build:server` khi archive có `.next/BUILD_ID`.

@@ -1,0 +1,63 @@
+name: Publish deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-deploy
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Update the deploy branch
+        run: |
+          set -euo pipefail
+          test -s .next/BUILD_ID
+          test -d .next/server
+          test -d .next/static
+          rm -rf .next/cache .next/dev .next/trace .next/trace-build .next/diagnostics .next/types
+          copy="$(mktemp -d)"
+          cp -a .next/. "$copy/"
+          main_sha="$(git rev-parse HEAD)"
+          rm -rf .next
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin deploy
+          git checkout -B deploy origin/deploy
+          git merge "$main_sha" --no-edit
+          git rm -r --cached --quiet .next
+          rm -rf .next
+          mkdir -p .next
+          cp -a "$copy/." .next/
+          git add -f .next
+          if git diff --cached --quiet; then
+            echo "Deploy branch already contains this build."
+            exit 0
+          fi
+          git commit -m "feat: publish prebuilt Next.js output" -m "Built from ${main_sha}."
+          git push origin HEAD:deploy
