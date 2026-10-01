@@ -50,6 +50,15 @@ jobs:
           git fetch origin deploy
           git checkout -B deploy origin/deploy
           git merge "$main_sha" --no-edit
+          node --input-type=commonjs <<'JS'
+          const { readFileSync, writeFileSync } = require("node:fs");
+          const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+          pkg.scripts = {
+            start: "node --env-file-if-exists=.env node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 3100",
+          };
+          writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+          JS
+          git add package.json
           git rm -r --cached --quiet .next
           rm -rf .next
           mkdir -p .next
