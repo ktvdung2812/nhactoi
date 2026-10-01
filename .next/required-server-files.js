@@ -105,7 +105,7 @@ self.__SERVER_FILES_MANIFEST={
         "transform": "lodash/{{member}}"
       }
     },
-    "outputFileTracingRoot": "/private/tmp/nhactoi-deploy-wt",
+    "outputFileTracingRoot": "/home/runner/work/nhactoi/nhactoi",
     "allowedDevOrigins": [
       "nhactoi.test"
     ],
@@ -178,7 +178,7 @@ self.__SERVER_FILES_MANIFEST={
       "proxyPrefetch": "flexible",
       "optimisticClientCache": true,
       "manualClientBasePath": false,
-      "cpus": 9,
+      "cpus": 1,
       "memoryBasedWorkersCount": false,
       "imgOptConcurrency": null,
       "imgOptOperationCache": null,
@@ -348,14 +348,14 @@ self.__SERVER_FILES_MANIFEST={
         "./*.tar.gz"
       ]
     },
-    "repoRoot": "/private/tmp/nhactoi-deploy-wt",
+    "repoRoot": "/home/runner/work/nhactoi/nhactoi",
     "turbopack": {
-      "root": "/private/tmp/nhactoi-deploy-wt"
+      "root": "/home/runner/work/nhactoi/nhactoi"
     },
     "distDirRoot": ".next",
     "supportsImmutableAssets": false
   },
-  "appDir": "/private/tmp/nhactoi-deploy-wt",
+  "appDir": "/home/runner/work/nhactoi/nhactoi",
   "relativeAppDir": "",
   "files": [
     ".next/package.json",
