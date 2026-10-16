@@ -49,6 +49,21 @@ test("plan catalog validates and persists admin changes, enforces seats and keep
   const publicData = await call(s, "/billing", { cookie: customer.cookie });
   assert.equal(publicData.body.plans.some((p) => p.id === "enterprise"), false);
   assert.equal(publicData.body.subscription.plan, "enterprise");
+  assert.equal(publicData.body.subscription.planName, "Enterprise Plus");
+  assert.equal(publicData.body.subscription.status, "active");
+  const session = await call(s, "/me", { cookie: customer.cookie });
+  assert.deepEqual(session.body.subscription, publicData.body.subscription);
+  const mobileLogin = await call(s, "/mobile/auth/login", { method: "POST", body: {
+    email: "customer-plans@example.test", password: "Password123!", workspaceId: customer.workspace.id,
+  } });
+  assert.equal(mobileLogin.status, 200);
+  assert.deepEqual(mobileLogin.body.subscription, publicData.body.subscription);
+  const mobileResponse = await fetch(s.base + "/api/mobile/workspaces/switch", {
+    method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${mobileLogin.body.token}` },
+    body: JSON.stringify({ workspaceId: customer.workspace.id }),
+  });
+  assert.equal(mobileResponse.status, 200);
+  assert.deepEqual((await mobileResponse.json()).subscription, publicData.body.subscription);
   const legacy = await call(s, "/admin/settings", { cookie: admin.cookie });
   assert.equal((await write("/admin/settings", { plans: legacy.body.plans.filter((p) => p.id !== "enterprise"), reason: "Thử xóa gói" })).status, 400);
   assert.equal((await write("/admin/settings", { plans: legacy.body.plans, reason: "Giữ cấu hình cũ" })).status, 200);

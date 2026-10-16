@@ -5,6 +5,7 @@ import {
   clearTemporaryFiles,
   openAttachment,
   uploadFile,
+  pickTextFile,
 } from "../src/core/files";
 import type { Attachment } from "../src/core/types";
 
@@ -18,6 +19,8 @@ jest.mock("expo-file-system/legacy", () => ({
   makeDirectoryAsync: jest.fn(),
   createDownloadResumable: jest.fn(),
   createUploadTask: jest.fn(),
+  readAsStringAsync: jest.fn(),
+  EncodingType: { UTF8: 'utf8' },
 }));
 jest.mock("expo-sharing", () => ({
   shareAsync: jest.fn(),
@@ -103,8 +106,29 @@ beforeEach(async () => {
   shareAsync.mockReset();
   shareAsync.mockResolvedValue(undefined);
   getDocumentAsync.mockReset();
+  (FileSystem.readAsStringAsync as jest.Mock).mockReset();
   await clearTemporaryFiles();
   jest.clearAllMocks();
+});
+
+test('import text picker deletes cache after reading without retaining a second file copy', async () => {
+  getDocumentAsync.mockResolvedValue({canceled:false,assets:[{uri:'file:///cache/DocumentPicker/import.csv',name:'import.csv',size:16}]});
+  (FileSystem.readAsStringAsync as jest.Mock).mockResolvedValue('title\nPrivate');
+  await expect(pickTextFile(64)).resolves.toEqual({name:'import.csv',content:'title\nPrivate'});
+  expect(deleteAsync).toHaveBeenCalledWith('file:///cache/DocumentPicker/import.csv',{idempotent:true});
+});
+
+test('import text read finishing after session change is discarded and cleaned', async () => {
+  const read=deferred<string>();
+  getDocumentAsync.mockResolvedValue({canceled:false,assets:[{uri:'file:///cache/DocumentPicker/import.csv',name:'import.csv',size:16}]});
+  (FileSystem.readAsStringAsync as jest.Mock).mockReturnValue(read.promise);
+  const pending=pickTextFile(64);await waitForCall(FileSystem.readAsStringAsync as jest.Mock);await clearTemporaryFiles();read.resolve('title\nPrivate');
+  await expect(pending).rejects.toMatchObject({status:499});expect(deleteAsync).toHaveBeenCalledWith('file:///cache/DocumentPicker/import.csv',{idempotent:true});
+});
+
+test('oversized import deletes picker cache before returning validation error', async () => {
+  getDocumentAsync.mockResolvedValue({canceled:false,assets:[{uri:'file:///cache/DocumentPicker/large.csv',name:'large.csv',size:65}]});
+  await expect(pickTextFile(64)).rejects.toThrow('tối đa');expect(FileSystem.readAsStringAsync).not.toHaveBeenCalled();expect(deleteAsync).toHaveBeenCalledWith('file:///cache/DocumentPicker/large.csv',{idempotent:true});
 });
 
 test("restart cleanup removes both temporary cache directories", async () => {

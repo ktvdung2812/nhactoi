@@ -13,3 +13,11 @@
 .reminder-actions, .reminder-times { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-block: 14px; }
 .reminder-panel details { margin-block: 12px; }
 .reminder-step:disabled, .reminder-fields:disabled { opacity: .7; }
+/* Collapsible sections read as cards with a chevron instead of the raw disclosure marker. */
+.reminder-panel details { padding: 0 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-surface); }
+.reminder-panel details[open] { padding-bottom: 12px; }
+.reminder-panel summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; list-style: none; }
+.reminder-panel summary::-webkit-details-marker { display: none; }
+.reminder-panel summary::after { content: ""; flex: 0 0 auto; width: 7px; height: 7px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg) translateY(-2px); transition: transform .15s; }
+.reminder-panel details[open] > summary::after { transform: rotate(-135deg) translateY(-2px); }
+.reminder-panel > ul { padding-left: 20px; }

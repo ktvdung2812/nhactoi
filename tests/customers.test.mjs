@@ -88,8 +88,8 @@ test("customer routes, API endpoint GET /api/customers/:id, and detail page supp
   assert.ok(cssContent.includes(".customer-tasks-toolbar"));
   assert.ok(cssContent.includes("[data-theme=\"dark\"]"));
 
-  // 4. Verify automations nav item is hidden from sidebar
+  // 4. Existing automation/template pages remain reachable from the sidebar.
   const appJsxContent = readFileSync(resolve(process.cwd(), "src/App.jsx"), "utf-8");
-  assert.ok(appJsxContent.includes("n[0] !== \"automations\""));
-  assert.ok(appJsxContent.includes("n[0] !== \"templates\""));
+  assert.ok(!appJsxContent.includes("n[0] !== \"automations\""));
+  assert.ok(!appJsxContent.includes("n[0] !== \"templates\""));
 });

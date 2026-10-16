@@ -1158,6 +1158,8 @@
   color: #ba7562;
   font-weight: 600;
 }
+/* A required marker follows its caption instead of being pushed to the far edge. */
+.teams-field > span:has(> b) { justify-content: flex-start; gap: 3px; }
 
 .teams-field > input,
 .teams-field > textarea,
@@ -2060,4 +2062,12 @@
 .dark .teams-permission-note {
   background: var(--bg-subtle);
   color: var(--muted);
+}
+
+/* The shared control rule gives inputs a 40px box and surface fill; inside the
+   bordered search wrapper the input must stay transparent and fit the wrapper. */
+.teams-search input { height: 100%; min-height: 0 !important; padding: 0; background: transparent !important; }
+@media (max-width: 600px) {
+  .teams-list-toolbar .teams-filter-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .teams-list-toolbar .teams-filter-tabs button { flex: 1 0 auto; padding: 7px 8px; }
 }

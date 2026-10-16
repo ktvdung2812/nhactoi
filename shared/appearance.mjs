@@ -1,7 +1,7 @@
 export const APPEARANCE_NAV_IDS = [
   'dashboard', 'tasks', 'today', 'upcoming', 'week', 'inbox',
   'teams', 'customers', 'services', 'finance',
-  'transfer', 'tickets', 'trash'
+  'templates', 'automations', 'transfer', 'tickets', 'trash'
 ];
 export const APPEARANCE_DEFAULTS = Object.freeze({
   mode: 'system', accent: '#176b59', background: 'default', font: 'vietnam',
@@ -38,6 +38,9 @@ export function validateAppearancePolicy(value) {
   return { preferences: validateAppearance(value.preferences), editableFields: fields };
 }
 export function resolveAppearance(personal, team) {
-  if (!team) return { ...APPEARANCE_DEFAULTS, ...personal };
-  return { ...team.preferences, ...Object.fromEntries(Object.entries(personal || {}).filter(([key]) => team.editableFields.includes(key))) };
+  const preferences = team
+    ? { ...team.preferences, ...Object.fromEntries(Object.entries(personal || {}).filter(([key]) => team.editableFields.includes(key))) }
+    : { ...APPEARANCE_DEFAULTS, ...personal };
+  const order = preferences.navOrder || APPEARANCE_NAV_IDS;
+  return { ...preferences, navOrder: [...order, ...APPEARANCE_NAV_IDS.filter(id => !order.includes(id))] };
 }

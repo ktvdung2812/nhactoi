@@ -1,3 +1,4 @@
+import { useTaskMutation } from './useTaskMutation.js';
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Archive, ArchiveRestore, Check, LoaderCircle, Pencil, Plus, X } from "lucide-react";
 import ActionMenu from "./ActionMenu.jsx";
@@ -44,7 +45,8 @@ function sortColumns(columns) {
   return [...columns].sort((left, right) => left.position - right.position);
 }
 
-function boardPath(teamId) {
+function boardPath(teamId, projectId) {
+  if(projectId) return `/boards?projectId=${encodeURIComponent(projectId)}`;
   return teamId == null || teamId === ""
     ? "/boards"
     : `/boards?teamId=${encodeURIComponent(teamId)}`;
@@ -65,6 +67,7 @@ function ErrorMessage({ children }) {
 export default function WorkflowBoard({
   api,
   teamId = null,
+  projectId = null,
   tasks = [],
   selectedTaskId = null,
   members = [],
@@ -105,7 +108,7 @@ export default function WorkflowBoard({
     let cancelled = false;
     setLoading(true);
     setError("");
-    api(boardPath(teamId))
+    api(boardPath(teamId,projectId))
       .then(result => {
         if (cancelled) return;
         setBoard({
@@ -124,7 +127,7 @@ export default function WorkflowBoard({
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [api, teamId, scopeKey, revision, reloadToken]);
+  }, [api, teamId, projectId, scopeKey, revision, reloadToken]);
 
   useEffect(() => {
     if (!dialog) return undefined;
@@ -229,7 +232,7 @@ export default function WorkflowBoard({
       if (dialog.kind === "create") {
         await api("/boards/columns", {
           method: "POST",
-          body: JSON.stringify({ teamId: teamId ?? null, name, status: form.status, tone: form.tone }),
+          body: JSON.stringify({ projectId: projectId || undefined, teamId: teamId ?? null, name, status: form.status, tone: form.tone }),
         });
       } else if (dialog.kind === "edit") {
         await api(`/boards/columns/${encodeURIComponent(dialog.column.id)}`, {
@@ -275,7 +278,7 @@ export default function WorkflowBoard({
     const orderedIds = allColumns.map(column => activeIds.has(String(column.id)) ? ids[activeIndex++] : column.id);
     await api("/boards/columns/reorder", {
       method: "POST",
-      body: JSON.stringify({ teamId: teamId ?? null, ids: orderedIds }),
+      body: JSON.stringify({ projectId: projectId || undefined, teamId: teamId ?? null, ids: orderedIds }),
     });
     await notifyChanged();
     setReloadToken(value => value + 1);
@@ -284,7 +287,7 @@ export default function WorkflowBoard({
   async function persistPreferences(collapsedIds) {
     await api("/boards/preferences", {
       method: "PATCH",
-      body: JSON.stringify({ teamId: teamId ?? null, collapsedIds }),
+      body: JSON.stringify({ projectId: projectId || undefined, teamId: teamId ?? null, collapsedIds }),
     });
     setBoard(current => current ? { ...current, preferences: { ...(current.preferences || {}), collapsedIds } } : current);
   }
@@ -315,6 +318,7 @@ export default function WorkflowBoard({
     }));
   }
 
+  const taskApi = useTaskMutation(api, `${scopeKey}:${teamId || ''}:${projectId || ''}`);
   async function moveTask(task, columnId, beforeTaskId = null) {
     if (!canWrite) throw new Error("Bạn không có quyền cập nhật công việc trong bảng này.");
     const decision = classifyColumnDrop(task, columnId, activeColumns, { placeByStatus, teamId });
@@ -329,9 +333,9 @@ export default function WorkflowBoard({
         await onStatusMove(task, decision.status);
         applyLocalTaskMove(task, columnId, null);
       } else {
-        await api(`/boards/tasks/${encodeURIComponent(task.id)}/move`, {
+        await taskApi(`/boards/tasks/${encodeURIComponent(task.id)}/move`, {
           method: "POST",
-          body: JSON.stringify({ columnId, beforeTaskId: beforeTaskId ?? null }),
+          body: JSON.stringify({ columnId, beforeTaskId: beforeTaskId ?? null, expectedRevision: task.revision }),
         });
         applyLocalTaskMove(task, columnId, beforeTaskId);
       }

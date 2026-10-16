@@ -2,9 +2,10 @@ export type Session = {
   token: string;
   expiresAt: string;
   verifiedAt: number;
-  user: { id: string; name: string; email: string; role: string };
+  lastSeenAt?: number;
+  user: { id: string; name: string; email: string; role: string; memberType?: 'member' | 'guest' };
   workspace: { id: string; name: string; suspendedAt?: string | null };
-  subscription: { status: string; currentPeriodEnd: string; plan: string };
+  subscription: { status: string; currentPeriodEnd: string; plan: string; planName?: string; capabilities?: string[] };
 };
 export type Member = {
   id: string;
@@ -20,15 +21,24 @@ export type Team = {
 };
 export type Task = {
   id: string;
+  projectId?: string;
+  pending?: boolean;
+  plannedDate?: string|null;
+  plannedTime?: string|null;
+  plannedDuration?: number;
+  planRevision?: string;
+  revision?: string;
   title: string;
   description: string;
   status: "todo" | "doing" | "done";
   priority: "low" | "medium" | "high";
   dueAt: string | null;
+  startAt?: string | null;
   remindAt: string | null;
   recurrence: "none" | "daily" | "weekly" | "monthly" | "yearly";
   recurrenceOptions?: { interval: number; weekdays: number[]; basis: "due" | "completion" };
   assigneeId: string | null;
+  assigneeIds?: string[];
   customerId?: string | null;
   teamId: string | null;
   teamName?: string | null;
@@ -38,6 +48,8 @@ export type Task = {
   assigneeName?: string;
   updatedAt?: string;
 };
+export type Project = { id: string; name: string; description: string; accessMode: 'workspace'|'team'|'private'; teamId: string|null; myRole: string; canEdit: boolean; canManage: boolean; readonly: boolean; archivedAt?: string|null };
+export type ProjectMember = { id: string; name: string; role: string; directRole: string|null; memberType: 'member'|'guest' };
 export type Attachment = {
   id: string;
   title: string;
@@ -74,6 +86,7 @@ export type Detail = {
 export type CalendarEvent = {
   service_id?: string;
   id: string;
+  revision?: string;
   title: string;
   description: string;
   status?: Task["status"] | null;

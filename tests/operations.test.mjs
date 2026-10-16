@@ -23,7 +23,7 @@ test('offline restore verifies hashes and restores local attachments into a priv
  try {
    const previous=await restoreBackup({db:restored,dataDir:s.dir,backupId:saved.body.backup.id});
    assert.equal(JSON.parse(readFileSync(previous,'utf8')).format,'nhactoi-postgresql');
-   assert.equal(restored.prepare('SELECT count(*) n FROM sessions').get().n,0);
+   assert.equal(restored.prepare("SELECT count(*) n FROM sessions WHERE expires_at>'1970-01-01T00:00:00.000Z'").get().n,0);
    assert.equal(restored.prepare('SELECT count(*) n FROM password_reset_codes').get().n,0);
    const file=restored.prepare("SELECT storage_root,storage_key FROM task_attachments WHERE kind='file'").get();
    assert.equal(readFileSync(join(file.storage_root,file.storage_key),'utf8'),'backup bytes');

@@ -51,6 +51,9 @@ export default function CustomerDetail({
   customerId,
   customers = [],
   tasks = [],
+  taskSummary,
+  taskPagination,
+  onTaskFilterChange,
   services = [],
   transactions = [],
   members = [],
@@ -64,7 +67,8 @@ export default function CustomerDetail({
   onTaskComplete,
 }) {
   const [tab, setTab] = useState("tasks");
-  const [taskFilter, setTaskFilter] = useState("all");
+  const [taskFilter, changeTaskFilter] = useState("all");
+  const setTaskFilter = value => { changeTaskFilter(value); onTaskFilterChange?.(value); };
 
   const customerIndex = customers.findIndex((c) => c.id === customerId);
   const customer = customerIndex >= 0 ? customers[customerIndex] : null;
@@ -95,6 +99,7 @@ export default function CustomerDetail({
   const customerTasks = tasks.filter((t) => t.customerId === customer.id);
   const openTasks = customerTasks.filter((t) => t.status !== "done");
   const doneTasks = customerTasks.filter((t) => t.status === "done");
+  const counts = taskSummary || {total:customerTasks.length,open:openTasks.length,completed:doneTasks.length};
 
   const filteredTasks = customerTasks.filter((t) => {
     if (taskFilter === "open") return t.status !== "done";
@@ -107,7 +112,7 @@ export default function CustomerDetail({
   const customerServices = services.filter((s) => s.customerId === customer.id);
   const customerTransactions = transactions.filter((t) => t.customerId === customer.id);
   const totalIncome = customerTransactions
-    .filter((t) => t.kind === "income" || t.kind === "in" || (!t.kind && Number(t.amount) > 0))
+    .filter((t) => t.type === "income")
     .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
 
   const getPerson = (id) => members.find((m) => m.id === id);
@@ -202,7 +207,7 @@ export default function CustomerDetail({
           <div>
             <span className="stat-label">Công việc đang mở</span>
             <strong className="stat-value">
-              {openTasks.length} <small>/ {customerTasks.length}</small>
+              {counts.open} <small>/ {counts.total}</small>
             </strong>
           </div>
         </div>
@@ -237,7 +242,7 @@ export default function CustomerDetail({
           onClick={() => setTab("tasks")}
         >
           <CheckCheck size={16} />
-          <span>Công việc ({customerTasks.length})</span>
+          <span>Công việc ({counts.total})</span>
         </button>
         <button
           className={`customer-tab-btn ${tab === "services" ? "active" : ""}`}
@@ -266,19 +271,19 @@ export default function CustomerDetail({
                 className={`filter-chip ${taskFilter === "all" ? "active" : ""}`}
                 onClick={() => setTaskFilter("all")}
               >
-                Tất cả ({customerTasks.length})
+                Tất cả ({counts.total})
               </button>
               <button
                 className={`filter-chip ${taskFilter === "open" ? "active" : ""}`}
                 onClick={() => setTaskFilter("open")}
               >
-                Đang mở ({openTasks.length})
+                Đang mở ({counts.open})
               </button>
               <button
                 className={`filter-chip ${taskFilter === "done" ? "active" : ""}`}
                 onClick={() => setTaskFilter("done")}
               >
-                Đã xong ({doneTasks.length})
+                Đã xong ({counts.completed})
               </button>
             </div>
             <button
@@ -358,6 +363,7 @@ export default function CustomerDetail({
               </button>
             </div>
           )}
+          {taskPagination}
         </div>
       )}
 
@@ -419,7 +425,7 @@ export default function CustomerDetail({
                 </thead>
                 <tbody>
                   {customerTransactions.map((tx) => {
-                    const isIncome = tx.kind === "income" || tx.kind === "in" || (!tx.kind && Number(tx.amount) > 0);
+                    const isIncome = tx.type === "income";
                     return (
                       <tr key={tx.id}>
                         <td>{dateLabel(tx.createdAt || tx.date)}</td>

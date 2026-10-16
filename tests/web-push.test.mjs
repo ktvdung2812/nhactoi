@@ -137,7 +137,8 @@ test('event and renewal pushes resolve targets and skip rescheduled, archived or
   assert.equal((await call(s, `/web-push/notifications/${renewal.id}`, { cookie: owner.cookie })).body.path, `/services?service=${service.body.service.id}`);
   assert.equal((await s.app.locals.processWebPush()).sent, 2);
   // New queued copies become invalid when their underlying entities change.
-  s.db.prepare("UPDATE web_push_deliveries SET status='pending'").run();
+  s.db.prepare(`INSERT INTO notifications(id,workspace_id,user_id,type,title,message,entity_type,entity_id,created_at)
+    SELECT id||'_queued',workspace_id,user_id,type,title,message,entity_type,entity_id,created_at FROM notifications WHERE id IN (?,?)`).run('event-push',renewal.id);
   await call(s, `/calendar-events/${event.body.id}/status`, { cookie: owner.cookie, method: 'PATCH', body: { status: 'done' } });
   await call(s, `/services/${service.body.service.id}/renew`, { cookie: owner.cookie, method: 'POST', body: { expectedDate: '2026-10-02' } });
   assert.equal((await s.app.locals.processWebPush()).skipped, 2);

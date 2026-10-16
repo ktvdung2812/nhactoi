@@ -269,3 +269,30 @@ test("Anthropic catalog paginates, refreshes after a key change and has a safe f
   assert.ok(fallback.models.length > 0);
   assert.ok(!JSON.stringify(fallback).includes("private diagnostic"));
 });
+
+
+test("private project revocation during AI response prevents commit and redacts saved references", async t => {
+ let revoke=true,projectId,memberId,workspaceId;
+ const s=await boot(t,async(url,options)=>{
+  const last=JSON.parse(options.body).messages.at(-1);
+  if(last.role==='user')return calls(['search_tasks',{}]);
+  if(revoke)s.db.prepare('DELETE FROM project_members WHERE project_id=? AND user_id=?').run(projectId,memberId);
+  return answer('CANARY_PRIVATE_AI');
+ });
+ const owner=s.client(),member=s.client();const a=await register(owner,'private-ai-owner@example.test'),b=await register(member,'private-ai-member@example.test');
+ workspaceId=a.workspace.id;memberId=b.user.id;
+ s.db.prepare("UPDATE subscriptions SET plan='business' WHERE workspace_id=?").run(workspaceId);
+ s.db.prepare("INSERT INTO workspace_members(workspace_id,user_id,role,created_at) VALUES (?,?,'member',?)").run(workspaceId,memberId,new Date().toISOString());
+ await member('/workspaces/switch',{workspaceId});
+ const project=await owner('/projects',{name:'Private AI',accessMode:'private'});assert.equal(project.status,201);projectId=project.body.project.id;
+ await owner(`/projects/${projectId}/members/${memberId}`,{role:'editor'},'PUT');
+ assert.equal((await owner('/tasks',{title:'CANARY_PRIVATE_AI',projectId})).status,201);
+ assert.equal((await member('/ai/chat',{message:'Tóm tắt công việc'})).status,409);
+ assert.equal(s.db.prepare('SELECT count(*) n FROM ai_messages').get().n,0);
+ await owner(`/projects/${projectId}/members/${memberId}`,{role:'editor'},'PUT');revoke=false;
+ const answerResult=await member('/ai/chat',{message:'Tóm tắt lại'});assert.equal(answerResult.status,200,JSON.stringify(answerResult.body));
+ assert.equal(answerResult.body.messages[1].references.length,1);
+ await owner(`/projects/${projectId}/members/${memberId}`,undefined,'DELETE');
+ const history=await member(`/ai/conversations/${answerResult.body.conversationId}`);
+ assert.ok(!JSON.stringify(history.body).includes('CANARY_PRIVATE_AI'));assert.deepEqual(history.body.messages[1].references,[]);
+});

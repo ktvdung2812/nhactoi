@@ -1,3 +1,4 @@
+import { canAccessTask } from './task-access.mjs';
 import { createId } from "./auth.mjs";
 import { canAccessTeamTask } from "./teams.mjs";
 import { isValidCalendarDate } from "../shared/service-renewal.mjs";
@@ -125,8 +126,8 @@ export function registerAiAssistantRoutes(app, { db, clock, config, requireAuth,
     return row;
   }
   function visible(req, id) {
-    const task = db.prepare("SELECT team_id FROM tasks WHERE id=? AND workspace_id=? AND deleted_at IS NULL").get(id, req.auth.workspaceId);
-    return Boolean(task && canAccessTeamTask(db, req.auth.workspaceId, req.auth.userId, task.team_id));
+    const task = db.prepare("SELECT * FROM tasks WHERE id=? AND workspace_id=? AND deleted_at IS NULL").get(id, req.auth.workspaceId);
+    return Boolean(task && canAccessTask(db, req.auth.workspaceId, req.auth.userId, task));
   }
   function messagesFor(req, id) {
     return db.prepare("SELECT * FROM ai_messages WHERE conversation_id=? ORDER BY id").all(id).map(row => {
@@ -149,7 +150,7 @@ export function registerAiAssistantRoutes(app, { db, clock, config, requireAuth,
     if (!ready(current) || JSON.stringify(current) !== JSON.stringify(expectedSettings)) fail("Cấu hình AI đã thay đổi. Hãy gửi lại tin nhắn.", 409);
   }
   function accessKey(req) {
-    return JSON.stringify([req.auth.role, db.prepare("SELECT tm.team_id,tm.role,t.archived_at FROM team_members tm JOIN teams t ON t.id=tm.team_id WHERE tm.workspace_id=? AND tm.user_id=? ORDER BY tm.team_id").all(req.auth.workspaceId, req.auth.userId)]);
+    return JSON.stringify([req.auth.role, db.dialect === 'postgres' ? db.prepare('SELECT p.id,p.access_mode,p.archived_at,pm.role FROM projects p LEFT JOIN project_members pm ON pm.project_id=p.id AND pm.user_id=? WHERE p.workspace_id=? ORDER BY p.id').all(req.auth.userId, req.auth.workspaceId) : [], db.prepare("SELECT tm.team_id,tm.role,t.archived_at FROM team_members tm JOIN teams t ON t.id=tm.team_id WHERE tm.workspace_id=? AND tm.user_id=? ORDER BY tm.team_id").all(req.auth.workspaceId, req.auth.userId)]);
   }
 
   app.get("/api/admin/ai-settings", requirePlatformAdmin, (req, res) => res.json(publicSettings(settings())));

@@ -1,0 +1,15 @@
+jest.mock('../src/features/ProjectAdvanced',()=>({ProjectAdvanced:()=>null}));
+import React from 'react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { Projects } from '../src/features/Projects';
+import { useResource,useSession } from '../src/core/session';
+jest.mock('expo-router',()=>({router:{push:jest.fn()}}));
+jest.mock('../src/core/session',()=>({refreshData:jest.fn(),useResource:jest.fn(),useSession:jest.fn()}));
+jest.mock('../src/ui/frames',()=>({HingeSafe:({children}:{children:React.ReactNode})=>children}));
+const api=jest.fn();
+const project={id:'private',name:'Private',accessMode:'private',teamId:null,myRole:'manager',canEdit:true,canManage:true,readonly:false};
+beforeEach(()=>{jest.clearAllMocks();jest.mocked(useSession).mockReturnValue({api,online:true,writable:true,session:{user:{role:'owner'},subscription:{capabilities:['guests']}}} as never);
+jest.mocked(useResource).mockImplementation((path:string)=>({isPending:false,data:{value:path==='/projects'?{projects:[project]}:path.startsWith('/projects/')?{project,members:[]}:path==='/members'?{members:[]}:path==='/teams'?{teams:[]}:{tasks:[]}}}) as never);});
+afterEach(cleanup);
+test('failed project creation preserves draft and shows the actual error',async()=>{api.mockRejectedValueOnce(new Error('Không còn quyền tạo dự án'));await render(<Projects/>);await fireEvent.changeText(screen.getByLabelText('Tên dự án'),'Bản nháp');await fireEvent.press(screen.getByLabelText('Tạo dự án'));await waitFor(()=>expect(api).toHaveBeenCalledTimes(1));expect(screen.getByText('Không còn quyền tạo dự án')).toBeTruthy();expect(screen.getByLabelText('Tên dự án').props.value).toBe('Bản nháp');});
+test('guest project screen reads allowed membership without exposing management or workspace directory',async()=>{jest.mocked(useSession).mockReturnValue({api,online:true,writable:true,session:{user:{role:'member',memberType:'guest'},subscription:{capabilities:[]}}} as never);project.canManage=false;project.canEdit=false;project.readonly=true;await render(<Projects/>);expect(screen.queryByLabelText('Tạo dự án')).toBeNull();expect(jest.mocked(useResource)).toHaveBeenCalledWith('/members',false);await fireEvent.press(screen.getByLabelText('Dự án: Chọn dự án'));await fireEvent.press(screen.getByText('Private · Chỉ đọc'));expect(screen.getByText('Chỉ đọc')).toBeTruthy();expect(screen.queryByLabelText('Tạo liên kết mời')).toBeNull();project.canManage=true;project.canEdit=true;project.readonly=false;});

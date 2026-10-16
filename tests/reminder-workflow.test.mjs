@@ -73,7 +73,8 @@ test('team lead configures own team; removed membership, archive and expired sub
  const id='team_reminder';
  s.db.prepare('INSERT INTO teams(id,workspace_id,name,description,color,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run(id,s.owner.workspace.id,'Team','','green',initial,initial);
  s.db.prepare('INSERT INTO team_members(team_id,workspace_id,user_id,role,created_at) VALUES(?,?,?,?,?)').run(id,s.owner.workspace.id,member.user.id,'lead',initial);
- s.db.prepare('UPDATE tasks SET team_id=?,assignee_id=? WHERE id=?').run(id,member.user.id,s.task.id);
+ if(s.db.dialect==='postgres')s.db.prepare("UPDATE tasks SET team_id=?,project_id=?,column_id=(SELECT id FROM board_columns WHERE project_id=? AND status='todo' ORDER BY position,id LIMIT 1),assignee_id=? WHERE id=?").run(id,'prj_team_'+id,'prj_team_'+id,member.user.id,s.task.id);
+ else s.db.prepare('UPDATE tasks SET team_id=?,assignee_id=? WHERE id=?').run(id,member.user.id,s.task.id);
  const r=await call(s,'/reminder-policy?teamId='+id,{method:'PUT',cookie:member.cookie,body:{...DEFAULT_REMINDER_POLICY,enabled:true}});assert.equal(r.status,200,JSON.stringify(r.body));
  assert.equal(s.app.locals.processReminders().length,1);
  s.db.prepare('DELETE FROM team_members WHERE team_id=? AND user_id=?').run(id,member.user.id);
@@ -155,4 +156,26 @@ test('snoozing during an in-flight send cannot resurrect the cancelled queue',as
  assert.equal((await call(s,s.path+'/snooze',{method:'POST',cookie:s.owner.cookie,body:{minutes:60}})).status,200);
  release();await running;
  assert.equal(s.db.prepare('SELECT status FROM reminder_email_outbox').get().status,'skipped');
+});
+
+// TC-W0-T03-E: transport acceptance is distinct from reading and task acknowledgement.
+test('reminder history keeps email, FCM and mixed browser deliveries separate without duplicating notifications', async t => {
+ const s=await fixture(t),outsider=await user(s,'history-outsider@reminder.test');
+ const session=s.db.prepare('SELECT id FROM sessions WHERE user_id=?').get(s.owner.user.id);
+ for(const id of ['browser-one','browser-two','browser-three']) s.db.prepare(`INSERT INTO web_push_subscriptions(id,endpoint,p256dh,auth,user_id,session_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`).run(id,`https://fcm.googleapis.com/fcm/send/${id}`,'fixture-public-key','fixture-auth',s.owner.user.id,session.id,initial,initial);
+ assert.equal((await call(s,s.path+'/test',{method:'POST',cookie:s.owner.cookie,body:{}})).status,201);
+ const notice=s.db.prepare("SELECT id FROM notifications WHERE task_id=? AND type='task_reminder'").get(s.task.id);
+ s.db.prepare("UPDATE reminder_email_outbox SET status='sent' WHERE notification_id=?").run(notice.id);
+ s.db.prepare("UPDATE notification_outbox SET status='failed' WHERE notification_id=?").run(notice.id);
+ s.db.prepare("UPDATE web_push_deliveries SET status=CASE WHEN subscription_id='browser-three' THEN 'failed' ELSE 'sent' END WHERE notification_id=?").run(notice.id);
+ const result=await call(s,s.path,{cookie:s.owner.cookie});
+ assert.equal(result.status,200,JSON.stringify(result.body));
+ assert.equal(result.body.history.length,1);
+ assert.equal(result.body.history[0].email_status,'sent');
+ assert.equal(result.body.history[0].push_status,'failed');
+ assert.deepEqual(result.body.history[0].web_push_statuses,{failed:1,sent:2});
+ assert.equal(result.body.history[0].read_at,null);
+ assert.ok(!result.body.recipients[0].acknowledged_at);
+ assert.equal((await call(s,s.path,{cookie:outsider.cookie})).status,404);
+ assert.ok(!JSON.stringify(result.body).includes('fixture-auth'));
 });

@@ -1,6 +1,9 @@
+import { isTaskMutation, useTaskMutation } from './useTaskMutation.js';
 import { recurrenceLabel } from "../shared/task-recurrence.mjs";
 import TaskReminders from "./ReminderSettings.jsx";
 import TaskChecklists from "./TaskChecklists.jsx";
+import TaskExtras from "./TaskExtras.jsx";
+import {TaskTime} from "./WorkManagement.jsx";
 import React, { useEffect, useId, useRef, useState } from "react";
 import { filterMentionMembers, mentionToken } from "./mention-query.js";
 import { ArrowLeft, CheckCheck, MessageSquare, Activity, Link2, Plus, Pencil, Trash2, Copy, RefreshCw, ExternalLink, CalendarDays, UserRound, Bell, Repeat2, Send, ShieldCheck, Upload, Download, FileText, Paperclip, X } from "lucide-react";
@@ -15,10 +18,13 @@ const initials = value => (value || "?").trim().split(/\s+/).slice(-2).map(s => 
 const fileSize = bytes => bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / (1024 * 1024)).toLocaleString("vi-VN", { maximumFractionDigits: 1 })} MB`;
 const safeUrl = value => { try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) ? url.href : null; } catch { return null; } };
 
-export default function TaskDetail({ taskId, api, me, members = [], customers = [], onEdit, onTrash, onBack, onChanged, revision = 0 }) {
+export default function TaskDetail({ taskId, api: request, me, members = [], customers = [], onEdit, onTrash, onBack, onChanged, revision = 0 }) {
+  const api = useTaskMutation(request, taskId);
   const [data, setData] = useState(null), [loading, setLoading] = useState(true), [loadError, setLoadError] = useState(false);
   const [error, setError] = useState(""), [notice, setNotice] = useState(""), [busy, setBusy] = useState(false), [reload, setReload] = useState(0);
   const [description, setDescription] = useState(null), [remove, setRemove] = useState(null);
+  const descriptionRevision = useRef();
+  const [scalarDrafts, setScalarDrafts] = useState({});
   const [attachment, setAttachment] = useState({ title: "", url: "" }), [comment, setComment] = useState("");
   const [mentionIds, setMentionIds] = useState([]);
   const [uploadFile, setUploadFile] = useState(null), [uploading, setUploading] = useState(false);
@@ -56,12 +62,19 @@ export default function TaskDetail({ taskId, api, me, members = [], customers = 
     if (pending.current || !writable) return;
     pending.current = true; setBusy(true); setError(""); setNotice("");
     try {
-      await api(path, { method, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+      if (isTaskMutation(path, method)) body = { expectedRevision: task.revision, ...body };
+      const result = await api(path, { method, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+      if (result.taskRevision) setData(current => current ? { ...current, task: { ...current.task, revision: result.taskRevision } } : current);
     } catch (err) { if (alive.current) setError(err.message); pending.current = false; if (alive.current) setBusy(false); return; }
     if (!alive.current) return;
     after?.(); setNotice(success); setReload(value => value + 1);
     if (changedTask) { try { await onChanged?.(); } catch { if (alive.current) setNotice(`${success} Hãy làm mới để cập nhật danh sách liên quan.`); } }
     pending.current = false; if (alive.current) setBusy(false);
+  }
+  function saveScalar(field, value) {
+    const draft = scalarDrafts[field] || { revision: task.revision };
+    setScalarDrafts(current => ({ ...current, [field]: { ...draft, value } }));
+    return mutate(base, "PATCH", { [field]: value, expectedRevision: draft.revision }, "Đã cập nhật công việc.", () => setScalarDrafts(current => { const next = { ...current }; delete next[field]; return next; }), true);
   }
   async function upload(event) {
     event.preventDefault();
@@ -254,19 +267,23 @@ export default function TaskDetail({ taskId, api, me, members = [], customers = 
         <div className="td-layout">
           <div className="td-main">
             <section className="td-panel td-properties" aria-label="Thông tin công việc">
-              <label><span>Trạng thái</span><select aria-label="Trạng thái công việc" value={task.status} disabled={disabled} onChange={e => mutate(base, "PATCH", { status: e.target.value }, "Đã cập nhật trạng thái.", undefined, true)}>{Object.entries(statuses).map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
-              <label><span>Độ ưu tiên</span><select aria-label="Độ ưu tiên công việc" value={task.priority} disabled={disabled} onChange={e => mutate(base, "PATCH", { priority: e.target.value }, "Đã cập nhật ưu tiên.", undefined, true)}>{Object.entries(priorities).map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
+              <label><span>Trạng thái</span><select aria-label="Trạng thái công việc" value={scalarDrafts.status?.value ?? task.status} disabled={disabled} onChange={e => saveScalar("status", e.target.value)}>{Object.entries(statuses).map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
+              <label><span>Độ ưu tiên</span><select aria-label="Độ ưu tiên công việc" value={scalarDrafts.priority?.value ?? task.priority} disabled={disabled} onChange={e => saveScalar("priority", e.target.value)}>{Object.entries(priorities).map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
+              {Object.entries(scalarDrafts).map(([field, draft]) => <div key={field}><button type="button" className="button secondary" disabled={disabled} onClick={() => saveScalar(field, draft.value)}>Thử lưu {field === 'status' ? 'trạng thái' : 'ưu tiên'}</button><button type="button" className="button secondary" disabled={busy} onClick={() => setScalarDrafts(current => { const next = { ...current }; delete next[field]; return next; })}>Bỏ thay đổi {field === 'status' ? 'trạng thái' : 'ưu tiên'}</button></div>)}
               <div><span><UserRound size={14} />Người phụ trách</span><strong>{assignee || "Chưa giao"}</strong></div>
+              <div><span><CalendarDays size={14} />Ngày bắt đầu chung</span><strong>{date(task.startAt)}</strong></div>
               <div><span><CalendarDays size={14} />Hạn hoàn thành</span><strong>{date(task.dueAt)}</strong></div>
               <div><span><Bell size={14} />Lịch nhắc</span><strong>{date(task.remindAt)}</strong></div>
               <div><span><Repeat2 size={14} />Lặp lại</span><strong>{recurrenceLabel(task.recurrence, task.recurrenceOptions)}</strong></div>
               {customer && <div className="td-customer"><span>Khách hàng liên quan</span><strong>{customer}</strong></div>}
             </section>
-            <section className="td-panel"><div className="td-section-heading"><h2><Pencil size={17} />Mô tả</h2>{description === null && writable && <button type="button" className="td-text-button" disabled={busy} onClick={() => setDescription(task.description || "")}>Chỉnh sửa</button>}</div>
-              {description !== null ? <form onSubmit={e => { e.preventDefault(); mutate(base, "PATCH", { description }, "Đã lưu mô tả.", () => setDescription(null), true); }}><textarea aria-label="Mô tả công việc" value={description} maxLength={5000} rows={6} disabled={disabled} onChange={e => setDescription(e.target.value)} /><div className="td-form-actions"><button type="button" className="button secondary" disabled={busy} onClick={() => setDescription(null)}>Hủy</button><button className="button" disabled={disabled}>Lưu mô tả</button></div></form> : <p className={`td-description ${!task.description ? "td-muted" : ""}`}>{task.description || "Chưa có mô tả. Thêm hướng dẫn để mọi người cùng nắm rõ công việc."}</p>}
+            <section className="td-panel"><div className="td-section-heading"><h2><Pencil size={17} />Mô tả</h2>{description === null && writable && <button type="button" className="td-text-button" disabled={busy} onClick={() => { descriptionRevision.current = task.revision; setDescription(task.description || ""); }}>Chỉnh sửa</button>}</div>
+              {description !== null ? <form onSubmit={e => { e.preventDefault(); mutate(base, "PATCH", { description, expectedRevision: descriptionRevision.current }, "Đã lưu mô tả.", () => setDescription(null), true); }}><textarea aria-label="Mô tả công việc" value={description} maxLength={5000} rows={6} disabled={disabled} onChange={e => setDescription(e.target.value)} /><div className="td-form-actions"><button type="button" className="button secondary" disabled={busy} onClick={() => setDescription(null)}>Hủy</button><button className="button" disabled={disabled}>Lưu mô tả</button></div></form> : <p className={`td-description ${!task.description ? "td-muted" : ""}`}>{task.description || "Chưa có mô tả. Thêm hướng dẫn để mọi người cùng nắm rõ công việc."}</p>}
             </section>
-            <TaskReminders key={taskId} api={api} task={task} readOnly={!writable} revision={reload} onChanged={()=>setReload(v=>v+1)} />
-            <TaskChecklists base={base} checklists={checklists} members={data.checklistMembers || []} writable={writable} disabled={disabled} mutate={mutate} />
+            <TaskTime key={taskId+":time"} api={api} task={task} readOnly={!writable||busy} userId={me?.user?.id}/>
+            <TaskExtras key={taskId+":extras"} api={api} task={task} readOnly={!writable || busy} canManageLabels={["owner", "admin"].includes(me?.user?.role)} refreshToken={`${revision}:${reload}`} onChanged={async () => { setReload(value => value + 1); await onChanged?.(); }} />
+            <TaskReminders key={taskId+":reminders"} api={api} task={task} readOnly={!writable} revision={reload} onChanged={()=>setReload(v=>v+1)} />
+            <TaskChecklists base={base} taskRevision={task.revision} checklists={checklists} members={data.checklistMembers || []} writable={writable} disabled={disabled} mutate={mutate} />
             <section className="td-panel"><div className="td-section-heading"><h2><Link2 size={18} />Tệp & liên kết đính kèm<span className="td-count">{attachments.length}</span></h2></div>
               {!attachments.length && <p className="td-empty">Tải tài liệu, bản thiết kế hoặc gắn liên kết dùng chung cho công việc.</p>}
               <div className="td-attachments">{attachments.map(item => <article key={item.id}><div className="td-attachment-icon">{item.kind === "file" ? <FileText size={20} /> : <Link2 size={20} />}</div><div>{item.kind === "file" ? <a href={`/api${base}/attachments/${encodeURIComponent(item.id)}/download`} download={item.originalName || item.title}>{item.originalName || item.title}<Download size={14} /></a> : safeUrl(item.url) ? <a href={safeUrl(item.url)} target="_blank" rel="noopener noreferrer">{item.title}<ExternalLink size={13} /></a> : <strong>{item.title}</strong>}<small>{item.kind === "file" && `${fileSize(item.sizeBytes || 0)} · `}{item.createdByName || "Thành viên"} · {date(item.createdAt)}</small></div><ActionMenu label={`Thao tác đính kèm ${item.title}`} disabled={disabled} items={[{ label: item.kind === "file" ? "Xóa tệp" : "Gỡ liên kết", icon: Trash2, danger: true, onSelect: () => setRemove({ path: `${base}/attachments/${encodeURIComponent(item.id)}`, title: item.title, kind: "attachment" }) }]} /></article>)}</div>

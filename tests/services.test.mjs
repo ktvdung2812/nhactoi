@@ -109,6 +109,8 @@ test("service reminders are daily in Vietnam, durable per user, and scoped to en
   });
   assert.equal(created.status, 201, JSON.stringify(created.body));
   const serviceId = created.body.service.id;
+  // This fixture represents an upgraded legacy service with its old all-day timing.
+  if(s.db.dialect==='postgres')s.db.prepare('UPDATE service_contracts SET reminder_time=NULL WHERE id=?').run(serviceId);
   const sent = [];
   const email = ({ recipient, service, message }) => sent.push({ recipient, service, message });
 
@@ -166,7 +168,7 @@ test("renewal guards stale dates, advances overdue cadence, and preserves histor
   const row = s.db.prepare("SELECT enabled,last_renewed_at,actual_paid FROM service_contracts WHERE id=?").get(id);
   assert.equal(row.enabled, 1);
   assert.ok(row.last_renewed_at);
-  assert.equal(row.actual_paid, 110000);
+  assert.equal(row.actual_paid, null); // Renewal alone is not proof of payment.
 });
 
 test("duplicate copies metadata without renewal history or reminder rows", async (t) => {

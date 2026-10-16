@@ -129,3 +129,5 @@
   .assistant-messages, .assistant-history { padding: 18px 16px; }
   .assistant-input-row textarea { font-size: 16px; }
 }
+/* Dialog backdrops (z-index 50–60) must cover the launcher instead of floating under it. */
+body:has(:is(.modal-backdrop, .teams-modal-backdrop, .task-detail-modal-backdrop)) .assistant-launcher { z-index: 40; }

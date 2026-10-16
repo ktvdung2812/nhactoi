@@ -321,3 +321,48 @@ test("BillGateway checkout, exact signed envelope, and polling settle only the m
     "the purchased new plan remains active",
   );
 });
+
+test('checkout and settlement enforce occupied plus invited seats, and blocked paid invoices remain retryable', async t => {
+  const { boot, call, user, addMember } = await import('./roadmap-helpers.mjs');
+  const secret = 'seat-contract-secret';
+  const payments = new Map();
+  const provider = createServer(async (req, res) => {
+    let payment;
+    if (req.method === 'POST') {
+      const chunks=[];for await (const chunk of req) chunks.push(chunk);
+      const input=JSON.parse(Buffer.concat(chunks).toString());
+      payment={id:`payment_${payments.size}`,externalId:input.externalId,totalAmount:input.totalAmount,currency:'VND',status:'open',amountPaid:0,hostedUrl:'/pay/fixture'};
+      payments.set(payment.id,payment);
+    } else payment=payments.get(req.url.split('/').at(-1));
+    res.setHeader('content-type','application/json');res.end(JSON.stringify({success:true,data:payment}));
+  });
+  const providerUrl=await listen(provider);t.after(()=>close(provider));
+  const s=await boot(t,{env:{NODE_ENV:'test',BILLGATE_API_URL:providerUrl,BILLGATE_API_KEY:'fixture',BILLGATE_WEBHOOK_SECRET:secret}});
+  const owner=await user(s,'seat-owner@test.local');
+  s.db.prepare("UPDATE subscriptions SET plan='team',status='active' WHERE workspace_id=?").run(owner.workspace.id);
+  const members=[];
+  for(let i=0;i<3;i++){const m=await user(s,`seat-${i}@test.local`);addMember(s,owner,m);members.push(m);}
+  const checkout=()=>call(s,'/billing/checkout',{method:'POST',cookie:owner.cookie,body:{plan:'starter',cycle:'monthly'}});
+  assert.equal((await checkout()).status,409);
+  assert.equal(payments.size,0,'do not charge for an unusable plan');
+  s.db.prepare('DELETE FROM workspace_members WHERE workspace_id=? AND user_id=?').run(owner.workspace.id,members[2].user.id);
+  assert.equal((await call(s,'/invitations',{method:'POST',cookie:owner.cookie,body:{email:'reserved@test.local'}})).status,201);
+  assert.equal((await checkout()).status,409,'pending invitations reserve seats');
+  s.db.prepare('DELETE FROM invitations WHERE workspace_id=?').run(owner.workspace.id);
+  const order=await checkout();assert.equal(order.status,201);
+  // Membership grows after checkout under the still-active Team subscription.
+  addMember(s,owner,members[2]);
+  const payment=payments.get(order.body.providerPaymentId);payment.status='paid';payment.amountPaid=payment.totalAmount;
+  const raw=JSON.stringify({id:'seat-paid-event',event:'payment.paid',data:{payment}});
+  const settle=()=>fetch(s.base+'/api/billing/webhook',{method:'POST',headers:{'content-type':'application/json','x-billgate-signature':createHmac('sha256',secret).update(raw).digest('hex')},body:raw});
+  assert.equal((await settle()).status,409);
+  assert.equal((await call(s,`/billing/orders/${order.body.orderId}/refresh`,{method:'POST',cookie:owner.cookie,body:{}})).status,409);
+  assert.equal(s.db.prepare('SELECT plan FROM subscriptions WHERE workspace_id=?').get(owner.workspace.id).plan,'team');
+  assert.equal(s.db.prepare('SELECT paid_at FROM billing_orders WHERE id=?').get(order.body.orderId).paid_at,null);
+  assert.equal(s.db.prepare("SELECT count(*) n FROM billing_webhook_events WHERE event_id='seat-paid-event'").get().n,0);
+  s.db.prepare('DELETE FROM workspace_members WHERE workspace_id=? AND user_id=?').run(owner.workspace.id,members[2].user.id);
+  const retry=await settle();assert.equal(retry.status,200);assert.equal((await retry.json()).extended,true);
+  const end=s.db.prepare('SELECT current_period_end FROM subscriptions WHERE workspace_id=?').get(owner.workspace.id).current_period_end;
+  const duplicate=await settle();assert.equal((await duplicate.json()).duplicate,true);
+  assert.equal(s.db.prepare('SELECT current_period_end FROM subscriptions WHERE workspace_id=?').get(owner.workspace.id).current_period_end,end);
+});

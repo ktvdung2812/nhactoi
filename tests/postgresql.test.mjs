@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { TABLE_COLUMNS } from '../server/database-tables.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { openDatabase } from './database-helpers.mjs';
-import { openDatabase as connect, migrateDatabase, withTransaction, bindSql } from '../server/db.mjs';
+import { openDatabase as connect, migrateDatabase, withTransaction, bindSql, SCHEMA_VERSION } from '../server/db.mjs';
 import { openDatabase as openLegacy } from '../server/legacy-sqlite.mjs';
 import { seedDemo } from '../server/seed.mjs';
 import { migrateSqlite } from '../scripts/migrate-sqlite.mjs';
@@ -20,7 +20,7 @@ test('PostgreSQL baseline is replayable, rejects newer versions and enforces tra
   const db = openDatabase();
   try {
     migrateDatabase(db, { bootstrapAdmin: false }); migrateDatabase(db, { bootstrapAdmin: false });
-    assert.equal(db.prepare('SELECT count(*) n FROM schema_migrations').get().n, 1);
+    assert.equal(db.prepare('SELECT count(*) n FROM schema_migrations').get().n, SCHEMA_VERSION);
     const columns = db.prepare("SELECT table_name, json_agg(column_name ORDER BY ordinal_position) names FROM information_schema.columns WHERE table_schema=current_schema() AND table_name <> 'schema_migrations' GROUP BY table_name").all();
     assert.deepEqual(Object.fromEntries(columns.map(row=>[row.table_name,row.names])), TABLE_COLUMNS);
     assert.throws(() => withTransaction(db, () => {
@@ -91,7 +91,7 @@ test('PostgreSQL simultaneous startups apply the baseline and create the initial
       BOOTSTRAP_ADMIN_NAME: 'Startup admin', BOOTSTRAP_ADMIN_EMAIL: 'startup@example.com', BOOTSTRAP_ADMIN_PASSWORD: 'Startup-test-2026!' } };
     const results = await Promise.allSettled([1, 2].map(() => promisify(execFile)(process.execPath, ['--input-type=module', '-e', command], options)));
     for (const result of results) assert.equal(result.status, 'fulfilled', result.reason?.message);
-    assert.equal(db.prepare(`SELECT count(*) n FROM "${schema}".schema_migrations`).get().n, 1);
+    assert.equal(db.prepare(`SELECT count(*) n FROM "${schema}".schema_migrations`).get().n, SCHEMA_VERSION);
     assert.equal(db.prepare(`SELECT count(*) n FROM "${schema}".users WHERE is_platform_admin=1`).get().n, 1);
     assert.equal(db.prepare(`SELECT count(*) n FROM "${schema}".admin_audit_logs WHERE action='admin.bootstrap'`).get().n, 1);
   } finally { db.exec(`DROP SCHEMA "${schema}" CASCADE`); db.close(); }

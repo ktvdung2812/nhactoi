@@ -1,3 +1,4 @@
+import { canAccessTask } from './task-access.mjs';
 import { getRemoteStore } from "./remote-storage.mjs";
 import {notifyTaskAudience} from "./collaboration.mjs";
 import {
@@ -193,12 +194,12 @@ function adminReason(value, HttpError) {
 
 function taskForAccess(db, taskId, auth, canAccessTeamTask, HttpError, { write = false } = {}) {
   const task = db.prepare(
-    `SELECT id, workspace_id, team_id, deleted_at
+    `SELECT *
      FROM tasks
      WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL`,
   ).get(taskId, auth.workspaceId);
-  if (!task || !canAccessTeamTask(db, auth.workspaceId, auth.userId, task.team_id)) return null;
-  if (write && !canAccessTeamTask(db, auth.workspaceId, auth.userId, task.team_id, { write: true }))
+  if (!task || !canAccessTask(db, auth.workspaceId, auth.userId, task)) return null;
+  if (write && !canAccessTask(db, auth.workspaceId, auth.userId, task, { write: true }))
     throw new HttpError(409, "Đội nhóm đã lưu trữ và chỉ được đọc");
   return task;
 }

@@ -7,6 +7,7 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    public payload?: Record<string, unknown>,
   ) {
     super(message);
   }
@@ -39,6 +40,7 @@ export async function request<T>(
   token?: string,
   options: RequestInit = {},
 ): Promise<T> {
+  if (options.signal?.aborted) throw new ApiError(499, "Yêu cầu đã hủy.");
   const controller = new AbortController();
   const abort = () => controller.abort();
   options.signal?.addEventListener("abort", abort);
@@ -54,6 +56,7 @@ export async function request<T>(
       },
     });
     const data = await res.json().catch(() => ({}));
+    if (options.signal?.aborted) throw new ApiError(499, "Yêu cầu đã hủy.");
     if (!res.ok) {
       const raw = data.error?.message || data.error || data.message;
       const fallbackMessage =
@@ -70,7 +73,7 @@ export async function request<T>(
           ? raw
           : authMessage || fallbackMessage ||
             "Thông tin chưa hợp lệ. Vui lòng kiểm tra và thử lại.";
-      throw new ApiError(res.status, message);
+      throw new ApiError(res.status, message, data);
     }
     return data as T;
   } catch (error) {

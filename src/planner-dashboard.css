@@ -401,6 +401,8 @@
 .pd-assist .personal-capture-compact .personal-capture-head { display: none; }
 .pd-assist .personal-capture-compact .personal-capture-main { flex-direction: column; align-items: stretch; }
 .pd-assist .personal-capture-compact .personal-capture-submit { justify-content: center; border-radius: 999px; }
+.pd-assist .personal-capture-compact .personal-capture-input { border-radius: 999px; padding-left: 16px; }
+.pd-page-note { color: var(--muted); font-size: var(--text-xs); line-height: 1.6; }
 .pd-assist .personal-capture-compact .personal-capture-toolbar { flex-direction: column; align-items: stretch; }
 .pd-assist .personal-capture-compact .personal-capture-due-control { width: 100%; }
 .pd-assist .personal-capture-compact .personal-capture-datetime { flex: 1; }

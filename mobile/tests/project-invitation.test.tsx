@@ -1,0 +1,12 @@
+import React from 'react';
+import { cleanup,fireEvent,render,screen,waitFor } from '@testing-library/react-native';
+import { Account } from '../src/features/Account';
+import { useResource,useSession } from '../src/core/session';
+jest.mock('expo-router',()=>({router:{push:jest.fn()}}));
+jest.mock('../src/core/session',()=>({useResource:jest.fn(),useSession:jest.fn()}));
+jest.mock('../src/core/push',()=>({unregisterPush:jest.fn()}));
+const api=jest.fn(),switchWorkspace=jest.fn();
+beforeEach(()=>{jest.clearAllMocks();jest.mocked(useSession).mockReturnValue({api,switchWorkspace,online:true,session:{user:{name:'Guest',email:'guest@example.test'},workspace:{id:'old',name:'Old'},subscription:{plan:'business'}}} as never);jest.mocked(useResource).mockReturnValue({data:{value:{workspaces:[]}}} as never);});
+afterEach(cleanup);
+test('mobile accepts the invitation then verifies the newly joined workspace',async()=>{api.mockResolvedValue({workspace:{id:'joined'}});switchWorkspace.mockResolvedValue(undefined);await render(<Account/>);await fireEvent.changeText(screen.getByLabelText('Liên kết mời'),'https://app.example.test/?invite=guest-token');await fireEvent.press(screen.getByLabelText('Chấp nhận lời mời'));await waitFor(()=>expect(switchWorkspace).toHaveBeenCalledWith('joined'));expect(JSON.parse(api.mock.calls[0][1].body)).toEqual({token:'guest-token'});expect(screen.getByLabelText('Liên kết mời').props.value).toBe('');});
+test('rejected mobile invitation retains the input and never switches workspace',async()=>{api.mockRejectedValue(new Error('Lời mời đã thu hồi'));await render(<Account/>);await fireEvent.changeText(screen.getByLabelText('Liên kết mời'),'pending-token');await fireEvent.press(screen.getByLabelText('Chấp nhận lời mời'));await waitFor(()=>expect(screen.getByText('Lời mời đã thu hồi')).toBeTruthy());expect(switchWorkspace).not.toHaveBeenCalled();expect(screen.getByLabelText('Liên kết mời').props.value).toBe('pending-token');});

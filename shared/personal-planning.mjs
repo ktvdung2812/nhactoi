@@ -8,6 +8,11 @@ export function planningDay(now = new Date()) {
 // wording stays in the title; users can disable recognition or edit the preview.
 export function parseQuickTask(input, now = new Date()) {
   const original = String(input || '').trim();
+  if (/(?:^|\s)(?:\d{1,4}[/-]\d{1,2}(?:[/-]\d{1,4})?|thứ\s+[2-7]|cuối tuần|tuần sau)(?=\s|$)/iu.test(original))
+    return { title: original, dueAt: null, recognized: false, error: 'Ngày chưa rõ hoặc chưa được hỗ trợ. Hãy chọn ngày cụ thể trong ô hạn.' };
+  const dayMatches=[...original.matchAll(/(?:^|\s)(ngày kia|ngày mai|hôm nay|mai)(?=\s|$)/giu)];
+  const timeMatches=[...original.matchAll(/(?:^|\s)(\d{1,2})(?:h|:)(\d{2})?(?=\s|$)/giu)];
+  if(dayMatches.length>1 || timeMatches.length>1)return {title:original,dueAt:null,recognized:false,error:'Có nhiều ngày hoặc giờ trong câu. Hãy chọn một hạn cụ thể.'};
   let day = /(?:^|\s)(ngày kia|ngày mai|hôm nay|mai)(?=\s|$)/iu.exec(original);
   // Preserve a person's name, e.g. "gọi Mai", instead of treating it as tomorrow.
   if (day?.[1] === 'Mai' && day.index > 0) day = null;
@@ -31,6 +36,9 @@ export function parseQuickTask(input, now = new Date()) {
 export function personalTaskGroups(tasks, view, now = new Date()) {
   const today = planningDay(now);
   const groups = new Map();
+  const weekStart=new Date(`${today}T00:00:00Z`);
+  weekStart.setUTCDate(weekStart.getUTCDate()-((weekStart.getUTCDay()+6)%7));
+  const weekEnd=new Date(weekStart);weekEnd.setUTCDate(weekEnd.getUTCDate()+7);
   for (const task of tasks) {
     if (task.status === 'done' || task.teamArchived) continue;
     const due = task.dueAt ? planningDay(task.dueAt) : null;
@@ -45,6 +53,10 @@ export function personalTaskGroups(tasks, view, now = new Date()) {
       // Keep the deadline visible even when the personal plan is later.
       const dates = [due, plan].filter(d => d && d > today).sort();
       key = dates[0];
+    }
+    if(view==='week') {
+      const dates=[due,plan].filter(d=>d && d>=weekStart.toISOString().slice(0,10) && d<weekEnd.toISOString().slice(0,10)).sort();
+      key=dates[0];
     }
     if (key) {
       if (!groups.has(key)) groups.set(key, []);

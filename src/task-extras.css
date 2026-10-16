@@ -41,6 +41,7 @@
 .task-extras-field { display: grid; gap: 6px; min-width: 0; color: #75887b; font-size: var(--text-xs); }
 .task-extras-field > span { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .task-extras-field b { color: #b46755; }
+.task-extras-field > span:has(> b) { justify-content: flex-start; gap: 3px; }
 .task-extras-field input,
 .task-extras-field select,
 .task-extras-inline-form input,
@@ -384,3 +385,7 @@
   .task-templates-toolbar { flex-wrap: wrap; }
   .task-templates-filters { flex-wrap: wrap; overflow-x: visible; }
 }
+/* TaskPicker: status line and pager sit under the select. */
+.task-picker-pager { display: flex; gap: 6px; }
+.task-picker-pager > .task-extras-button { min-height: 30px; padding: 4px 12px; font-size: var(--text-xs); }
+.task-extras-field:has(> .task-picker-pager) > small { color: var(--muted); }

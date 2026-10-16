@@ -1,3 +1,5 @@
+import { defaultProjectId, getProjectAccess } from './projects.mjs';
+import { canAccessTask } from './task-access.mjs';
 import {emitTaskEvent} from "./automations.mjs";
 import { createId } from "./auth.mjs";
 import { canManageAllTeams, getTeamAccess } from "./teams.mjs";
@@ -91,7 +93,8 @@ function scopeArgs(workspaceId, teamId) {
   return teamId === null ? [workspaceId] : [workspaceId, teamId];
 }
 
-function boardRows(db, workspaceId, teamId) {
+function boardRows(db, workspaceId, teamId, projectId = null) {
+  if (db.dialect === 'postgres') return db.prepare('SELECT * FROM board_columns WHERE workspace_id=? AND project_id=? ORDER BY position,id').all(workspaceId, projectId || defaultProjectId(workspaceId, teamId));
   const predicate = scopePredicate(teamId);
   return db
     .prepare(
@@ -121,13 +124,13 @@ function preferenceTeamId(teamId) {
   return teamId === null ? "" : teamId;
 }
 
-function preferenceJson(db, workspaceId, userId, teamId) {
+function preferenceJson(db, workspaceId, userId, teamId, projectId = null) {
   const row = db
     .prepare(
       `SELECT collapsed_ids FROM board_preferences
        WHERE workspace_id = ? AND user_id = ? AND team_id = ?`,
     )
-    .get(workspaceId, userId, preferenceTeamId(teamId));
+    .get(workspaceId, userId, projectId && projectId !== defaultProjectId(workspaceId, teamId) ? "project:" + projectId : preferenceTeamId(teamId));
   if (!row) return { collapsedIds: [] };
   try {
     const value = JSON.parse(row.collapsed_ids);
@@ -142,7 +145,25 @@ function preferenceJson(db, workspaceId, userId, teamId) {
  * This deliberately does not open a transaction: callers can invoke it from
  * an existing transaction, and a single request owns the DatabaseSync handle.
  */
-export function ensureBoardColumns(db, workspaceId, teamId, clock) {
+export function ensureBoardColumns(db, workspaceId, teamId, clock, projectId = null) {
+  if (db.dialect === 'postgres') {
+    const id = projectId || defaultProjectId(workspaceId, teamId);
+    const project = db.prepare('SELECT * FROM projects WHERE id=? AND workspace_id=?').get(id, workspaceId);
+    if (!project || (project.team_id || null) !== (teamId || null)) return [];
+    const rows = boardRows(db, workspaceId, teamId, id), now = nowIso(clock);
+    for (const [position, column] of DEFAULT_COLUMNS.entries()) {
+      if (rows.some(row => row.status === column.status && !row.archived_at)) continue;
+      db.prepare(`INSERT INTO board_columns(id,workspace_id,project_id,team_id,name,status,tone,position,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET archived_at=NULL`)
+        .run('boardcol_' + id + '_' + column.status, workspaceId, id, teamId || null, column.name, column.status, column.tone, position, now, now);
+    }
+    const columns = boardRows(db, workspaceId, teamId, id);
+    for (const status of STATUSES) {
+      const column = columns.find(row => row.status === status && !row.archived_at);
+      db.prepare('UPDATE tasks SET column_id=? WHERE workspace_id=? AND project_id=? AND status=? AND column_id IS NULL AND deleted_at IS NULL').run(column.id, workspaceId, id, status);
+    }
+    return columns;
+  }
   const normalizedTeamId = commonTeamId(teamId);
   if (!teamExists(db, workspaceId, normalizedTeamId)) return [];
   const rows = boardRows(db, workspaceId, normalizedTeamId);
@@ -220,9 +241,16 @@ export function ensureBoardColumns(db, workspaceId, teamId, clock) {
 
 export function resolveTaskColumn(
   db,
-  { workspaceId, teamId = null, status, columnId = undefined, clock, HttpError },
+  { workspaceId, teamId = null, projectId = null, status, columnId = undefined, clock, HttpError },
 ) {
   const normalizedTeamId = commonTeamId(teamId);
+  if (db.dialect === 'postgres') {
+    const columns = ensureBoardColumns(db, workspaceId, normalizedTeamId, clock, projectId);
+    const row = columnId ? columns.find(row => row.id === columnId) : columns.find(row => row.status === status && !row.archived_at);
+    if (!row) throw errorOf(HttpError, 400, 'columnId không thuộc dự án hoặc trạng thái không hợp lệ');
+    if (row.archived_at) throw errorOf(HttpError, 409, 'column is archived');
+    return row;
+  }
   ensureBoardColumns(db, workspaceId, normalizedTeamId, clock);
   const predicate = scopePredicate(normalizedTeamId);
   const args = normalizedTeamId === null
@@ -248,7 +276,8 @@ export function resolveTaskColumn(
   return row;
 }
 
-export function boardTaskColumn(db, workspaceId, teamId, columnId) {
+export function boardTaskColumn(db, workspaceId, teamId, columnId, projectId = null) {
+  if (db.dialect === 'postgres') return db.prepare('SELECT * FROM board_columns WHERE id=? AND workspace_id=? AND project_id=?').get(columnId, workspaceId, projectId || defaultProjectId(workspaceId, teamId));
   const normalizedTeamId = commonTeamId(teamId);
   const predicate = scopePredicate(normalizedTeamId);
   const args = normalizedTeamId === null ? [workspaceId] : [workspaceId, normalizedTeamId];
@@ -259,10 +288,11 @@ export function boardTaskColumn(db, workspaceId, teamId, columnId) {
 
 export function syncTaskColumn(
   db,
-  { workspaceId, taskId, teamId = null, status, columnId = undefined, boardPosition, clock, HttpError },
+  { workspaceId, taskId, teamId = null, projectId = null, status, columnId = undefined, boardPosition, clock, HttpError },
 ) {
   const column = resolveTaskColumn(db, {
     workspaceId,
+    projectId: projectId || (db.dialect === "postgres" && taskId ? db.prepare("SELECT project_id FROM tasks WHERE id=? AND workspace_id=?").get(taskId, workspaceId)?.project_id : null),
     teamId,
     status,
     columnId,
@@ -277,7 +307,11 @@ export function syncTaskColumn(
   return column;
 }
 
-function accessFor(db, auth, teamId, clock) {
+function accessFor(db, auth, teamId, clock, projectId = null) {
+  if (db.dialect === 'postgres') {
+    const a = getProjectAccess(db, auth.workspaceId, auth.userId, projectId || defaultProjectId(auth.workspaceId, teamId), { config: db.projectConfig, clock });
+    return a ? { teamId, team: null, visible: true, canManage: a.canManage, canWrite: a.canEdit } : null;
+  }
   const normalizedTeamId = commonTeamId(teamId);
   if (normalizedTeamId === null) {
     const role = roleForWorkspace(db, auth.workspaceId, auth.userId);
@@ -303,8 +337,8 @@ function accessFor(db, auth, teamId, clock) {
   };
 }
 
-function requireAccess(db, auth, teamId, clock, HttpError, { manage = false, write = false } = {}) {
-  const access = accessFor(db, auth, teamId, clock);
+function requireAccess(db, auth, teamId, clock, HttpError, { manage = false, write = false, projectId = null } = {}) {
+  const access = accessFor(db, auth, teamId, clock, projectId);
   if (!access) throw errorOf(HttpError, 404, "board was not found");
   if (manage && !access.canManage) throw errorOf(HttpError, 403, "you do not have permission to manage this board");
   if (write && !access.canWrite) throw errorOf(HttpError, 409, "board is read-only");
@@ -351,9 +385,9 @@ function parseTeamId(value, HttpError) {
   return value.trim() || null;
 }
 
-function taskJsonWithBoard(taskJson, row) {
+function taskJsonWithBoard(taskJson, row, auth) {
   return taskJson
-    ? taskJson(row)
+    ? taskJson(row, auth)
     : {
         id: row.id,
         status: row.status,
@@ -377,16 +411,27 @@ export function registerBoardRoutes(
     recordTaskActivity,
   },
 ) {
+  function scopeFor(req, value) {
+    if (db.dialect === 'postgres' && value?.projectId) {
+      const a = getProjectAccess(db, req.auth.workspaceId, req.auth.userId, value.projectId, { config: db.projectConfig, clock });
+      if (!a) throw errorOf(HttpError, 404, 'Không tìm thấy bảng');
+      if (value.teamId && value.teamId !== a.project.team_id) throw errorOf(HttpError, 400, 'Đội nhóm không khớp dự án');
+      return { teamId: a.project.team_id, projectId: a.project.id };
+    }
+    const teamId = parseTeamId(value?.teamId, HttpError);
+    return { teamId, projectId: db.dialect === 'postgres' ? defaultProjectId(req.auth.workspaceId, teamId) : null };
+  }
+
   app.get("/api/boards", requireAuth, (req, res, next) => {
     try {
-      const teamId = parseTeamId(req.query?.teamId, HttpError);
-      const access = requireAccess(db, req.auth, teamId, clock, HttpError);
-      const rows = ensureBoardColumns(db, req.auth.workspaceId, teamId, clock);
+      const { teamId, projectId } = scopeFor(req, req.query);
+      const access = requireAccess(db, req.auth, teamId, clock, HttpError, { projectId });
+      const rows = ensureBoardColumns(db, req.auth.workspaceId, teamId, clock, projectId);
       return res.json({
         columns: rows.map(columnJson),
         canManage: access.canManage,
         canWrite: access.canWrite,
-        preferences: preferenceJson(db, req.auth.workspaceId, req.auth.userId, teamId),
+        preferences: preferenceJson(db, req.auth.workspaceId, req.auth.userId, teamId, projectId),
       });
     } catch (error) {
       return next(error);
@@ -396,17 +441,17 @@ export function registerBoardRoutes(
   app.post("/api/boards/columns", requireAuth, (req, res, next) => {
     try {
       ensureWritable(req);
-      assertKeys(req.body, new Set(["teamId", "name", "status", "tone"]), HttpError);
-      const teamId = parseTeamId(req.body?.teamId, HttpError);
-      requireAccess(db, req.auth, teamId, clock, HttpError, { write: true });
+      assertKeys(req.body, new Set(["projectId", "teamId", "name", "status", "tone"]), HttpError);
+      const { teamId, projectId } = scopeFor(req, req.body);
+      requireAccess(db, req.auth, teamId, clock, HttpError, { write: true, projectId });
       if (!teamExists(db, req.auth.workspaceId, teamId)) throw errorOf(HttpError, 404, "team was not found");
       const name = text(req.body?.name, "name", HttpError, { required: true, max: 120 });
       const status = statusValue(req.body?.status, HttpError);
       const tone = toneValue(req.body?.tone, HttpError);
       const now = nowIso(clock);
       const created = withTransaction(db, () => {
-        ensureBoardColumns(db, req.auth.workspaceId, teamId, clock);
-        const rows = boardRows(db, req.auth.workspaceId, teamId);
+        ensureBoardColumns(db, req.auth.workspaceId, teamId, clock, projectId);
+        const rows = boardRows(db, req.auth.workspaceId, teamId, projectId);
         const position = rows.reduce((max, row) => Math.max(max, Number(row.position) || 0), -1) + 1;
         const id = createId("boardcol_");
         const predicate = teamId === null ? "NULL" : "?";
@@ -415,9 +460,9 @@ export function registerBoardRoutes(
           : [id, req.auth.workspaceId, teamId, name, status, tone, position, now, now];
         db.prepare(
           `INSERT INTO board_columns
-           (id, workspace_id, team_id, name, status, tone, position, created_at, updated_at)
-           VALUES (?, ?, ${predicate}, ?, ?, ?, ?, ?, ?)`,
-        ).run(...params);
+           (id, workspace_id, team_id, name, status, tone, position, created_at, updated_at${projectId ? ", project_id" : ""})
+           VALUES (?, ?, ${predicate}, ?, ?, ?, ?, ?, ?${projectId ? ", ?" : ""})`,
+        ).run(...params, ...(projectId ? [projectId] : []));
         return db.prepare("SELECT * FROM board_columns WHERE id = ?").get(id);
       });
       return res.status(201).json({ column: columnJson(created) });
@@ -434,7 +479,7 @@ export function registerBoardRoutes(
         .prepare("SELECT * FROM board_columns WHERE id = ? AND workspace_id = ?")
         .get(req.params.id, req.auth.workspaceId);
       if (!current) return fail(res, 404, "column was not found");
-      const access = requireAccess(db, req.auth, current.team_id, clock, HttpError, { write: true });
+      const access = requireAccess(db, req.auth, current.team_id, clock, HttpError, { write: true, projectId: current.project_id });
       if (current.archived_at) throw errorOf(HttpError, 409, "column is archived; restore it before editing");
       const values = [];
       const fields = [];
@@ -476,14 +521,14 @@ export function registerBoardRoutes(
   app.post("/api/boards/columns/reorder", requireAuth, (req, res, next) => {
     try {
       ensureWritable(req);
-      assertKeys(req.body, new Set(["teamId", "ids"]), HttpError);
-      const teamId = parseTeamId(req.body?.teamId, HttpError);
-      requireAccess(db, req.auth, teamId, clock, HttpError, { write: true });
+      assertKeys(req.body, new Set(["projectId", "teamId", "ids"]), HttpError);
+      const { teamId, projectId } = scopeFor(req, req.body);
+      requireAccess(db, req.auth, teamId, clock, HttpError, { write: true, projectId });
       if (!Array.isArray(req.body?.ids) || !req.body.ids.length)
         throw errorOf(HttpError, 400, "ids must be a non-empty array");
       const ids = req.body.ids.map((id) => text(id, "ids", HttpError, { required: true, max: 160 }));
       if (new Set(ids).size !== ids.length) throw errorOf(HttpError, 400, "ids contains duplicates");
-      const rows = boardRows(db, req.auth.workspaceId, teamId);
+      const rows = boardRows(db, req.auth.workspaceId, teamId, projectId);
       if (rows.length !== ids.length || rows.some((row) => !ids.includes(row.id)))
         throw errorOf(HttpError, 400, "ids must include every column in this board");
       const now = nowIso(clock);
@@ -491,7 +536,7 @@ export function registerBoardRoutes(
         const update = db.prepare("UPDATE board_columns SET position = ?, updated_at = ? WHERE id = ? AND workspace_id = ?");
         ids.forEach((id, index) => update.run(index, now, id, req.auth.workspaceId));
       });
-      return res.json({ columns: boardRows(db, req.auth.workspaceId, teamId).map(columnJson) });
+      return res.json({ columns: boardRows(db, req.auth.workspaceId, teamId, projectId).map(columnJson) });
     } catch (error) {
       return next(error);
     }
@@ -505,19 +550,14 @@ export function registerBoardRoutes(
         .prepare("SELECT * FROM board_columns WHERE id = ? AND workspace_id = ?")
         .get(req.params.id, req.auth.workspaceId);
       if (!current) return fail(res, 404, "column was not found");
-      requireAccess(db, req.auth, current.team_id, clock, HttpError, { write: true });
+      requireAccess(db, req.auth, current.team_id, clock, HttpError, { write: true, projectId: current.project_id });
       if (current.archived_at) throw errorOf(HttpError, 409, "column is already archived");
-      const activeCount = db
-        .prepare(
-          `SELECT COUNT(*) AS count FROM board_columns
-           WHERE workspace_id = ? AND ${scopePredicate(current.team_id)} AND archived_at IS NULL`,
-        )
-        .get(...scopeArgs(req.auth.workspaceId, current.team_id)).count;
+      const activeCount = boardRows(db, req.auth.workspaceId, current.team_id, current.project_id).filter(row => !row.archived_at).length;
       if (Number(activeCount) <= 1) throw errorOf(HttpError, 409, "board must keep at least one active column");
       const tasks = boardTaskRows(db, req.auth.workspaceId, current.team_id, current.id);
       let target = null;
       if (req.body?.targetColumnId !== undefined && req.body?.targetColumnId !== null && req.body?.targetColumnId !== "") {
-        target = boardTaskColumn(db, req.auth.workspaceId, current.team_id, req.body.targetColumnId);
+        target = boardTaskColumn(db, req.auth.workspaceId, current.team_id, req.body.targetColumnId, current.project_id);
         if (!target) throw errorOf(HttpError, 400, "targetColumnId is invalid");
         if (target.id === current.id || target.archived_at) throw errorOf(HttpError, 409, "target column is invalid");
       } else if (tasks.length) {
@@ -563,6 +603,7 @@ export function registerBoardRoutes(
             const nextColumn = resolveTaskColumn(db, {
               workspaceId: req.auth.workspaceId,
               teamId: nextTask.team_id,
+              projectId: nextTask.project_id,
               status: nextTask.status,
               clock,
               HttpError,
@@ -588,16 +629,16 @@ export function registerBoardRoutes(
         .prepare("SELECT * FROM board_columns WHERE id = ? AND workspace_id = ?")
         .get(req.params.id, req.auth.workspaceId);
       if (!current) return fail(res, 404, "column was not found");
-      requireAccess(db, req.auth, current.team_id, clock, HttpError, { write: true });
+      requireAccess(db, req.auth, current.team_id, clock, HttpError, { write: true, projectId: current.project_id });
       if (!current.archived_at) throw errorOf(HttpError, 409, "column is already active");
       const now = nowIso(clock);
       withTransaction(db, () => {
         const max = db
           .prepare(
             `SELECT COALESCE(MAX(position), -1) AS position FROM board_columns
-             WHERE workspace_id = ? AND ${scopePredicate(current.team_id)}`,
+             WHERE workspace_id = ? AND ${current.project_id ? "project_id = ?" : scopePredicate(current.team_id)}`,
           )
-          .get(...scopeArgs(req.auth.workspaceId, current.team_id)).position;
+          .get(...(current.project_id ? [req.auth.workspaceId,current.project_id] : scopeArgs(req.auth.workspaceId, current.team_id))).position;
         db.prepare("UPDATE board_columns SET archived_at = NULL, position = ?, updated_at = ? WHERE id = ? AND workspace_id = ?").run(Number(max) + 1, now, current.id, req.auth.workspaceId);
       });
       return res.json({ column: columnJson(db.prepare("SELECT * FROM board_columns WHERE id = ? AND workspace_id = ?").get(current.id, req.auth.workspaceId)) });
@@ -609,13 +650,13 @@ export function registerBoardRoutes(
   app.patch("/api/boards/preferences", requireAuth, (req, res, next) => {
     try {
       ensureWritable(req);
-      assertKeys(req.body, new Set(["teamId", "collapsedIds"]), HttpError);
-      const teamId = parseTeamId(req.body?.teamId, HttpError);
-      requireAccess(db, req.auth, teamId, clock, HttpError, { write: true });
+      assertKeys(req.body, new Set(["projectId", "teamId", "collapsedIds"]), HttpError);
+      const { teamId, projectId } = scopeFor(req, req.body);
+      requireAccess(db, req.auth, teamId, clock, HttpError, { write: true, projectId });
       if (!Array.isArray(req.body?.collapsedIds)) throw errorOf(HttpError, 400, "collapsedIds must be an array");
       const collapsedIds = req.body.collapsedIds.map((id) => text(id, "collapsedIds", HttpError, { required: true, max: 160 }));
       if (new Set(collapsedIds).size !== collapsedIds.length) throw errorOf(HttpError, 400, "collapsedIds contains duplicates");
-      const known = new Set(boardRows(db, req.auth.workspaceId, teamId).map((row) => row.id));
+      const known = new Set(boardRows(db, req.auth.workspaceId, teamId, projectId).map((row) => row.id));
       if (collapsedIds.some((id) => !known.has(id))) throw errorOf(HttpError, 400, "collapsedIds contains an unknown column");
       const now = nowIso(clock);
       db.prepare(
@@ -623,7 +664,7 @@ export function registerBoardRoutes(
          VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(workspace_id, user_id, team_id)
          DO UPDATE SET collapsed_ids = excluded.collapsed_ids, updated_at = excluded.updated_at`,
-      ).run(req.auth.workspaceId, req.auth.userId, preferenceTeamId(teamId), JSON.stringify(collapsedIds), now);
+      ).run(req.auth.workspaceId, req.auth.userId, (projectId && projectId !== defaultProjectId(req.auth.workspaceId, teamId) ? "project:" + projectId : preferenceTeamId(teamId)), JSON.stringify(collapsedIds), now);
       return res.json({ preferences: { collapsedIds } });
     } catch (error) {
       return next(error);
@@ -636,12 +677,12 @@ export function registerBoardRoutes(
       assertKeys(req.body, new Set(["columnId", "beforeTaskId"]), HttpError);
       const task = taskScopeRow(db, req.auth.workspaceId, req.params.id);
       if (!task) return fail(res, 404, "task was not found");
-      const access = accessFor(db, req.auth, task.team_id, clock);
+      const access = accessFor(db, req.auth, task.team_id, clock, task.project_id);
       if (!access || !access.visible) return fail(res, 404, "task was not found");
       if (!access.canWrite) throw errorOf(HttpError, 409, "board is read-only");
       const columnId = text(req.body?.columnId, "columnId", HttpError, { required: true, max: 160 });
-      ensureBoardColumns(db, req.auth.workspaceId, task.team_id, clock);
-      const target = boardTaskColumn(db, req.auth.workspaceId, task.team_id, columnId);
+      ensureBoardColumns(db, req.auth.workspaceId, task.team_id, clock, task.project_id);
+      const target = boardTaskColumn(db, req.auth.workspaceId, task.team_id, columnId, task.project_id);
       if (!target) throw errorOf(HttpError, 400, "columnId is invalid");
       if (target.archived_at) throw errorOf(HttpError, 409, "column is archived");
       const beforeTaskId = req.body?.beforeTaskId === undefined || req.body?.beforeTaskId === null || req.body?.beforeTaskId === ""
@@ -697,6 +738,7 @@ export function registerBoardRoutes(
             const nextColumn = resolveTaskColumn(db, {
               workspaceId: req.auth.workspaceId,
               teamId: nextTask.team_id,
+              projectId: nextTask.project_id,
               status: nextTask.status,
               clock,
               HttpError,
@@ -708,8 +750,8 @@ export function registerBoardRoutes(
       });
       const moved = taskScopeRow(db, req.auth.workspaceId, task.id);
       return res.json({
-        task: taskJsonWithBoard(taskJson, moved),
-        nextTask: nextTaskId ? taskJsonWithBoard(taskJson, taskScopeRow(db, req.auth.workspaceId, nextTaskId)) : null,
+        task: taskJsonWithBoard(taskJson, moved, req.auth),
+        nextTask: nextTaskId ? taskJsonWithBoard(taskJson, taskScopeRow(db, req.auth.workspaceId, nextTaskId), req.auth) : null,
       });
     } catch (error) {
       return next(error);

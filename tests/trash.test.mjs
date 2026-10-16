@@ -270,6 +270,89 @@ test("members see only their own visible task trash, never customer or finance t
   assert.equal(ownerTrash.json.summary.total, 3);
 });
 
+test("trash blocks restoring open tasks with a secondary assignee who left the team", async (t) => {
+  const server = await boot();
+  t.after(() => server.close());
+  const owner = await register(server, "trash-secondary-owner@example.test", "Chủ");
+  const invite = await request(server.base, "/api/invitations", {
+    method: "POST",
+    cookie: owner.cookie,
+    body: { email: "trash-secondary-member@example.test", role: "member" },
+  });
+  const member = await request(server.base, "/api/invitations/accept", {
+    method: "POST",
+    body: {
+      token: new URL(invite.json.inviteUrl).searchParams.get("invite"),
+      name: "Thành viên phụ",
+      password: "password123",
+    },
+  });
+  const team = await request(server.base, "/api/teams", {
+    method: "POST",
+    cookie: owner.cookie,
+    body: {
+      name: "Đội phục hồi",
+      color: "blue",
+      members: [
+        { userId: owner.json.user.id, role: "lead" },
+        { userId: member.json.user.id, role: "member" },
+      ],
+    },
+  });
+  const task = await request(server.base, "/api/tasks", {
+    method: "POST",
+    cookie: owner.cookie,
+    body: { title: "Task có người phụ", teamId: team.json.team.id, assigneeId: owner.json.user.id },
+  });
+  assert.equal(
+    (
+      await request(server.base, `/api/tasks/${task.json.task.id}/extras`, {
+        method: "PUT",
+        cookie: owner.cookie,
+        body: { assigneeIds: [member.json.user.id], labelIds: [] },
+      })
+    ).response.status,
+    200,
+  );
+  assert.equal(
+    (
+      await request(server.base, `/api/tasks/${task.json.task.id}`, {
+        method: "DELETE",
+        cookie: owner.cookie,
+      })
+    ).response.status,
+    200,
+  );
+  assert.equal(
+    (
+      await request(server.base, `/api/teams/${team.json.team.id}/members`, {
+        method: "PUT",
+        cookie: owner.cookie,
+        body: { members: [{ userId: owner.json.user.id, role: "lead" }] },
+      })
+    ).response.status,
+    200,
+  );
+
+  const item = (
+    await request(server.base, "/api/trash?type=task", { cookie: owner.cookie })
+  ).json.items.find((row) => row.entityId === task.json.task.id);
+  assert.equal(item.canRestore, false);
+  assert.match(item.restoreBlockedReason, /đội nhóm|dự án/i);
+  const restored = await request(server.base, "/api/trash/restore", {
+    method: "POST",
+    cookie: owner.cookie,
+    body: { ids: [item.id] },
+  });
+  assert.equal(restored.response.status, 409);
+  assert.notEqual(
+    server.app.locals.db
+      .prepare("SELECT deleted_at FROM tasks WHERE id = ?")
+      .get(task.json.task.id).deleted_at,
+    null,
+  );
+});
+
 test("[SQLite legacy] opening an old database backfills legacy soft deletes for admins only", () => {
   const dir = mkdtempSync(join(tmpdir(), "nhactoi-trash-migration-"));
   const dbPath = join(dir, "legacy.sqlite");

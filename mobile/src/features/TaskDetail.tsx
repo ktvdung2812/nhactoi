@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import {TaskWork} from "./WorkManagement";
 import {
   Alert,
   ScrollView,
@@ -11,6 +12,7 @@ import type { DocumentPickerAsset } from "expo-document-picker";
 import { useResource, useSession, refreshData } from "../core/session";
 import type { Detail, Column, Member } from "../core/types";
 import { dateLabel, statuses, priorities, recurrenceLabel } from "../core/policy";
+import { queueable } from "../core/offline-state";
 import { errorMessage } from "../core/api";
 import { pickFiles, uploadFile, openAttachment } from "../core/files";
 import {
@@ -35,21 +37,39 @@ type Collaboration = {
     reactions: { emoji: string; count: number; mine: boolean }[];
   }[];
 };
+type TaskExtras = {
+  assigneeIds: string[];
+  labelIds: string[];
+  labels: { id: string; name: string; color: string }[];
+  members: Member[];
+};
+type Reminders = {
+  canRespond: boolean;
+  recipients: { id: string; name: string; acknowledged_at?: string; snoozed_until?: string; snooze_sent_at?: string }[];
+  history: { id: string; name: string; created_at: string; email_status?: string; push_status?: string; web_push_statuses?: Record<string, number> }[];
+  zaloHistory?: { id:string; name:string; created_at:string; status:string; attempts:number; error?:string }[];
+};
+function deliveryStatus(status?: string) {
+  return ({ delivered:"Đã chuyển tới người nhận",read:"Người nhận đã đọc",retry:"Chờ thử lại",sending:"Đang gửi",suppressed:"Đã chặn",sent: "Nhà cung cấp đã tiếp nhận", accepted: "Nhà cung cấp đã tiếp nhận", pending: "Đang chờ gửi", failed: "Gửi thất bại", skipped: "Đã bỏ qua", unknown: "Chưa rõ kết quả" } as Record<string, string>)[status || ""] || (status ? "Chưa rõ kết quả" : "Không có lượt gửi");
+}
 export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
-  const { api, session, writable, online } = useSession();
+  const { api, session, writable, taskWritable = writable, online, saveDraft, readDraft } = useSession();
   const base = `/tasks/${encodeURIComponent(id)}`;
   const result = useResource<Detail>(base + "/detail");
-  const collaboration = useResource<Collaboration>(base + "/collaboration");
+  const collaboration = useResource<Collaboration>(base + "/collaboration", !id.startsWith("local:"));
+  const extras = useResource<TaskExtras>(base + "/extras", !id.startsWith("local:"));
+  const labels = useResource<{ labels: TaskExtras["labels"] }>(`/task-labels${result.data?.value.task.projectId ? `?projectId=${encodeURIComponent(result.data.value.task.projectId)}` : ""}`);
   const policy = useResource<{ enabled: boolean; maxFileSizeMb: number }>(
-    base + "/upload-policy",
+    base + "/upload-policy", !id.startsWith("local:"),
   );
-  const reminders = useResource<{canRespond:boolean;recipients:{id:string;name:string;acknowledged_at?:string;snoozed_until?:string;snooze_sent_at?:string}[]}>(base + "/reminders");
+  const reminders = useResource<Reminders>(base + "/reminders", !id.startsWith("local:"));
   const task = result.data?.value.task;
   const board = useResource<{ columns: Column[] }>(
-    `/boards?teamId=${task?.teamId || ""}`,
+    `/boards?${task?.projectId ? `projectId=${encodeURIComponent(task.projectId)}` : `teamId=${task?.teamId || ""}`}`,
     !!task,
   );
   const [error, setError] = useState(""),
+    [localMessage,setLocalMessage]=useState(""),
     [busy, setBusy] = useState(false),
     [comment, setComment] = useState(""),
     [listTitle, setListTitle] = useState(""),
@@ -66,10 +86,9 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
     [linkTitle, setLinkTitle] = useState(""),
     [linkUrl, setLinkUrl] = useState("");
   const canWrite =
-    writable &&
+    taskWritable &&
     !!result.data?.value.canWrite &&
-    !result.error &&
-    !result.data?.cached;
+    !result.error;
   async function mutate(
     path: string,
     method: string,
@@ -77,12 +96,13 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
     after?: () => void,
   ) {
     if (!canWrite || busy) return;
+    if(!online&&!queueable(path,method)){setError('Thao tác này cần kết nối mạng; chưa được đưa vào hàng đợi.');return;}
     setBusy(true);
     setError("");
     try {
       await api(path, {
         method,
-        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        ...(body !== undefined ? { body: JSON.stringify(queueable(path,method)?{...(body as object),expectedRevision:task?.revision}:body) } : {}),
       });
       after?.();
       await refreshData();
@@ -101,8 +121,25 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
         onPress: () => void mutate(path, "DELETE"),
       },
     ]);
+  async function copyTask() {
+    if (!canWrite || busy || !task) return;
+    setBusy(true);
+    setError("");
+    try {
+      const copied = await api<{ task: { id: string } }>(base + "/copy", {
+        method: "POST",
+        body: JSON.stringify({ dueAt: task.dueAt }),
+      });
+      await refreshData();
+      router.push({ pathname: "/task/[id]", params: { id: copied.task.id } });
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
   async function send() {
-    if (!session || busy || !canWrite) return;
+    if (!session || busy || !canWrite || !online) return;
     setBusy(true);
     setError("");
     try {
@@ -122,6 +159,7 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
           attachmentIds: updated.map((f) => f.id),
         }),
       });
+      if(saveDraft)await saveDraft(`comment:${id}`,null);
       setComment("");
       setFiles([]);
       setMentionIds([]);
@@ -133,6 +171,7 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
     }
   }
   async function selectFiles() {
+    if(!online)return;
     try {
       const chosen = await pickFiles(
         policy.data?.value.maxFileSizeMb || 10,
@@ -146,7 +185,7 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
     }
   }
   async function upload() {
-    if (!session || busy) return;
+    if (!session || busy || !online) return;
     try {
       const chosen = await pickFiles(policy.data?.value.maxFileSizeMb || 10);
       if (!chosen.length) return;
@@ -193,7 +232,11 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
           }
         />
       </Row>
+      <Button label="Sao chép công việc" secondary disabled={disabled || !online} onPress={() => void copyTask()} />
       <Heading>{task.title}</Heading>
+      {!id.startsWith("local:")&&<TaskWork key={id} taskId={id} canWrite={canWrite&&!result.data?.cached}/> }
+      {task.pending&&<Text accessibilityLiveRegion="polite">Đã lưu trên thiết bị · chờ máy chủ xác nhận. Xem trạng thái tại Tài khoản → Hàng đợi.</Text>}
+      <Button label={task.status==='done'?'Mở lại công việc':'Hoàn thành công việc'} disabled={disabled} onPress={()=>void mutate(base,'PATCH',{status:task.status==='done'?'todo':'done'})}/>
       <Row>
         <Text style={s.pill}>{statuses[task.status]}</Text>
         <Text style={s.pill}>Ưu tiên {priorities[task.priority]}</Text>
@@ -206,6 +249,8 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
         </Text>
       )}
       <ErrorNotice message={error} />
+      {!!localMessage&&<Text accessibilityLiveRegion="polite">{localMessage}</Text>}
+      {reminders.error && <ErrorNotice message={errorMessage(reminders.error)} />}
       {reminders.data && <Card><Text style={s.cardTitle}>Nhận việc & nhắc lại</Text>
         {reminders.data.value.recipients.map(person=><Text key={person.id}>{person.name}: {person.acknowledged_at ? "đã nhận việc" : "chưa xác nhận"}{person.snoozed_until && !person.snooze_sent_at ? ` · hoãn đến ${dateLabel(person.snoozed_until)}` : ""}</Text>)}
         {reminders.data.value.canRespond && <><Button label="Đã nhận việc" disabled={disabled || task.status==='done' || !!reminders.error} onPress={()=>void mutate(base+'/reminders/acknowledge','POST',{})}/>
@@ -214,6 +259,7 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
       <Card>
         <Text>{task.description || "Chưa có mô tả."}</Text>
         <Text style={s.muted}>◷ Hạn: {dateLabel(task.dueAt)}</Text>
+        <Text style={s.muted}>◷ Bắt đầu chung: {dateLabel(task.startAt)}</Text>
         <Text style={s.muted}>
           ♧ {task.assigneeName || "Chưa giao"} · {task.teamName || "Việc chung"}
         </Text>
@@ -221,7 +267,7 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
         <Text style={s.muted}>{recurrenceLabel(task.recurrence, task.recurrenceOptions)}</Text>
         <Select
           label="Chuyển sang cột"
-          disabled={disabled}
+          disabled={disabled || !online}
           value={
             task.columnId ||
             board.data?.value.columns.find(
@@ -253,6 +299,52 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
           />
         )}
       </Card>
+      <Card>
+        <Text style={s.cardTitle}>Người phối hợp & nhãn</Text>
+        {extras.isPending || labels.isPending ? <Loading /> : <>
+          {(extras.error || labels.error) && <>
+            <ErrorNotice message={errorMessage(extras.error || labels.error)} />
+            <Button label="Tải lại nhãn và người phối hợp" secondary onPress={() => { void extras.refetch(); void labels.refetch(); }} />
+          </>}
+          {extras.data && <>
+            <Text style={s.label}>Người phối hợp</Text>
+            <Row>{extras.data.value.members.filter(member => member.id !== task.assigneeId).map(member => {
+              const selected = extras.data!.value.assigneeIds.includes(member.id);
+              return <Button key={member.id} label={`${selected ? "Bỏ" : "Thêm"} người phối hợp ${member.name}`} secondary={!selected}
+                disabled={disabled || !!extras.error || (online && !!extras.data?.cached)}
+                onPress={() => void mutate(base + "/extras", "PUT", {
+                  assigneeIds: selected ? extras.data!.value.assigneeIds.filter(value => value !== member.id) : [...extras.data!.value.assigneeIds, member.id],
+                  labelIds: extras.data!.value.labelIds,
+                })} />;
+            })}</Row>
+            {!extras.data.value.assigneeIds.length && <Text style={s.muted}>Chưa có người phối hợp.</Text>}
+            <Text style={s.label}>Nhãn</Text>
+            <Row>{(labels.data?.value.labels || extras.data.value.labels).map(label => {
+              const selected = extras.data!.value.labelIds.includes(label.id);
+              return <Button key={label.id} label={`${selected ? "Bỏ" : "Thêm"} nhãn ${label.name}`} secondary={!selected}
+                disabled={disabled || !!extras.error || !!labels.error || (online && (!!extras.data?.cached || !!labels.data?.cached))}
+                onPress={() => void mutate(base + "/extras", "PUT", {
+                  assigneeIds: extras.data!.value.assigneeIds,
+                  labelIds: selected ? extras.data!.value.labelIds.filter(value => value !== label.id) : [...extras.data!.value.labelIds, label.id],
+                })} />;
+            })}</Row>
+            {!extras.data.value.labelIds.length && <Text style={s.muted}>Chưa có nhãn.</Text>}
+          </>}
+        </>}
+      </Card>
+      {reminders.data && <Card>
+        <Text style={s.cardTitle}>Lịch sử gửi lời nhắc</Text>
+        <Text style={s.muted}>Nhà cung cấp tiếp nhận chưa có nghĩa người nhận đã đọc hoặc xác nhận công việc.</Text>
+        {reminders.data.value.history?.map(entry => <View key={entry.id} style={{ gap: 4 }}>
+          <Text>{entry.name} · {dateLabel(entry.created_at)}</Text>
+          <Text>Email: {deliveryStatus(entry.email_status)}</Text>
+          <Text>FCM: {deliveryStatus(entry.push_status)}</Text>
+          <Text>Web Push: {Object.entries(entry.web_push_statuses || {}).map(([status, count]) => `${deliveryStatus(status)} (${count})`).join("; ") || "Không có lượt gửi"}</Text>
+        </View>)}
+        {reminders.data.value.zaloHistory?.map(entry=><View key={entry.id}><Text>Zalo OA · {entry.name} · {dateLabel(entry.created_at)}</Text><Text>{deliveryStatus(entry.status)} · {entry.attempts} lượt</Text>{entry.error&&<Text>{entry.error}</Text>}</View>)}
+        {!reminders.data.value.history?.length&&!reminders.data.value.zaloHistory?.length && <Text style={s.muted}>Chưa có lượt gửi lời nhắc.</Text>}
+        {reminders.data.cached && <Text style={s.muted}>Đang xem lịch sử đã tải.</Text>}
+      </Card>}
       <Card>
         <Text style={s.cardTitle}>Checklist</Text>
         {data.checklists.map((list) => (
@@ -518,6 +610,8 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
               onChangeText={setComment}
               maxLength={5000}
             />
+            {saveDraft&&<Row><Button label="Lưu nháp bình luận" secondary onPress={()=>void saveDraft(`comment:${id}`,{body:comment,mentionIds}).then(()=>setLocalMessage('Đã lưu nháp mã hóa; bình luận chưa gửi.')).catch(e=>setError(errorMessage(e)))}/><Button label="Khôi phục bình luận" secondary onPress={()=>void readDraft(`comment:${id}`).then(d=>{if(d){setComment(String(d.body||''));setMentionIds((d.mentionIds||[]) as string[]);}}).catch(e=>setError(errorMessage(e)))}/></Row>}
+            {!online&&<Text>Bình luận ngoại tuyến chỉ lưu nháp, không tự gửi khi có mạng.</Text>}
             <Select
               label="Nhắc tên thành viên"
               value=""
@@ -563,7 +657,7 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
               )}
               <Button
                 label={busy ? "Đang gửi…" : "Gửi bình luận"}
-                disabled={busy || (!comment.trim() && !files.length)}
+                disabled={busy || !online || (!comment.trim() && !files.length)}
                 onPress={() => void send()}
               />
             </Row>

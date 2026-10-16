@@ -32,6 +32,7 @@ const config: ExpoConfig = {
     ["expo-sqlite", { useSQLCipher: true }],
     ["expo-notifications", { defaultChannel: "reminders" }],
     "expo-document-picker",
+    "expo-sharing",
     "expo-font",
     ["expo-build-properties", { android: { usesCleartextTraffic: !release } }],
   ],

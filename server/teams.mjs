@@ -1,4 +1,6 @@
 import { createId } from "./auth.mjs";
+import { taskAccessSql } from "./task-access.mjs";
+import { readPage } from "./read-page.mjs";
 
 export const TEAM_COLORS = new Set([
   "green",
@@ -50,7 +52,7 @@ function nowIso(clock) {
 function workspaceRole(db, workspaceId, userId) {
   return db
     .prepare(
-      "SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
+      `SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ?${db.dialect === "postgres" ? " AND member_type = 'member'" : ""}`,
     )
     .get(workspaceId, userId)?.role || null;
 }
@@ -106,6 +108,7 @@ export function getTeamAccess(db, workspaceId, userId, teamId) {
   const team = teamRow(db, workspaceId, teamId);
   if (!team) return null;
   const currentWorkspaceRole = workspaceRole(db, workspaceId, userId);
+  if (!currentWorkspaceRole) return null;
   const teamRole = db
     .prepare(
       "SELECT role FROM team_members WHERE team_id = ? AND workspace_id = ? AND user_id = ?",
@@ -191,30 +194,22 @@ export function visibleTeamRows(db, workspaceId, userId) {
   );
 }
 
-function taskRowsForTeam(db, workspaceId, teamId, taskJson) {
-  return db
-    .prepare(
-      `
-      SELECT tk.*, t.name AS team_name, t.archived_at AS team_archived
-      FROM tasks tk JOIN teams t ON t.id = tk.team_id
-      WHERE tk.team_id = ? AND tk.workspace_id = ? AND t.workspace_id = ?
-        AND tk.deleted_at IS NULL
-      ORDER BY CASE tk.status WHEN 'doing' THEN 0 WHEN 'todo' THEN 1 ELSE 2 END,
-               tk.due_at ASC, tk.created_at DESC, tk.id DESC
-    `,
-    )
-    .all(teamId, workspaceId, workspaceId)
-    .map(taskJson);
-}
-
-function detail(db, workspaceId, userId, teamId, taskJson) {
+function detail(db, workspaceId, userId, teamId, taskJson, query={}) {
   const access = getTeamAccess(db, workspaceId, userId, teamId);
-  if (!access || !access.visible)
-    throw new HttpError(404, "Không tìm thấy đội nhóm");
+  if (!access || !access.visible) throw new HttpError(404, "Không tìm thấy đội nhóm");
+  const bounded=Object.keys(query).length>0;
+  const {page,pageSize,offset}=readPage(query,HttpError);
+  if(query.tasks!==undefined&&query.tasks!=='none')throw new HttpError(400,'Cách tải công việc không hợp lệ.');
+  const from=`FROM tasks tk JOIN teams t ON t.id=tk.team_id AND t.workspace_id=tk.workspace_id
+    WHERE tk.team_id=? AND tk.workspace_id=? AND tk.deleted_at IS NULL${db.dialect==='postgres'?` AND ${taskAccessSql('tk')}`:''}`;
+  const args=[teamId,workspaceId,...(db.dialect==='postgres'?[userId]:[])];
+  const tasks=query.tasks==='none'?[]:db.prepare(`SELECT tk.*,t.name AS team_name,t.archived_at AS team_archived ${from}
+    ORDER BY CASE tk.status WHEN 'doing' THEN 0 WHEN 'todo' THEN 1 ELSE 2 END,tk.due_at,tk.created_at DESC,tk.id DESC${bounded?' LIMIT ? OFFSET ?':''}`)
+    .all(...args,...(bounded?[pageSize,offset]:[])).map(taskJson);
+  const total=Number(access.team.task_count||0);
   return {
-    team: teamJson(db, access.team, userId, access),
-    members: teamMemberRows(db, teamId),
-    tasks: taskRowsForTeam(db, workspaceId, teamId, taskJson),
+    team: teamJson(db, access.team, userId, access),members:teamMemberRows(db,teamId),tasks,
+    ...(bounded?{taskPage:{page,pageSize,total,hasMore:query.tasks!=='none'&&offset+tasks.length<total}}:{}),
   };
 }
 
@@ -362,7 +357,7 @@ export function registerTeamRoutes(
         replaceRoster(db, id, req.auth.workspaceId, members, now);
       });
       return res.status(201).json(
-        detail(db, req.auth.workspaceId, req.auth.userId, id, taskJson),
+        detail(db, req.auth.workspaceId, req.auth.userId, id, taskJson, req.query),
       );
     } catch (error) {
       return next(error);
@@ -372,7 +367,7 @@ export function registerTeamRoutes(
   app.get("/api/teams/:id", requireAuth, (req, res, next) => {
     try {
       return res.json(
-        detail(db, req.auth.workspaceId, req.auth.userId, req.params.id, taskJson),
+        detail(db, req.auth.workspaceId, req.auth.userId, req.params.id, taskJson, req.query),
       );
     } catch (error) {
       return next(error);
@@ -433,7 +428,7 @@ export function registerTeamRoutes(
         ).run(...params);
       });
       return res.json(
-        detail(db, req.auth.workspaceId, req.auth.userId, req.params.id, taskJson),
+        detail(db, req.auth.workspaceId, req.auth.userId, req.params.id, taskJson, req.query),
       );
     } catch (error) {
       return next(error);
@@ -473,7 +468,7 @@ export function registerTeamRoutes(
         );
       });
       return res.json(
-        detail(db, req.auth.workspaceId, req.auth.userId, req.params.id, taskJson),
+        detail(db, req.auth.workspaceId, req.auth.userId, req.params.id, taskJson, req.query),
       );
     } catch (error) {
       return next(error);

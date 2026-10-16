@@ -1,3 +1,4 @@
+import { canAccessTask } from './task-access.mjs';
 import {extraAssigneeIds} from "./task-extras.mjs";
 import { createId } from './auth.mjs';
 import { canAccessTeamTask } from './teams.mjs';
@@ -9,7 +10,7 @@ export function notifyTaskAudience(db, { taskId, actorUserId, summary, createdAt
   for (const id of ids) {
     if (!id || id === actorUserId) continue;
     const user = db.prepare('SELECT u.id FROM users u JOIN workspace_members m ON m.user_id=u.id WHERE u.id=? AND m.workspace_id=? AND u.disabled_at IS NULL').get(id,task.workspace_id);
-    if (!user || !canAccessTeamTask(db,task.workspace_id,id,task.team_id)) continue;
+    if (!user || !canAccessTask(db,task.workspace_id,id,task)) continue;
     db.prepare('INSERT INTO notifications(id,workspace_id,user_id,task_id,type,title,message,entity_type,entity_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
       .run(createId('notice_'),task.workspace_id,id,taskId,type,task.title,summary,'task',taskId,createdAt);
   }
@@ -37,10 +38,10 @@ export function boardMentionMembers(db, workspaceId, teamId) {
 
 export function recordCommentMentions(db, { commentId, taskId, actorUserId, ids, createdAt, HttpError }) {
   if (!Array.isArray(ids) || ids.length > 30 || ids.some(id => typeof id !== 'string')) throw new HttpError(400,'Danh sách nhắc tên không hợp lệ');
-  const task = db.prepare('SELECT workspace_id,team_id FROM tasks WHERE id=? AND deleted_at IS NULL').get(taskId);
+  const task = db.prepare('SELECT * FROM tasks WHERE id=? AND deleted_at IS NULL').get(taskId);
   const unique = [...new Set(ids)];
   for (const id of unique) {
-    if (!db.prepare('SELECT 1 FROM workspace_members m JOIN users u ON u.id=m.user_id WHERE m.workspace_id=? AND m.user_id=? AND u.disabled_at IS NULL').get(task.workspace_id,id) || !canAccessTeamTask(db,task.workspace_id,id,task.team_id)) throw new HttpError(400,'Chỉ nhắc tên thành viên có quyền xem công việc');
+    if (!db.prepare('SELECT 1 FROM workspace_members m JOIN users u ON u.id=m.user_id WHERE m.workspace_id=? AND m.user_id=? AND u.disabled_at IS NULL').get(task.workspace_id,id) || !canAccessTask(db,task.workspace_id,id,task)) throw new HttpError(400,'Chỉ nhắc tên thành viên có quyền xem công việc');
     db.prepare('INSERT INTO comment_mentions(comment_id,user_id) VALUES (?,?)').run(commentId,id);
   }
   // Mention recipients are notified together with watchers by the activity hook.
@@ -52,8 +53,8 @@ export function registerCollaborationRoutes(app, {db,clock,requireAuth,ensureWri
   function task(req,write=false) {
     if (write) ensureWritable(req);
     const row = db.prepare('SELECT * FROM tasks WHERE id=? AND workspace_id=? AND deleted_at IS NULL').get(req.params.id,req.auth.workspaceId);
-    if (!row || !canAccessTeamTask(db,req.auth.workspaceId,req.auth.userId,row.team_id)) throw new HttpError(404,'Không tìm thấy công việc');
-    if (write && !canAccessTeamTask(db,req.auth.workspaceId,req.auth.userId,row.team_id,{write:true})) throw new HttpError(409,'Team đã lưu trữ, chỉ có thể xem');
+    if (!row || !canAccessTask(db,req.auth.workspaceId,req.auth.userId,row)) throw new HttpError(404,'Không tìm thấy công việc');
+    if (write && !canAccessTask(db,req.auth.workspaceId,req.auth.userId,row,{action:"comment"})) throw new HttpError(409,'Team đã lưu trữ, chỉ có thể xem');
     return row;
   }
   function comment(req) {
@@ -73,7 +74,7 @@ export function registerCollaborationRoutes(app, {db,clock,requireAuth,ensureWri
     const row=task(req);
     const reactions=db.prepare('SELECT r.comment_id,r.emoji,r.user_id FROM comment_reactions r JOIN task_comments c ON c.id=r.comment_id WHERE c.task_id=?').all(row.id);
     const comments=db.prepare('SELECT id,author_user_id,edited_at FROM task_comments WHERE task_id=?').all(row.id).map(c=>({id:c.id,canEdit:editable(req,c),editedAt:c.edited_at,reactions:['👍','❤️','🎉','👀'].map(emoji=>({emoji,count:reactions.filter(r=>r.comment_id===c.id&&r.emoji===emoji).length,mine:reactions.some(r=>r.comment_id===c.id&&r.emoji===emoji&&r.user_id===req.auth.userId)}))}));
-    const members=boardMentionMembers(db,req.auth.workspaceId,row.team_id);
+    const members=boardMentionMembers(db,req.auth.workspaceId,row.project_id ? null : row.team_id).filter(member=>canAccessTask(db,req.auth.workspaceId,member.id,row));
     res.json({watching:!!db.prepare('SELECT 1 FROM task_watchers WHERE task_id=? AND user_id=?').get(row.id,req.auth.userId),comments,members});
   }catch(e){next(e)}});
   app.put('/api/tasks/:id/watch',requireAuth,(req,res,next)=>{try{

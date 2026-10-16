@@ -8,6 +8,8 @@ import { notificationTarget, registerPush, pushConfigured } from "../core/push";
 import { TaskList } from "../features/TaskList";
 import { TaskDetail } from "../features/TaskDetail";
 import { Notifications } from "../features/Notifications";
+import { Planner } from "../features/Planner";
+import { Projects } from "../features/Projects";
 import { Account } from "../features/Account";
 import { Login } from "../features/Login";
 import { Text, Empty, Loading, colors } from "../ui/kit";
@@ -15,6 +17,8 @@ import { useMeasuredWindow, position } from "../ui/frames";
 import { errorMessage, API_URL } from "../core/api";
 const tabs = [
   { id: "tasks", label: "Công việc", icon: "✓" },
+  { id: "planner", label: "Kế hoạch", icon: "◷" },
+  { id: "projects", label: "Dự án", icon: "▧" },
   { id: "notifications", label: "Thông báo", icon: "♧" },
   { id: "account", label: "Tài khoản", icon: "◎" },
 ] as const;
@@ -254,7 +258,7 @@ export default function Home() {
             { display: tab === "tasks" ? "none" : "flex" },
           ]}
         >
-          {tab === "notifications" ? (
+          {tab === "planner" ? <Planner onTask={openTask}/> : tab === "projects" ? <Projects/> : tab === "notifications" ? (
             <Notifications onTask={openTask} />
           ) : tab === "account" ? (
             <Account />

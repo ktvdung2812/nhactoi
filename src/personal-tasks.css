@@ -105,7 +105,12 @@
 }
 .personal-capture-input {
   width: 100%;
-  padding-right: 32px;
+  min-height: var(--control-height);
+  padding: 8px 32px 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--bg-input);
+  color: var(--ink);
   font-size: var(--text-base);
 }
 .personal-capture-input-clear {

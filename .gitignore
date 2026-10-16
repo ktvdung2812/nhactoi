@@ -12,6 +12,10 @@ demo/
 
 # Next.js build output and local environment overrides.
 .next/
+.next-*/
 out/
 .env.*
 !.env.example
+
+# Temporary builds and agent coordination notes.
+/tmp/

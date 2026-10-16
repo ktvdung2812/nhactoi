@@ -192,3 +192,20 @@
   .services-page .services-filters > input { flex-basis: 100%; }
   .services-page .services-filters > select { flex: 1 1 140px; }
 }
+
+/* The dialog form has no top padding of its own; keep fields off the heading rule. */
+.services-modal > .modal-heading { margin-bottom: 20px; }
+.service-modal form > h3 { margin: 18px 0 10px; font-size: var(--text-base); }
+.service-modal form > h3:first-child { margin-top: 0; }
+
+/* Automation empty state: no empty grid gap, a visible placeholder card instead. */
+.service-grid:empty { display: none; }
+.service-grid:empty + p.muted {
+  margin: 0 0 22px;
+  padding: 28px 20px;
+  border: 1px dashed var(--border-card);
+  border-radius: var(--radius-card);
+  background: var(--bg-surface);
+  color: var(--muted);
+  text-align: center;
+}

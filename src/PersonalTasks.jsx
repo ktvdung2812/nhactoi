@@ -1,14 +1,23 @@
+import { useTaskMutation } from './useTaskMutation.js';
+import { useGuardedApi, staleRequest } from './useGuardedApi.js';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Bell, Calendar, Check, HelpCircle, Plus, Sparkles, X } from 'lucide-react';
 import { parseQuickTask, personalTaskGroups, planningDay } from '../shared/personal-planning.mjs';
 import PersonalDashboard from './PersonalDashboard.jsx';
+import { useNow } from './PlannerDashboard.jsx';
 import './personal-tasks.css';
 
 const localInput = value => value ? new Date(Date.parse(value) + 7 * 3600000).toISOString().slice(0, 16) : '';
 const dateLabel = value => new Date(value).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
-export default function PersonalTasks({ api, me, view, refreshToken, onOpen, onChanged }) {
-  const [tasks, setTasks] = useState([]);
+export default function PersonalTasks({ api: request, me, view, refreshToken, onOpen, onChanged }) {
+  const [result, setResult] = useState(null);
+  const [denied,setDenied] = useState(false);
+  const now = useNow(), today = planningDay(now);
+  const scope = `${view}:${today}`;
+  const [paging, setPaging] = useState({scope, page:1});
+  const page = paging.scope===scope ? paging.page : 1;
+
   const [text, setText] = useState('');
   const [recognize, setRecognize] = useState(true);
   const [manualDue, setManualDue] = useState(null);
@@ -18,40 +27,49 @@ export default function PersonalTasks({ api, me, view, refreshToken, onOpen, onC
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [revision, setRevision] = useState(0);
+  const [guardedApi,isCurrent]=useGuardedApi(request,()=>{setResult(null);setDenied(true);setMessage('');},me.workspace.id);
+  const api = useTaskMutation(guardedApi, `${me.workspace.id}:${me.user.id}`);
+  const resultKey=`${scope}:${page}`;
+  const current=result?.key===resultKey&&result.api===api&&result.guard===guardedApi?result:null;
+  const tasks=current?.tasks||[],pageInfo=current?.info||null;
   const mounted = useRef(true);
+  useEffect(()=>{setBusy(false);},[api]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
     let canceled = false;
-    api('/personal-tasks').then(result => {
-      if (!canceled) { setTasks(result.tasks); setError(''); }
-    }).catch(e => { if (!canceled) setError(e.message); })
+    setLoading(true);
+    api(`/personal-tasks?view=${view}&date=${today}&page=${page}&pageSize=50`).then(result => {
+      if (!canceled) { setResult({key:resultKey,api,guard:guardedApi,tasks:result.tasks,info:result}); setDenied(false); setError(''); }
+    }).catch(e => { if (!canceled&&!staleRequest(e)) {setResult(null);setError(e.message);} })
       .finally(() => { if (!canceled) setLoading(false); });
     return () => { canceled = true; };
-  }, [api, refreshToken, revision]);
-
-  const parsed = recognize ? parseQuickTask(text) : { title: text.trim(), dueAt: null, error: '' };
+  }, [api, guardedApi, refreshToken, revision, view, today, page, resultKey]);
+  const parsed = recognize ? parseQuickTask(text, now) : { title: text.trim(), dueAt: null, error: '' };
   const dueInput = manualDue === null ? localInput(parsed.dueAt) : manualDue;
-  const readOnly = Boolean(me.workspace.suspendedAt) || ['expired', 'canceled'].includes(me.subscription?.status) || Date.parse(me.subscription?.currentPeriodEnd) <= Date.now();
-  const groups = useMemo(() => personalTaskGroups(tasks, view), [tasks, view]);
-  const today = planningDay();
+  const readOnly = denied || Boolean(me.workspace.suspendedAt) || ['expired', 'canceled'].includes(me.subscription?.status) || Date.parse(me.subscription?.currentPeriodEnd) <= Date.now();
+  const groups = useMemo(() => personalTaskGroups(tasks, view, now), [tasks, view, today]);
 
   async function mutate(fn, success) {
     if (busy || readOnly) return;
     setBusy(true); setError(''); setMessage('');
     try {
       await fn();
-      if (!mounted.current) return;
+      if (!mounted.current||!isCurrent()) return;
       setMessage(success);
       setRevision(n => n + 1);
-      await onChanged();
-    } catch (e) { if (mounted.current) setError(e.message); }
-    finally { if (mounted.current) setBusy(false); }
+      try { await onChanged?.(); }
+      catch (e) { if (mounted.current && isCurrent() && !staleRequest(e)) setMessage(`${success} Chưa làm mới được danh sách: ${e.message}`); }
+    } catch (e) { if (mounted.current&&isCurrent()&&!staleRequest(e)) setError(e.message); }
+    finally { if (mounted.current&&isCurrent()) setBusy(false); }
   }
 
   async function add(event) {
     event.preventDefault();
     if (!parsed.title || (parsed.error && manualDue === null)) return;
     const dueAt = dueInput ? new Date(`${dueInput}:00+07:00`).toISOString() : null;
+    // Freeze recognized relative dates too: a retry after midnight is still
+    // the same intended task until the user edits its draft.
+    if (manualDue === null) setManualDue(dueInput);
     await mutate(async () => {
       await api('/tasks', { method: 'POST', body: JSON.stringify({ title: parsed.title, dueAt, remindAt: remind ? dueAt : null, assigneeId: me.user.id }) });
       if (mounted.current) { setText(''); setManualDue(null); }
@@ -60,7 +78,7 @@ export default function PersonalTasks({ api, me, view, refreshToken, onOpen, onC
 
   const plan = (task, plannedDate) => mutate(() => api(`/tasks/${encodeURIComponent(task.id)}/plan`, {
     method: 'PATCH',
-    body: JSON.stringify({ plannedDate: plannedDate || null }),
+    body: JSON.stringify({ plannedDate: plannedDate || null, expectedRevision:task.planRevision }),
   }), plannedDate ? 'Đã cập nhật ngày dự định làm. Hạn hoàn thành giữ nguyên.' : 'Đã bỏ ngày dự định làm.');
 
   const capture = <form className="personal-capture personal-capture-compact" onSubmit={add}>
@@ -193,10 +211,10 @@ export default function PersonalTasks({ api, me, view, refreshToken, onOpen, onC
       </fieldset>
     </form>;
 
-  const list = loading ? <p role="status">Đang tải công việc…</p> : groups.length === 0 ? <p className="personal-empty">{view === 'inbox' ? 'Inbox đang trống. Thêm một việc chưa có hạn ở phía trên.' : view === 'today' ? 'Chưa có việc cho hôm nay. Chọn “Làm hôm nay” từ Inbox hoặc Sắp tới.' : 'Chưa có công việc sắp tới. Đặt hạn hoặc ngày dự định làm để lên kế hoạch.'}</p> : groups.map(group => <section key={group.label} className="personal-group">
+  const list = error ? <p role="status">Chưa có dữ liệu được xác minh cho trang này. Hãy tải lại.</p> : loading ? <p role="status">Đang tải công việc…</p> : groups.length === 0 ? <p className="personal-empty">{view === 'inbox' ? 'Inbox đang trống. Thêm một việc chưa có hạn ở phía trên.' : view === 'today' ? 'Chưa có việc cho hôm nay. Chọn “Làm hôm nay” từ Inbox hoặc Sắp tới.' : 'Chưa có công việc sắp tới. Đặt hạn hoặc ngày dự định làm để lên kế hoạch.'}</p> : groups.map(group => <section key={group.label} className="personal-group">
       <h2>{view === 'upcoming' ? new Date(`${group.label}T12:00:00+07:00`).toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' }) : group.label} <span>{group.tasks.length}</span></h2>
       {group.tasks.map(task => <article className="personal-task" key={task.id}>
-        <button className="icon-button personal-complete" aria-label={`Hoàn thành ${task.title}`} disabled={busy || readOnly} onClick={() => mutate(() => api(`/tasks/${encodeURIComponent(task.id)}`, { method: 'PATCH', body: JSON.stringify({ status: 'done' }) }), 'Đã hoàn thành công việc.')}><Check size={18} /></button>
+        <button className="icon-button personal-complete" aria-label={`Hoàn thành ${task.title}`} disabled={busy || readOnly} onClick={() => mutate(() => api(`/tasks/${encodeURIComponent(task.id)}`, { method: 'PATCH', body: JSON.stringify({ status: 'done', expectedRevision:task.revision }) }), 'Đã hoàn thành công việc.')}><Check size={18} /></button>
         <div className="personal-task-content"><button className="personal-task-title" onClick={() => onOpen(task)}>{task.title}</button><p>{task.teamName || 'Việc chung'} · {task.dueAt ? `Hạn ${dateLabel(task.dueAt)}` : 'Chưa đặt hạn'}{task.plannedDate && ` · Dự định làm ${task.plannedDate.split('-').reverse().join('/')}`}</p></div>
         <div className="personal-task-actions">
           {task.plannedDate !== today && <button className="button secondary" disabled={busy || readOnly} onClick={() => plan(task, today)}>Làm hôm nay</button>}
@@ -210,7 +228,7 @@ export default function PersonalTasks({ api, me, view, refreshToken, onOpen, onC
     {readOnly && <p role="status">Không gian đang ở chế độ chỉ đọc. Bạn vẫn có thể xem công việc.</p>}
     {error && <div className="personal-error" role="alert">{error} <button className="button secondary" onClick={() => setRevision(n => n + 1)}>Tải lại</button></div>}
     {message && <p className="personal-feedback" role="status">{message}</p>}
-    <PersonalDashboard view={view} me={me} tasks={tasks} groups={groups} capture={capture} list={list} readOnly={readOnly} busy={busy}
+    <PersonalDashboard pageInfo={pageInfo} loading={loading} view={view} me={me} tasks={tasks} groups={groups} capture={capture} list={<>{list}{Number.isFinite(pageInfo?.total) && (page > 1 || pageInfo.hasMore) && <nav className="task-pagination" aria-label="Phân trang kế hoạch"><button disabled={loading || page===1} onClick={()=>setPaging({scope,page:page-1})}>Trang trước</button><span role="status">Trang {page} · {pageInfo.total} công việc</span><button disabled={loading || !pageInfo.hasMore} onClick={()=>setPaging({scope,page:page+1})}>Trang tiếp</button></nav>}</>} readOnly={readOnly} busy={busy}
       onOpen={onOpen} onPlan={plan} onSuggest={value => { setText(value); setManualDue(null); }} />
   </section>;
 }

@@ -22,7 +22,23 @@ export const dueDay = task => task.dueAt ? planningDay(new Date(task.dueAt)) : n
 
 export function useNow() {
   const [now, setNow] = useState(() => new Date());
-  useEffect(() => { const id = setInterval(() => setNow(new Date()), 60000); return () => clearInterval(id); }, []);
+  useEffect(() => {
+    let timer;
+    function update() {
+      clearTimeout(timer);
+      const current = new Date();
+      setNow(current);
+      timer = setTimeout(update, 60000 - current.getTime() % 60000);
+    }
+    update();
+    window.addEventListener('focus', update);
+    document.addEventListener('visibilitychange', update);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('focus', update);
+      document.removeEventListener('visibilitychange', update);
+    };
+  }, []);
   return now;
 }
 
@@ -176,7 +192,7 @@ export function NextCard({ title = 'Việc tiếp theo', items, empty, onViewAll
     {items.length === 0 ? <p className="pd-muted">{empty}</p> : items.map((item, index) => <button key={item.key} type="button" className={`pd-step ${index === 0 ? 'is-first' : ''}`} onClick={item.onClick}>
       <span className="pd-step-head"><strong>{item.title}</strong>{index === 0 && <span className="pd-step-flag">{flag}</span>}</span>
       <span className="pd-step-desc">{item.desc}</span>
-      <span className="pd-step-chips">{item.chips.map(({ icon: Icon, label, tone }) => <span key={label} className={`pd-chip ${tone ? `state-${tone}` : ''}`}>{Icon && <Icon size={13} />}{label}</span>)}</span>
+      <span className="pd-step-chips">{item.chips.map(({ icon: Icon, label, tone }, index) => <span key={index} className={`pd-chip ${tone ? `state-${tone}` : ''}`}>{Icon && <Icon size={13} />}{label}</span>)}</span>
     </button>)}
   </Card>;
 }

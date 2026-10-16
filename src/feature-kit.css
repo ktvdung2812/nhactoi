@@ -1,0 +1,442 @@
+/* Feature kit: layout for modules written with plain semantic markup
+   (projects, integrations, work reports). Scope with `.kit` or `.page-section`
+   so the rules never leak into hand-styled screens. */
+
+.page-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.page-section > h1 {
+  font-size: var(--font-page-title);
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  color: var(--ink);
+}
+.page-section > h1 + p {
+  margin-top: -8px;
+  color: var(--muted);
+  max-width: 820px;
+}
+.page-section > h2 {
+  margin-top: 12px;
+  font-size: var(--font-section-title);
+}
+.page-section > label:not(:has(> input[type="checkbox"])) { max-width: 420px; }
+
+:is(.kit, .page-section) { overflow-wrap: anywhere; }
+:is(.kit, .page-section) > p,
+:is(.kit, .page-section) form p,
+:is(.kit, .page-section) fieldset p,
+:is(.kit, .page-section) article p { color: var(--ink-secondary); line-height: var(--leading-body); }
+:is(.kit, .page-section) :is(h2, h3, h4) { color: var(--ink); margin: 0; }
+:is(.kit, .page-section) h3 { font-size: var(--font-card-title); }
+:is(.kit, .page-section) h4 { font-size: var(--text-base); font-weight: 600; }
+:is(.kit, .page-section) a:not(.button) { color: var(--green); text-decoration: underline; text-underline-offset: 2px; }
+
+/* Labels stack their caption above the control; checkbox labels stay inline. */
+:is(.kit, .page-section) label:not(.field) {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--ink);
+}
+:is(.kit, .page-section) label:not(.field):has(> input:is([type="checkbox"], [type="radio"])) {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 400;
+  line-height: 1.5;
+  cursor: pointer;
+}
+:is(.kit, .page-section) .field { margin: 0; gap: 6px; }
+/* :where keeps this at class-level specificity so row/list layouts can resize controls. */
+:is(.kit, .page-section) :where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea) {
+  width: 100%;
+  min-height: var(--control-height);
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--bg-input);
+  color: var(--ink);
+  font-size: var(--font-control);
+  font-weight: 400;
+}
+:is(.kit, .page-section) select[multiple] { min-height: 96px; }
+:is(.kit, .page-section) textarea { min-height: 96px; resize: vertical; }
+:is(.kit, .page-section) input[type="file"] { font-size: var(--text-sm); font-weight: 400; }
+:is(.kit, .page-section) input:is([type="checkbox"], [type="radio"]) {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: var(--green);
+}
+
+/* Unclassed buttons read as secondary actions; a form's submit is primary. */
+:is(.kit, .page-section) button:not([class]) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--control-height);
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--bg-surface);
+  color: var(--ink);
+  font-size: var(--font-control);
+  font-weight: 500;
+  line-height: 1.4;
+  text-align: center;
+}
+:is(.kit, .page-section) button:not([class]):hover:not(:disabled) { background: var(--bg-hover); filter: none; }
+:is(.kit, .page-section) form button:not([class]):not([type="button"]) {
+  border-color: var(--green);
+  background: var(--green);
+  color: #fff;
+}
+:is(.kit, .page-section) form button:not([class]):not([type="button"]):hover:not(:disabled) { background: var(--green-hover); }
+:is(.kit, .page-section) button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* Forms and stand-alone fieldsets are cards with a responsive field grid. */
+:is(.kit, .page-section) :is(form, fieldset) {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr));
+  gap: 14px 16px;
+  align-items: end;
+  min-width: 0;
+  margin: 0;
+}
+.page-section > form,
+.page-section > fieldset,
+.kit > form,
+:is(.kit, .page-section) :is(details, article) > :is(form, fieldset),
+.kit > fieldset {
+  padding: 18px 20px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-card);
+  background: var(--bg-surface);
+}
+:is(.kit, .page-section) form > fieldset,
+:is(.kit, .page-section) fieldset fieldset,
+:is(.kit, .page-section) .page-section form > fieldset {
+  grid-column: 1 / -1;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+:is(.kit, .page-section) fieldset fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+:is(.kit, .page-section) legend {
+  float: left;
+  width: 100%;
+  padding: 0;
+  margin: 0 0 2px;
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--ink);
+}
+:is(.kit, .page-section) fieldset fieldset legend { font-size: var(--text-sm); font-weight: 500; }
+:is(.kit, .page-section) :is(form, fieldset) > :is(h2, h3, p, ul, ol, div, details, legend),
+:is(.kit, .page-section) :is(form, fieldset) > label:has(> input:is([type="checkbox"], [type="radio"])) {
+  grid-column: 1 / -1;
+}
+:is(.kit, .page-section) :is(form, fieldset) > button { justify-self: start; }
+:is(.kit, .page-section) :is(details, article) > form + form { margin-top: 12px; }
+
+/* Lists of records become bordered rows with actions on the right. */
+:is(.kit, .page-section) :is(ul, ol):not([class]) {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+:is(.kit, .page-section) :is(ul, ol):not([class]) > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--bg-surface);
+  color: var(--ink-secondary);
+  font-size: var(--text-sm);
+}
+:is(.kit, .page-section) :is(ul, ol):not([class]) > li > :is(select, button) { width: auto; margin-left: auto; }
+:is(.kit, .page-section) :is(ul, ol):not([class]) > li > select + button { margin-left: 0; }
+:is(.kit, .page-section) :is(ul, ol):not([class]):empty { display: none; }
+
+:is(.kit, .page-section) article:not([class]),
+.page-section > article {
+  display: grid;
+  gap: 8px;
+  padding: 16px 18px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-card);
+  background: var(--bg-surface);
+}
+:is(.kit, .page-section) article > button { justify-self: start; }
+:is(.kit, .page-section) article > button + button { margin-left: 0; }
+
+:is(.kit, .page-section) details:not(.panel):not(.td-panel) {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--bg-surface);
+  padding: 0 16px;
+}
+:is(.kit, .page-section) details:not(.panel):not(.td-panel)[open] { padding-bottom: 16px; }
+:is(.kit, .page-section) details > summary,
+details.kit > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  list-style: none;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--ink);
+}
+:is(.kit, .page-section) details > summary::-webkit-details-marker,
+details.kit > summary::-webkit-details-marker { display: none; }
+:is(.kit, .page-section) details > summary::after,
+details.kit > summary::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 0.15s;
+}
+:is(.kit, .page-section) details[open] > summary::after,
+details.kit[open] > summary::after { transform: rotate(-135deg) translateY(-2px); }
+:is(.kit, .page-section) details[open] > summary { margin-bottom: 12px; }
+
+:is(.kit, .page-section) :is(p[role="alert"], .form-error) {
+  padding: 10px 14px;
+  border: 1px solid #f1c9c2;
+  border-radius: var(--radius-control);
+  background: #fdf3f1;
+  color: #a5402f;
+  font-size: var(--text-sm);
+}
+:is(.kit, .page-section) p[role="status"] { color: var(--muted); font-size: var(--text-sm); }
+[data-theme="dark"] :is(.kit, .page-section) :is(p[role="alert"], .form-error) {
+  border-color: #6b2e25;
+  background: #2a1714;
+  color: #f2a99b;
+}
+:is(.kit, .page-section) pre {
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border-radius: var(--radius-control);
+  background: var(--bg-subtle);
+  font-size: var(--text-xs);
+}
+:is(.kit, .page-section) dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 16px;
+  margin: 0;
+  font-size: var(--text-sm);
+}
+:is(.kit, .page-section) dt { font-weight: 600; }
+:is(.kit, .page-section) dd { margin: 0; color: var(--ink-secondary); }
+
+.kit-checks { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+.kit-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  align-items: flex-end;
+}
+.kit-row > label { flex: 1 1 170px; max-width: 280px; }
+.kit-row > label:has(input[type="datetime-local"]) { flex-basis: 220px; }
+.kit-row > :is(button, .button) { flex: 0 0 auto; white-space: nowrap; }
+.kit-row > strong { align-self: center; flex-basis: 100%; }
+.kit-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.task-time.kit { display: grid; gap: 12px; }
+.task-time > h2 { font-size: var(--font-section-title); }
+.task-time > h3 { margin-top: 6px; }
+.task-time > h3 + p { margin-top: -8px; font-size: var(--text-sm); color: var(--muted); }
+.task-time > label { max-width: 420px; }
+.task-time > label > button { justify-self: start; }
+.task-time > :is(button, .button) { justify-self: start; }
+.kit-table { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-control); }
+:is(.kit, .page-section) table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+:is(.kit, .page-section) :is(th, td) {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+:is(.kit, .page-section) th {
+  background: var(--bg-subtle);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+:is(.kit, .page-section) tr:last-child td { border-bottom: 0; }
+
+/* Project tools inside the project page. */
+.project-tools { display: grid; gap: 14px; margin-top: 8px; }
+.project-tools > h3 { font-size: var(--font-section-title); }
+.project-tools > .form-grid { gap: 12px 16px; }
+.project-tools > .form-grid > label { margin: 0; }
+.project-tools > :is(button, a) { justify-self: start; }
+.project-tools > details + details { margin-top: -6px; }
+.project-task-views > div > h4 { margin-bottom: 4px; }
+.project-task-views .card {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 10px !important;
+  padding: 14px 16px !important;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-card);
+  background: var(--bg-surface);
+}
+.project-task-views .card > button:first-child {
+  justify-content: flex-start;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font-size: var(--text-base);
+  font-weight: 600;
+  text-align: left;
+}
+.project-task-views .card > button:first-child:hover { color: var(--green); background: none; }
+.project-task-views .card > p { font-size: var(--text-xs); color: var(--muted); }
+.project-task-views .card details form { padding: 0; border: 0; }
+
+/* Shared pagination bar: previous · status · next on one line. */
+.task-pagination {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.task-pagination > [role="status"],
+.task-pagination > span { min-width: 0; text-align: center; overflow-wrap: anywhere; }
+.task-pagination > button,
+.task-pagination > .button {
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--bg-surface);
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  box-shadow: none;
+}
+.task-pagination > button:hover:not(:disabled) { background: var(--bg-hover); filter: none; }
+.task-pagination > button:disabled { opacity: 0.45; }
+.task-pagination + .task-pagination { margin-top: -4px; }
+@media (max-width: 600px) {
+  .task-pagination { gap: 8px; font-size: var(--text-xs); }
+  .task-pagination > button,
+  .task-pagination > .button { padding: 6px 10px; font-size: var(--text-xs); }
+}
+
+/* Dashboard: operational reports sit below the daily overview. */
+.dashboard-board-span > .task-pagination { margin: 14px 22px 0; }
+.dashboard-reports { display: grid; gap: 16px; margin-top: 23px; }
+.dashboard-reports > .panel { padding: 0; overflow: visible; }
+.ops-report.panel { display: grid; gap: 16px; padding: 22px; }
+.ops-report > header h2 { font-size: var(--font-section-title); }
+.ops-report > header p { margin-top: 4px; color: var(--muted); font-size: var(--text-sm); }
+.ops-report-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr));
+  gap: 12px 16px;
+}
+.ops-report-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.ops-report-toolbar > p { color: var(--muted); font-size: var(--text-sm); }
+.ops-report .renewal-summary { margin: 0; }
+.ops-report .renewal-stat {
+  display: grid;
+  gap: 6px;
+  padding: 16px 18px;
+  text-align: left;
+}
+.ops-report .renewal-stat[aria-pressed="true"] { border-color: var(--green); box-shadow: 0 0 0 1px var(--green) inset; }
+.ops-report .renewal-stat span { color: var(--muted); font-size: var(--text-sm); }
+.ops-report .renewal-stat strong { font-size: var(--text-3xl); line-height: 1.2; color: var(--ink); }
+.ops-report > p { color: var(--muted); font-size: var(--text-sm); }
+.ops-report-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.ops-report-list > li {
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.ops-report-list .text-button {
+  display: inline;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--ink);
+  white-space: normal;
+  text-align: left;
+}
+.ops-report-list .text-button:hover { color: var(--green); }
+.ops-report .task-pagination { margin: 0; }
+.work-panel.panel { padding: 0 22px; }
+.work-panel.panel[open] { padding-bottom: 22px; }
+.work-panel.panel > summary { min-height: 60px; font-size: var(--font-card-title); margin: 0; }
+/* <details> content does not take part in a grid in every browser; space with margins. */
+.work-panel.panel > :not(summary) + :not(summary) { margin-top: 14px; }
+.work-panel.panel > label { max-width: 360px; }
+.work-panel > h3 { margin-top: 22px !important; }
+.work-panel > h3 + .kit-row { margin-top: 10px !important; }
+@media (max-width: 760px) {
+  .ops-report .renewal-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+  .ops-report.panel { padding: 16px; }
+  .work-panel.panel { padding: 0 16px; }
+  .work-panel.panel[open] { padding-bottom: 16px; }
+}
+
+/* Filter placed in a page heading's action slot. */
+.page-heading-filter {
+  display: grid;
+  gap: 4px;
+  flex: 0 1 260px;
+  min-width: 180px;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--muted);
+}
+.page-heading-filter select {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--bg-input);
+  color: var(--ink);
+}
+@media (max-width: 760px) {
+  .page-heading:has(> .page-heading-filter) { flex-wrap: wrap; }
+  .page-heading-filter { flex: 1 1 100%; }
+}

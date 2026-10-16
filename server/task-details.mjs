@@ -1,3 +1,4 @@
+import { canAccessTask } from './task-access.mjs';
 import { emitTaskEvent } from "./automations.mjs";
 import { createId } from "./auth.mjs";
 import { notifyTaskAudience, recordCommentMentions } from "./collaboration.mjs";
@@ -39,7 +40,7 @@ function httpUrl(value, cleanString, HttpError) {
   return result;
 }
 
-function taskForUser(db, taskId, auth, canAccessTeamTask, HttpError, { write = false } = {}) {
+function taskForUser(db, taskId, auth, canAccessTeamTask, HttpError, { write = false, action = 'write' } = {}) {
   const task = db
     .prepare(
       `
@@ -58,9 +59,9 @@ function taskForUser(db, taskId, auth, canAccessTeamTask, HttpError, { write = f
       `,
     )
     .get(taskId, auth.workspaceId);
-  if (!task || !canAccessTeamTask(db, auth.workspaceId, auth.userId, task.team_id))
+  if (!task || !canAccessTask(db, auth.workspaceId, auth.userId, task))
     return null;
-  if (write && !canAccessTeamTask(db, auth.workspaceId, auth.userId, task.team_id, { write: true }))
+  if (write && !canAccessTask(db, auth.workspaceId, auth.userId, task, { action }))
     throw new HttpError(409, "Đội nhóm đã lưu trữ và chỉ được đọc");
   return task;
 }
@@ -78,14 +79,14 @@ function writableWorkspace(db, workspaceId, clock) {
   return new Date(subscription.current_period_end).getTime() > new Date(clock()).getTime();
 }
 
-function taskJson(row, baseTaskJson) {
+function taskJson(row, baseTaskJson, auth) {
   return {
-    ...baseTaskJson(row),
+    ...baseTaskJson(row, auth),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     createdByName: row.created_by_name || null,
     assigneeName: row.assignee_name || null,
-    customerName: row.customer_name || null,
+    customerName: auth?.memberType === "guest" ? null : row.customer_name || null,
   };
 }
 
@@ -144,7 +145,7 @@ function cardMembers(db, task) {
     const primary = db.prepare("SELECT id, name FROM users WHERE id = ? AND disabled_at IS NULL").get(task.assignee_id);
     if (primary) people.push(primary);
   }
-  return [...people, ...extras];
+  return [...people, ...extras].filter(person => canAccessTask(db, task.workspace_id, person.id, task));
 }
 
 function assigneeMap(db, itemIds) {
@@ -430,15 +431,16 @@ function attachmentById(db, taskId, attachmentId, workspaceId) {
 
 function detailPayload(db, task, auth, baseTaskJson, canAccessTeamTask, clock) {
   return {
-    task: taskJson(task, baseTaskJson),
+    task: taskJson(task, baseTaskJson, auth),
     checklists: checklistRows(db, task.id, auth.workspaceId),
     checklistMembers: cardMembers(db, task),
     attachments: attachmentRows(db, task.id, auth.workspaceId),
     comments: commentRows(db, task.id, auth.workspaceId),
     activity: activityRows(db, task.id, auth.workspaceId),
+    canComment: writableWorkspace(db, auth.workspaceId, clock) && canAccessTask(db, auth.workspaceId, auth.userId, task, { action: "comment" }),
     canWrite:
       writableWorkspace(db, auth.workspaceId, clock) &&
-      canAccessTeamTask(db, auth.workspaceId, auth.userId, task.team_id, { write: true }),
+      canAccessTask(db, auth.workspaceId, auth.userId, task, { write: true }),
   };
 }
 
@@ -465,7 +467,7 @@ export function registerTaskDetailRoutes(
       req.auth,
       canAccessTeamTask,
       HttpError,
-      { write },
+      { write, action: req.path.includes("/comments") ? "comment" : "write" },
     );
     if (!task) throw new HttpError(404, "task was not found");
     return task;

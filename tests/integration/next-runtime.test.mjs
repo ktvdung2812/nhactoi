@@ -191,7 +191,8 @@ test(
     assert.equal(deepLink.status, 200);
     assert.match(await deepLink.text(), /Đang mở không gian làm việc/);
 
-    for (const path of ["/login", "/register", "/forgot-password", "/reset-password", "/inbox", "/today", "/upcoming", "/week"]) {
+    for (const path of ["/login", "/register", "/forgot-password", "/reset-password", "/inbox", "/today", "/upcoming", "/week",
+      "/projects", "/services", "/automations", "/templates", "/google-calendar", "/zalo-oa", "/public-integrations"]) {
       const authPage = await request(base, path);
       assert.equal(authPage.status, 200, path);
       assert.match(await authPage.text(), /Đang mở không gian làm việc/);
@@ -268,6 +269,25 @@ test(
     const meResult = await jsonResponse(me);
     assert.equal(me.status, 200);
     assert.equal(meResult.body?.user?.id, registrationResult.body?.user?.id);
+
+    // Newly registered integrations must survive the Next -> Express boundary.
+    // A browser session must never substitute for an API token in /api/v1.
+    const contract = await request(base, '/api/v1/openapi.json');
+    assert.equal(contract.status, 200);
+    assert.equal((await contract.json()).openapi, '3.1.0');
+    const noToken = await request(base, '/api/v1/tasks', { cookie });
+    assert.equal(noToken.status, 401);
+    assert.equal((await noToken.json()).error.code, 'invalid_token');
+    for (const path of ['/api/projects', '/api/api-tokens', '/api/webhooks',
+      '/api/integrations/google-calendar', '/api/integrations/zalo-oa']) {
+      const result = await request(base, path, { cookie });
+      assert.equal(result.status, 200, path);
+      assert.match(result.headers.get('content-type'), /application\/json/);
+    }
+    for (const path of ['/api/integrations/google-calendar/watch', '/api/integrations/zalo-oa/callback']) {
+      const unsigned = await request(base, path, { method: 'POST', body: {} });
+      assert.equal(unsigned.status, 403, path);
+    }
 
     const pushConfig = await request(base, '/api/web-push/config', { cookie });
     assert.equal(pushConfig.status, 200);
