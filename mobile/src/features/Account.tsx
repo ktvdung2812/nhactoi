@@ -3,6 +3,7 @@ import {OfflineQueue} from "./OfflineQueue";
 import {router} from "expo-router";
 import { Alert, Linking, ScrollView } from "react-native";
 import { useResource, useSession } from "../core/session";
+import type { AssistantConfig } from "../core/types";
 import { errorMessage } from "../core/api";
 import { unregisterPush } from "../core/push";
 import { dateLabel } from "../core/policy";
@@ -89,6 +90,7 @@ export function Account() {
           Các thao tác ghi tuân theo quyền và trạng thái doanh nghiệp.
         </Text>
       </Card>
+      <AssistantSettings key={session.workspace.id}/>
       <OfflineQueue/>
       <Card>
         <Text style={s.cardTitle}>Dữ liệu trên thiết bị</Text>
@@ -124,4 +126,39 @@ export function Account() {
       />
     </ScrollView>
   );
+}
+
+function AssistantSettings() {
+  const { api, session, online, writable } = useSession();
+  const config = useResource<AssistantConfig>("/ai/config");
+  const [edited, setDraft] = useState<AssistantConfig["assistant"] | null>(null);
+  const [busy, setBusy] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState("");
+  const value = config.data?.value;
+  const draft = edited ?? value?.assistant;
+  const canManage = value?.canManageAssistant ?? value?.assistant?.canManage ?? (!!session && ["owner", "admin"].includes(session.user.role) && session.user.memberType !== "guest");
+  const disabled = !canManage || !online || !writable || busy;
+  async function save() {
+    if (disabled || !draft) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const result = await api<AssistantConfig>("/ai/workspace-settings", { method: "PUT", body: JSON.stringify({ name: draft.name.trim(), handle: draft.handle.trim().replace(/^@/, ""), enabled: draft.enabled }) });
+      setDraft(result.assistant); await config.refetch(); setNotice("Đã cập nhật trợ lý của không gian.");
+    } catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(false); }
+  }
+  return <Card>
+    <Text style={s.cardTitle}>Trợ lý trong bình luận</Text>
+    <Text style={s.muted}>Gọi trợ lý bằng @ trong công việc. Phản hồi được chia sẻ với mọi người có quyền xem công việc.</Text>
+    <ErrorNotice message={error || (config.error ? errorMessage(config.error) : "")} />
+    {draft && <>
+      <Select label="Trợ lý trong bình luận" disabled={disabled} value={draft.enabled ? "on" : "off"} options={[{ value: "on", label: "Bật" }, { value: "off", label: "Tắt" }]} onChange={next => setDraft({ ...draft, enabled: next === "on" })} />
+      <Field label="Tên trợ lý" value={draft.name} editable={!disabled} maxLength={60} onChangeText={name => setDraft({ ...draft, name })} />
+      <Field label="Tên gọi sau @" value={draft.handle} editable={!disabled} maxLength={32} autoCapitalize="none" autoCorrect={false} onChangeText={handle => setDraft({ ...draft, handle })} />
+      <Text style={s.muted}>Tên gọi gồm 2–32 chữ Latin, số hoặc dấu gạch dưới; bắt đầu bằng chữ.</Text>
+      <Text style={s.muted}>{value?.ready ? `Mô hình: ${value.model} · ${value.provider}` : "Nhà cung cấp AI chưa sẵn sàng. Liên hệ quản trị viên để kiểm tra cấu hình AI."}</Text>
+      <Text style={s.muted}>Ảnh: {value?.capabilities?.images ? "Có hỗ trợ" : "Chưa hỗ trợ"} · PDF: {value?.capabilities?.pdf ? "Có hỗ trợ" : "Chưa hỗ trợ"}.</Text>
+      {canManage ? <Button label={busy ? "Đang lưu…" : "Lưu trợ lý"} disabled={disabled || !draft.name.trim() || !draft.handle.trim()} onPress={() => void save()} /> : <Text style={s.muted}>Chủ sở hữu hoặc quản trị viên có thể thay đổi cấu hình này.</Text>}
+    </>}
+    {notice ? <Text accessibilityLiveRegion="polite">{notice}</Text> : null}
+  </Card>;
 }

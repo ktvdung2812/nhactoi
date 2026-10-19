@@ -2,6 +2,7 @@ import { canAccessTask } from './task-access.mjs';
 import {extraAssigneeIds} from "./task-extras.mjs";
 import { createId } from './auth.mjs';
 import { canAccessTeamTask } from './teams.mjs';
+import { cancelCommentRuns } from './ai-comment-state.mjs';
 
 export function notifyTaskAudience(db, { taskId, actorUserId, summary, createdAt, recipients = [], type = 'task_update' }) {
   const task = db.prepare('SELECT * FROM tasks WHERE id=? AND deleted_at IS NULL').get(taskId);
@@ -73,7 +74,7 @@ export function registerCollaborationRoutes(app, {db,clock,requireAuth,ensureWri
   app.get('/api/tasks/:id/collaboration',requireAuth,(req,res,next)=>{try{
     const row=task(req);
     const reactions=db.prepare('SELECT r.comment_id,r.emoji,r.user_id FROM comment_reactions r JOIN task_comments c ON c.id=r.comment_id WHERE c.task_id=?').all(row.id);
-    const comments=db.prepare('SELECT id,author_user_id,edited_at FROM task_comments WHERE task_id=?').all(row.id).map(c=>({id:c.id,canEdit:editable(req,c),editedAt:c.edited_at,reactions:['👍','❤️','🎉','👀'].map(emoji=>({emoji,count:reactions.filter(r=>r.comment_id===c.id&&r.emoji===emoji).length,mine:reactions.some(r=>r.comment_id===c.id&&r.emoji===emoji&&r.user_id===req.auth.userId)}))}));
+    const comments=db.prepare('SELECT * FROM task_comments WHERE task_id=?').all(row.id).map(c=>({id:c.id,canEdit:c.author_type!=='assistant'&&editable(req,c),canDelete:editable(req,c),editedAt:c.edited_at,reactions:['👍','❤️','🎉','👀'].map(emoji=>({emoji,count:reactions.filter(r=>r.comment_id===c.id&&r.emoji===emoji).length,mine:reactions.some(r=>r.comment_id===c.id&&r.emoji===emoji&&r.user_id===req.auth.userId)}))}));
     const members=boardMentionMembers(db,req.auth.workspaceId,row.project_id ? null : row.team_id).filter(member=>canAccessTask(db,req.auth.workspaceId,member.id,row));
     res.json({watching:!!db.prepare('SELECT 1 FROM task_watchers WHERE task_id=? AND user_id=?').get(row.id,req.auth.userId),comments,members});
   }catch(e){next(e)}});
@@ -91,13 +92,13 @@ export function registerCollaborationRoutes(app, {db,clock,requireAuth,ensureWri
     res.json({ok:true});
   }catch(e){next(e)}});
   app.patch('/api/tasks/:id/comments/:commentId',requireAuth,(req,res,next)=>{try{
-    task(req,true);const row=comment(req);if(!editable(req,row))throw new HttpError(403,'Bạn không có quyền sửa bình luận này');
+    task(req,true);const row=comment(req);if(row.author_type==='assistant'||!editable(req,row))throw new HttpError(403,'Bạn không có quyền sửa bình luận này');
     const body=req.body?.body; if(typeof body!=='string'||body.trim().length>5000)throw new HttpError(400,'Nội dung bình luận không hợp lệ');
     if(!body.trim()&&!db.prepare('SELECT 1 FROM task_attachments WHERE comment_id=? AND task_id=?').get(row.id,req.params.id))throw new HttpError(400,'Bình luận cần nội dung hoặc tệp');
-    withTransaction(db,()=>{db.prepare('UPDATE task_comments SET body=?,edited_at=? WHERE id=? AND task_id=?').run(body.trim(),now(),row.id,req.params.id);activity(req,'đã chỉnh sửa bình luận')});res.json({ok:true});
+    withTransaction(db,()=>{cancelCommentRuns(db,row.id,now());db.prepare('UPDATE task_comments SET body=?,edited_at=? WHERE id=? AND task_id=?').run(body.trim(),now(),row.id,req.params.id);activity(req,'đã chỉnh sửa bình luận')});res.json({ok:true});
   }catch(e){next(e)}});
   app.delete('/api/tasks/:id/comments/:commentId',requireAuth,(req,res,next)=>{try{
     task(req,true);const row=comment(req);if(!editable(req,row))throw new HttpError(403,'Bạn không có quyền xóa bình luận này');
-    withTransaction(db,()=>{db.prepare('DELETE FROM task_comments WHERE id=? AND task_id=?').run(row.id,req.params.id);activity(req,'đã xóa bình luận; tệp được giữ trong đính kèm công việc')});res.json({ok:true});
+    withTransaction(db,()=>{cancelCommentRuns(db,row.id,now());db.prepare('DELETE FROM task_comments WHERE id=? AND task_id=?').run(row.id,req.params.id);activity(req,'đã xóa bình luận; tệp được giữ trong đính kèm công việc')});res.json({ok:true});
   }catch(e){next(e)}});
 }

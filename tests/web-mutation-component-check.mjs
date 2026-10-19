@@ -12,6 +12,7 @@ const React=require('react'),{act}=React,{JSDOM}=require('../mobile/node_modules
 const PersonalTasks=require('../src/PersonalTasks.jsx').default,WeekCalendar=require('../src/WeekCalendar.jsx').default;
 const TaskExtras=require('../src/TaskExtras.jsx').default,TaskDetail=require('../src/TaskDetail.jsx').default;
 const WorkflowBoard=require('../src/WorkflowBoard.jsx').default,ProjectAdvanced=require('../src/ProjectAdvanced.jsx').default;
+const {AssistantSettings}=require('../src/Account.jsx');
 const me={user:{id:'u',role:'owner',name:'Test'},workspace:{id:'w'},subscription:{status:'active',currentPeriodEnd:'2099-01-01',capabilities:['public_api']}};
 const card={id:'task-private',title:'CANARY_TASK',status:'todo',dueAt:null,plannedDate:null,planRevision:'p1'};
 const error=status=>Object.assign(new Error(`Denied ${status}`),{status});
@@ -23,7 +24,7 @@ async function mount(t,Component,props){
  const root=require('react-dom/client').createRoot(document.getElementById('root'));
  const render=async(C=Component,p=props)=>act(async()=>root.render(React.createElement(C,p)));
  await render();t.after(async()=>{await act(async()=>root.unmount());dom.window.close();});
- return {render,dom,text:()=>document.body.textContent,click:async label=>act(async()=>{const button=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===label||b.getAttribute('aria-label')===label);assert.ok(button,`missing button ${label}`);button.click();}),typeInput:async(selector,value)=>act(async()=>{const field=document.querySelector(selector);assert.ok(field,selector);Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype,'value').set.call(field,value);field.dispatchEvent(new dom.window.Event('input',{bubbles:true}));field.dispatchEvent(new dom.window.Event('change',{bubbles:true}));}),submit:async form=>act(async()=>form.dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true})))};
+ return {render,dom,text:()=>document.body.textContent,click:async label=>act(async()=>{const button=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===label||b.getAttribute('aria-label')===label);assert.ok(button,`missing button ${label}`);button.click();}),typeInput:async(selector,value)=>act(async()=>{const field=document.querySelector(selector);assert.ok(field,selector);Object.getOwnPropertyDescriptor((field.tagName==='TEXTAREA'?dom.window.HTMLTextAreaElement:dom.window.HTMLInputElement).prototype,'value').set.call(field,value);field.dispatchEvent(new dom.window.Event('input',{bubbles:true}));field.dispatchEvent(new dom.window.Event('change',{bubbles:true}));}),submit:async form=>act(async()=>form.dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true})))};
 }
 
 const task={...card,revision:'r1',priority:'medium',teamId:'team',assigneeId:'u'};
@@ -157,4 +158,87 @@ test('checklist template captures target revision at dialog open and preserves c
  const TaskTemplates=require('../src/TaskTemplates.jsx').default;const calls=[];let readRevision='r1';const api=async(path,options)=>{if(options){calls.push(JSON.parse(options.body));throw error(409);}return path==='/task-templates'?{templates:[{id:'tpl',name:'Template',kind:'checklist'}]}:{task:{...task,revision:readRevision}};};
  const props={api,taskId:task.id};const ui=await mount(t,TaskTemplates,props);await ui.click('Áp dụng vào công việc');readRevision='r2';await ui.render(TaskTemplates,{...props,task:{...task,revision:'r2'}});await ui.submit(document.querySelector('[role="dialog"] form'));
  assert.equal(calls[0].expectedRevision,'r1');assert.ok(ui.text().includes('Denied 409'));assert.ok(document.querySelector('[role="dialog"]'));
+});
+
+
+test('comment-only web users can call the assistant and retry a lost response with one operation',async t=>{
+ const server=receipts(),reads=detailApi(server.send);
+ const api=async(path,options)=>{
+  if(path==='/ai/config')return {assistant:{name:'Vyvy',handle:'vyvy',enabled:true},ready:true};
+  if(path.endsWith('/ai-runs'))return {runs:[]};
+  if(path.endsWith('/collaboration'))return {members:[],comments:[]};
+  const value=await reads(path,options);
+  if(options && path.endsWith('/comments'))return {...value,aiRun:{id:'queued-run',commentId:'comment-1',status:'queued'}};
+  return path.endsWith('/detail')?{...value,canWrite:false,canComment:true}:value;
+ };
+ const ui=await mount(t,TaskDetail,{api,taskId:task.id,me,onBack:()=>{}});
+ assert.ok(document.querySelector('.td-comment-form'));
+ assert.equal(document.querySelector('.td-tasklist-new'),null);
+ const textarea=document.querySelector('textarea[aria-label="Bình luận công việc"]');
+ await act(async()=>textarea.focus());
+ await ui.typeInput('textarea[aria-label="Bình luận công việc"]','@VY');
+ assert.ok(ui.text().includes('@vyvy · Trợ lý AI'));
+ await act(async()=>document.querySelector('.td-mention-list button').dispatchEvent(new ui.dom.window.MouseEvent('mousedown',{bubbles:true,cancelable:true})));
+ await ui.submit(document.querySelector('.td-comment-form'));
+ assert.ok(ui.text().includes('Response lost'));
+ await ui.submit(document.querySelector('.td-comment-form'));
+ assert.equal(server.effects,1);
+ assert.equal(server.calls[0].body,'@vyvy');
+ assert.deepEqual(server.calls[0].mentionIds,[]);
+ assert.equal(server.calls[0].operationId,server.calls[1].operationId);
+ assert.ok(ui.text().includes('Đang chờ'));
+});
+
+test('web AI replies render markdown, source limits and original-comment links',async t=>{
+ const reads=detailApi(async()=>({}));
+ const api=async(path,options)=>{
+  if(path.endsWith('/ai-runs'))return {runs:[]};
+  if(path.endsWith('/collaboration'))return {members:[],comments:[]};
+  const value=await reads(path,options);
+  return path.endsWith('/detail')?{...value,comments:[{id:'ai-reply',body:'**Đã tạo checklist**',authorName:'Vyvy',authorType:'assistant',replyToCommentId:'original',createdAt:'2026-10-18T01:00:00Z',attachments:[],sources:[{title:'Tài liệu',status:'partial',detail:'Chưa đọc hết',attachmentId:'file-1',kind:'file',url:'/api/tasks/other-task/attachments/file-1/download'}],actions:[{name:'create_checklist',summary:'Tạo checklist',status:'completed'}]}]}:value;
+ };
+ const ui=await mount(t,TaskDetail,{api,taskId:task.id,me,onBack:()=>{}});
+ assert.equal(document.querySelector('.td-ai-badge').textContent,'AI');
+ assert.equal(document.querySelector('.assistant-markdown strong').textContent,'Đã tạo checklist');
+ assert.equal(document.querySelector('.td-ai-reply').getAttribute('href'),'#comment-original');
+ assert.ok(ui.text().includes('Đọc một phần · Chưa đọc hết'));
+ assert.ok(document.querySelector('.td-ai-sources a').href.endsWith('/tasks/other-task/attachments/file-1/download'));
+});
+
+test('web AI sources and markdown open known tasks and preserve independent deletion permission',async t=>{
+ const reads=detailApi(async()=>({})),opened=[];
+ const api=async(path,options)=>{
+  if(path.endsWith('/ai-runs'))return {runs:[]};
+  if(path.endsWith('/collaboration'))return {members:[],comments:[{id:'ai-reply',canEdit:false,canDelete:true,reactions:[]}]};
+  const value=await reads(path,options);
+  return path.endsWith('/detail')?{...value,comments:[{id:'ai-reply',body:'[Việc liên quan](/tasks/task-2)',authorName:'Vyvy',authorType:'assistant',createdAt:'2026-10-18T01:00:00Z',attachments:[],sources:[{kind:'task',taskId:'task-2',title:'Việc liên quan',url:'/tasks/task-2',status:'partial',note:'Chỉ đọc kết quả tìm kiếm'}]}]}:value;
+ };
+ const ui=await mount(t,TaskDetail,{api,taskId:task.id,me,onBack:()=>{},onOpenTask:task=>opened.push(task.id)});
+ await ui.click('Mở công việc Việc liên quan');
+ await act(async()=>document.querySelector('.td-ai-sources a').click());
+ assert.deepEqual(opened,['task-2','task-2']);
+ assert.ok(ui.text().includes('Đọc một phần · Chỉ đọc kết quả tìm kiếm'));
+ await ui.click('Thao tác bình luận');
+ assert.deepEqual([...document.querySelectorAll('[role="menuitem"]')].map(item=>item.textContent),['Xóa bình luận']);
+});
+
+
+test('workspace assistant settings save the configured name and handle with capability feedback',async t=>{
+ let assistant={name:'Vyvy',handle:'vyvy',enabled:true};const writes=[];
+ const api=async(path,options)=>{if(options){writes.push([path,JSON.parse(options.body)]);assistant=JSON.parse(options.body);return {assistant,canManageAssistant:true};}return {assistant,ready:true,provider:'openrouter',model:'model',canManageAssistant:true,capabilities:{images:true,pdf:false}};};
+ const ui=await mount(t,AssistantSettings,{api,user:me.user,workspaceId:'w'});
+ assert.ok(ui.text().includes('Ảnh: Có hỗ trợ · PDF: Chưa hỗ trợ'));
+ await ui.typeInput('input[value="Vyvy"]','Vy mới');
+ await ui.typeInput('input[value="vyvy"]','vymoi');
+ await ui.submit(document.querySelector('form'));
+ assert.deepEqual(writes,[['/ai/workspace-settings',{name:'Vy mới',handle:'vymoi',enabled:true}]]);
+ assert.ok(ui.text().includes('Đã cập nhật trợ lý của không gian.'));
+});
+
+test('members see assistant settings without editable controls',async t=>{
+ const api=async()=>({assistant:{name:'Vyvy',handle:'vyvy',enabled:true},canManageAssistant:false});
+ const ui=await mount(t,AssistantSettings,{api,user:{role:'member'},workspaceId:'w'});
+ assert.equal(document.querySelector('fieldset').disabled,true);
+ assert.equal([...document.querySelectorAll('button')].some(button=>button.textContent==='Lưu trợ lý'),false);
+ assert.ok(ui.text().includes('Chủ sở hữu hoặc quản trị viên'));
 });

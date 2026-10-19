@@ -34,6 +34,17 @@ function supported(req) {
   return /^\/api\/boards\/tasks\/[^/]+\/move$/.test(req.path) || /^\/api\/tasks(?:\/[^/]+(?:\/extras|\/plan|\/fields|\/timeline|\/copy|\/checklists(?:\/[^/]+(?:\/order|\/copy|\/items(?:\/[^/]+(?:\/convert)?)?)?)?|\/reminders\/(?:acknowledge|snooze))?)?$/.test(req.path);
 }
 
+// Keep business mutations callable by both HTTP routes and durable assistant
+// jobs. Only explicitly registered commands are available to an internal job.
+export function registerTaskMutationCommand(app, method, path, requireAuth, run, status = 200) {
+  const commands = app.locals.taskMutationCommands ||= [];
+  commands.push({ method, path, parts: path.split('/'), run, status });
+  app[method.toLowerCase()](path, requireAuth, (req, res, next) => {
+    try { return res.status(status).json(run(req)); }
+    catch (error) { return next(error); }
+  });
+}
+
 export function registerTaskMutationPipeline(app, { db, clock, ensureWritable, requireAuth, HttpError, authorizeTask }) {
   if (db.dialect !== 'postgres') return;
   const authorize = (req, id, { write = true, allowDeleted = false } = {}) => {
@@ -62,17 +73,10 @@ export function registerTaskMutationPipeline(app, { db, clock, ensureWritable, r
       });
     } catch (error) { next(error); }
   });
-  app.use((req, res, next) => {
-    if (!supported(req)) return next();
-    let allowed = false;
-    requireAuth(req,res,() => { allowed = true; });
-    if (!allowed) return;
-    const originalJson = res.json;
+  function execute(req, callback) {
     const originalBody = req.body;
-    const rejected = Symbol('rejected mutation');
-    let response, captured = false;
     try {
-      withTransaction(db, () => {
+      return withTransaction(db, () => {
         ensureWritable(req);
         req.authorizePublicMutation?.();
         const operationId = req.headers['idempotency-key'] ?? originalBody?.operationId;
@@ -110,24 +114,19 @@ export function registerTaskMutationPipeline(app, { db, clock, ensureWritable, r
           if (receipt) {
             if (receipt.payload_hash !== fingerprint || receipt.action !== action) throw new HttpError(409, 'operationId đã dùng với nội dung khác');
             if (receipt.resource_id && receipt.resource_id !== taskId) authorize(req, receipt.resource_id);
-            response = JSON.parse(receipt.response_json);
-            res.status(receipt.response_status);
-            res.set('Idempotency-Replayed', 'true');
-            captured = true;
-            return;
+            return { body: JSON.parse(receipt.response_json), status: receipt.response_status, replayed: true };
           }
         if (current && !req.path.endsWith('/plan')) assertRevision(originalBody, current, 'task', HttpError);
         req.expectedRevision = originalBody?.expectedRevision;
         req.body = { ...payload };
         delete req.body.expectedRevision;
-        res.json = function (body) { response = JSON.parse(JSON.stringify(body)); captured = true; return this; };
         const now = clock().toISOString();
-        withMutationContext(db, {
-          actorUserId: req.auth.userId, source: req.publicApi ? 'public_api' : req.mobileToken ? 'android' : 'web',
+        const result = withMutationContext(db, {
+          actorUserId: req.auth.userId, source: req.mutationSource || (req.publicApi ? 'public_api' : req.mobileToken ? 'android' : 'web'),
           operationId: operationId || null, occurredAt: now,
-        }, () => next());
-        if (!captured) throw new Error('Task mutation handler must respond synchronously');
-        if (res.statusCode >= 400) throw rejected;
+        }, callback);
+        if (result?.then) throw new Error('Task mutations must finish synchronously');
+        const response = JSON.parse(JSON.stringify(result.body));
         // Return the exact committed aggregate revision, including child writes.
         // A later read could otherwise adopt an intervening remote edit as the
         // base revision for a newer local draft waiting behind this operation.
@@ -139,15 +138,52 @@ export function registerTaskMutationPipeline(app, { db, clock, ensureWritable, r
         if (operationId) {
           const resultTaskId = response?.task?.id || response?.taskId || taskId || null;
           db.prepare(`INSERT INTO mutation_receipts(workspace_id,principal_id,operation_id,action,resource_id,payload_hash,response_status,response_json,committed_at)
-            VALUES(?,?,?,?,?,?,?,?,?)`).run(req.auth.workspaceId,req.auth.userId,operationId,action,resultTaskId,fingerprint,res.statusCode,JSON.stringify(response),now);
+            VALUES(?,?,?,?,?,?,?,?,?)`).run(req.auth.workspaceId,req.auth.userId,operationId,action,resultTaskId,fingerprint,result.status,JSON.stringify(response),now);
         }
+        return { ...result, body: response };
+      });
+    } finally { req.body = originalBody; }
+  }
+
+  app.locals.executeTaskMutation = ({ auth, method, path, body, source = 'ai_comment' }) => {
+    const parts = path.split('/');
+    const command = app.locals.taskMutationCommands?.find(candidate => candidate.method === method
+      && candidate.parts.length === parts.length
+      && candidate.parts.every((part, index) => part.startsWith(':') || part === parts[index]));
+    if (!command) throw new HttpError(400, 'Thao tác công việc không được hỗ trợ');
+    if (!auth?.userId || !auth.workspaceId) throw new HttpError(401, 'Bạn cần đăng nhập');
+    const member = db.prepare(`SELECT wm.role,wm.member_type,u.disabled_at FROM workspace_members wm
+      JOIN users u ON u.id=wm.user_id WHERE wm.workspace_id=? AND wm.user_id=?`).get(auth.workspaceId,auth.userId);
+    if (!member || member.disabled_at) throw new HttpError(403, 'Tài khoản không còn quyền truy cập');
+    if (!body?.operationId) throw new HttpError(400, 'Thao tác nền cần operationId');
+    if (path !== '/api/tasks' && !body.expectedRevision) throw new HttpError(400, 'Thao tác nền cần expectedRevision');
+    const params = Object.fromEntries(command.parts.flatMap((part,index) => part.startsWith(':') ? [[part.slice(1),parts[index]]] : []));
+    const req = { app, method, path, params, headers: {}, body,
+      auth: { ...auth, role: member.role, memberType: member.member_type }, mutationSource: source };
+    return execute(req, () => ({ status: command.status, body: command.run(req) })).body;
+  };
+
+  app.use((req, res, next) => {
+    if (!supported(req)) return next();
+    let allowed = false;
+    requireAuth(req,res,() => { allowed = true; });
+    if (!allowed) return;
+    const originalJson = res.json;
+    const rejected = Symbol('rejected mutation');
+    let response, captured = false;
+    try {
+      const result = execute(req, () => {
+        res.json = function (body) { response = body; captured = true; return this; };
+        next();
+        if (!captured) throw new Error('Task mutation handler must respond synchronously');
+        if (res.statusCode >= 400) throw rejected;
+        return { body: response, status: res.statusCode };
       });
       res.json = originalJson;
-      req.body = originalBody;
-      return res.json(response);
+      if (result.replayed) res.set('Idempotency-Replayed', 'true');
+      return res.status(result.status).json(result.body);
     } catch (error) {
       res.json = originalJson;
-      req.body = originalBody;
       if (error === rejected) return res.json(response);
       return next(error);
     }

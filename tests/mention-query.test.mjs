@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { filterMentionMembers, foldMention, mentionToken } from "../src/mention-query.js";
+import { assistantMention, filterMentionMembers, foldMention, mentionToken } from "../src/mention-query.js";
 
 test("mention token starts at @ after a boundary and keeps the typed query", () => {
   assert.deepEqual(mentionToken("@", 1), { start: 0, query: "" });
@@ -20,4 +20,12 @@ test("member filter ignores accents and đ", () => {
   assert.deepEqual(filterMentionMembers(members, "dung").map((member) => member.id), ["1"]);
   assert.deepEqual(filterMentionMembers(members, "AN@").map((member) => member.id), ["2"]);
   assert.deepEqual(filterMentionMembers(members, "zzz"), []);
+});
+
+test("assistant suggestions match the configured handle and remain separate from members", () => {
+  const assistant = assistantMention({ enabled: true, name: "Trợ lý", handle: "vyvy" });
+  assert.equal(assistant.assistant, true);
+  assert.equal(assistant.handle, "vyvy");
+  assert.deepEqual(filterMentionMembers([assistant, { id: "person", name: "Vy" }], "VYVY"), [assistant]);
+  assert.equal(assistantMention({ enabled: false, name: "Vyvy", handle: "vyvy" }), null);
 });

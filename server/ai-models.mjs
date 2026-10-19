@@ -29,7 +29,12 @@ export function createAiModelCatalog(fetchImpl = fetch) {
             if (provider === "openrouter" && !row.supported_parameters?.includes("tools")) continue;
             if (typeof row.id !== "string" || row.id.length > 150 || !/^[a-zA-Z0-9][a-zA-Z0-9._:/@-]*$/.test(row.id)) continue;
             const name = row.display_name || row.name;
-            models.set(row.id, { id: row.id, name: typeof name === "string" ? name.slice(0, 200) : row.id });
+            const modalities = row.architecture?.input_modalities;
+            models.set(row.id, { id: row.id, name: typeof name === "string" ? name.slice(0, 200) : row.id,
+              images: provider === 'anthropic' ? true : Array.isArray(modalities) ? modalities.includes('image') : null,
+              nativePdf: provider === 'anthropic' ? true : Array.isArray(modalities) ? modalities.includes('file') : null,
+              contextLength: Number(row.context_length) || null,
+            });
           }
           if (provider === "openrouter" || !payload.has_more) break;
           if (typeof payload.last_id !== "string" || !payload.last_id || payload.last_id === after || page === 9) throw new Error("incomplete catalog");

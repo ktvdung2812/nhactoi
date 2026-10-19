@@ -1,8 +1,11 @@
+import { registerTaskMutationCommand } from './task-mutation-pipeline.mjs';
 import { canAccessTask } from './task-access.mjs';
 import { emitTaskEvent } from "./automations.mjs";
 import { createId } from "./auth.mjs";
 import { notifyTaskAudience, recordCommentMentions } from "./collaboration.mjs";
 import { cleanupAttachmentRows, enqueueAttachmentCleanup } from "./task-files.mjs";
+import { aiRunJson, jsonValue, readableAiMetadata } from './ai-comment-state.mjs';
+import { mutationFingerprint } from './task-mutation-pipeline.mjs';
 
 const TITLE_MAX = 240;
 const COMMENT_MAX = 5000;
@@ -216,12 +219,18 @@ function attachmentJson(row) {
   return { ...base, kind: "link", url: row.url };
 }
 
-function commentJson(row, attachments = []) {
+function commentJson(row, attachments = [], db, auth, task) {
+  const { metadata, accessible } = db && auth && task ? readableAiMetadata(db, auth, task, row)
+    : { metadata: jsonValue(row.ai_metadata, {}), accessible: true };
   return {
     id: row.id,
-    body: row.body,
+    body: accessible ? row.body : 'Nội dung phản hồi không còn khả dụng theo phạm vi dự án và quyền truy cập hiện tại.',
     createdAt: row.created_at,
-    authorName: row.author_name || null,
+    authorName: row.author_name_snapshot || row.author_name || null,
+    authorType: row.author_type || 'human',
+    replyToCommentId: row.reply_to_comment_id || null,
+    aiRunId: row.ai_run_id || null,
+    sources: metadata.sources || [], actions: metadata.actions || [],
     attachments,
   };
 }
@@ -286,7 +295,8 @@ function attachmentRows(db, taskId, workspaceId) {
     .map(attachmentJson);
 }
 
-function commentRows(db, taskId, workspaceId) {
+function commentRows(db, task, auth) {
+  const taskId = task.id, workspaceId = auth.workspaceId;
   const rows = db
     .prepare(
       `
@@ -319,7 +329,7 @@ function commentRows(db, taskId, workspaceId) {
     attachments.push(attachmentJson(row));
     attachmentsByComment.set(row.comment_id, attachments);
   }
-  return rows.map((row) => commentJson(row, attachmentsByComment.get(row.id) || []));
+  return rows.map((row) => commentJson(row, attachmentsByComment.get(row.id) || [], db, auth, task));
 }
 
 function commentAttachmentRows(db, commentId, taskId, workspaceId) {
@@ -435,7 +445,7 @@ function detailPayload(db, task, auth, baseTaskJson, canAccessTeamTask, clock) {
     checklists: checklistRows(db, task.id, auth.workspaceId),
     checklistMembers: cardMembers(db, task),
     attachments: attachmentRows(db, task.id, auth.workspaceId),
-    comments: commentRows(db, task.id, auth.workspaceId),
+    comments: commentRows(db, task, auth),
     activity: activityRows(db, task.id, auth.workspaceId),
     canComment: writableWorkspace(db, auth.workspaceId, clock) && canAccessTask(db, auth.workspaceId, auth.userId, task, { action: "comment" }),
     canWrite:
@@ -473,6 +483,11 @@ export function registerTaskDetailRoutes(
     return task;
   }
 
+  app.locals.readAssistantTaskContext = (auth, taskId) => {
+    const task = taskForUser(db, taskId, auth, canAccessTeamTask, HttpError);
+    if (!task) throw new HttpError(404, 'Không tìm thấy công việc.');
+    return detailPayload(db, task, auth, baseTaskJson, canAccessTeamTask, clock);
+  };
   app.get("/api/tasks/:id/detail", requireAuth, (req, res, next) => {
     try {
       const task = taskOr404(req);
@@ -482,8 +497,7 @@ export function registerTaskDetailRoutes(
     }
   });
 
-  app.post("/api/tasks/:id/checklists", requireAuth, (req, res, next) => {
-    try {
+  registerTaskMutationCommand(app, "POST", "/api/tasks/:id/checklists", requireAuth, (req) => {
       ensureWritable(req);
       const task = taskOr404(req, { write: true });
       const body = bodyObject(req.body, HttpError);
@@ -508,21 +522,17 @@ export function registerTaskDetailRoutes(
         });
         return db.prepare("SELECT id, title FROM task_checklists WHERE id = ?").get(id);
       });
-      return res.status(201).json({ checklist: checklistJson({ ...checklist, items: [] }) });
-    } catch (error) {
-      return next(error);
-    }
-  });
+      return { checklist: checklistJson({ ...checklist, items: [] }) };
+  }, 201);
 
-  app.patch("/api/tasks/:id/checklists/:checklistId", requireAuth, (req, res, next) => {
-    try {
+  registerTaskMutationCommand(app, "PATCH", "/api/tasks/:id/checklists/:checklistId", requireAuth, (req) => {
       ensureWritable(req);
       const task = taskOr404(req, { write: true });
       const body = bodyObject(req.body, HttpError);
       assertKeys(body, new Set(["title"]), HttpError);
       const title = text(body.title, "title", cleanString, HttpError);
       const checklist = checklistById(db, task.id, req.params.checklistId, req.auth.workspaceId);
-      if (!checklist) return fail(res, 404, "checklist was not found");
+      if (!checklist) throw new HttpError(404, "checklist was not found");
       const now = isoNow(clock);
       const updated = withTransaction(db, () => {
         const changed = checklist.title !== title;
@@ -538,11 +548,8 @@ export function registerTaskDetailRoutes(
           });
         return db.prepare("SELECT id, title FROM task_checklists WHERE id = ?").get(checklist.id);
       });
-      return res.json({ checklist: checklistJson({ ...updated, items: checklistRows(db, task.id, req.auth.workspaceId).find((item) => item.id === checklist.id)?.items || [] }) });
-    } catch (error) {
-      return next(error);
-    }
-  });
+      return { checklist: checklistJson({ ...updated, items: checklistRows(db, task.id, req.auth.workspaceId).find((item) => item.id === checklist.id)?.items || [] }) };
+  }, 200);
 
   app.delete("/api/tasks/:id/checklists/:checklistId", requireAuth, (req, res, next) => {
     try {
@@ -602,24 +609,35 @@ export function registerTaskDetailRoutes(
     }
   });
 
-  app.post("/api/tasks/:id/checklists/:checklistId/items", requireAuth, (req, res, next) => {
-    try {
+  registerTaskMutationCommand(app, "POST", "/api/tasks/:id/checklists/:checklistId/items", requireAuth, (req) => {
       ensureWritable(req);
       const task = taskOr404(req, { write: true });
       const body = bodyObject(req.body, HttpError);
-      assertKeys(body, new Set(["title"]), HttpError);
+      assertKeys(body, new Set(["title", "completed", "startAt", "dueAt", "remindAt", "assigneeIds"]), HttpError);
       const title = text(body.title, "title", cleanString, HttpError);
+      const completed = body.completed === undefined ? false : body.completed;
+      if (typeof completed !== "boolean") throw new HttpError(400, "completed must be true or false");
+      const startAt = optionalDate(body.startAt, "startAt", HttpError, { dateOnly: true }) ?? null;
+      const dueAt = optionalDate(body.dueAt, "dueAt", HttpError, { dateOnly: true }) ?? null;
+      const remindAt = optionalDate(body.remindAt, "remindAt", HttpError) ?? null;
+      if (startAt && dueAt && startAt > dueAt) throw new HttpError(400, "Ngày bắt đầu không được sau hạn chót");
+      const assignees = body.assigneeIds === undefined ? [] : assertAssignees(db, task, body.assigneeIds, HttpError);
       const checklist = checklistById(db, task.id, req.params.checklistId, req.auth.workspaceId);
-      if (!checklist) return fail(res, 404, "checklist was not found");
+      if (!checklist) throw new HttpError(404, "checklist was not found");
       const count = db.prepare("SELECT COUNT(*) AS count FROM task_checklist_items WHERE checklist_id = ?").get(checklist.id).count;
       if (Number(count) >= MAX_CHECKLIST_ITEMS) throw new HttpError(400, "a checklist can have at most 100 items");
       const now = isoNow(clock);
       const item = withTransaction(db, () => {
         const id = createId("checkitem_");
         db.prepare(
-          `INSERT INTO task_checklist_items(id, checklist_id, title, completed, created_at, updated_at)
-           VALUES (?, ?, ?, 0, ?, ?)`,
-        ).run(id, checklist.id, title, now, now);
+          `INSERT INTO task_checklist_items(id, checklist_id, title, completed, start_at, due_at, remind_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(id, checklist.id, title, completed ? 1 : 0, startAt, dueAt, remindAt, now, now);
+        replaceAssignees(db, id, assignees);
+        if (assignees.length) notifyTaskAudience(db, {
+          taskId: task.id, actorUserId: req.auth.userId, recipients: assignees,
+          summary: `đã giao bạn mục checklist “${title}”`, createdAt: now, type: "checklist_assigned",
+        });
         db.prepare("UPDATE task_checklist_items SET position=(SELECT COALESCE(MAX(position),0)+1 FROM task_checklist_items WHERE checklist_id=? AND id<>?) WHERE id=?").run(checklist.id,id,id);
         recordTaskActivity(db, {
           taskId: task.id,
@@ -630,14 +648,10 @@ export function registerTaskDetailRoutes(
         });
         return id;
       });
-      return res.status(201).json({ item: loadItem(db, item) });
-    } catch (error) {
-      return next(error);
-    }
-  });
+      return { item: loadItem(db, item) };
+  }, 201);
 
-  app.patch("/api/tasks/:id/checklists/:checklistId/items/:itemId", requireAuth, (req, res, next) => {
-    try {
+  registerTaskMutationCommand(app, "PATCH", "/api/tasks/:id/checklists/:checklistId/items/:itemId", requireAuth, (req) => {
       ensureWritable(req);
       const task = taskOr404(req, { write: true });
       const body = bodyObject(req.body, HttpError);
@@ -645,7 +659,7 @@ export function registerTaskDetailRoutes(
       if (body.title === undefined && body.completed === undefined && body.startAt === undefined && body.dueAt === undefined && body.remindAt === undefined && body.assigneeIds === undefined)
         throw new HttpError(400, "no checklist item changes were supplied");
       const item = itemById(db, task.id, req.params.checklistId, req.params.itemId, req.auth.workspaceId);
-      if (!item) return fail(res, 404, "checklist item was not found");
+      if (!item) throw new HttpError(404, "checklist item was not found");
       const nextTitle = body.title === undefined ? item.title : text(body.title, "title", cleanString, HttpError);
       const nextCompleted = body.completed === undefined ? Boolean(item.completed) : body.completed;
       if (typeof nextCompleted !== "boolean") throw new HttpError(400, "completed must be true or false");
@@ -719,11 +733,8 @@ export function registerTaskDetailRoutes(
         }
         return item.id;
       });
-      return res.json({ item: loadItem(db, updated) });
-    } catch (error) {
-      return next(error);
-    }
-  });
+      return { item: loadItem(db, updated) };
+  }, 200);
 
   app.delete("/api/tasks/:id/checklists/:checklistId/items/:itemId", requireAuth, (req, res, next) => {
     try {
@@ -814,7 +825,7 @@ export function registerTaskDetailRoutes(
       ensureWritable(req);
       const task = taskOr404(req, { write: true });
       const body = bodyObject(req.body, HttpError);
-      assertKeys(body, new Set(["body", "attachmentIds", "mentionIds"]), HttpError);
+      assertKeys(body, new Set(["body", "attachmentIds", "mentionIds", "operationId"]), HttpError);
       let attachmentIds = [];
       if (body.attachmentIds !== undefined) {
         if (!Array.isArray(body.attachmentIds) || body.attachmentIds.length > 10)
@@ -832,7 +843,27 @@ export function registerTaskDetailRoutes(
         ? cleanString(body.body, { max: COMMENT_MAX, field: "body" })
         : text(body.body, "body", cleanString, HttpError, COMMENT_MAX);
       const now = isoNow(clock);
+      const operationId = req.get('idempotency-key') || body.operationId;
+      if (operationId !== undefined && (typeof operationId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{7,159}$/.test(operationId)))
+        throw new HttpError(400, 'operationId không hợp lệ');
+      if (req.get('idempotency-key') && body.operationId && req.get('idempotency-key') !== body.operationId)
+        throw new HttpError(400, 'operationId không khớp Idempotency-Key');
+      const fingerprint = mutationFingerprint({ body: commentBody, attachmentIds, mentionIds: body.mentionIds || [] });
+      const action = `POST /api/tasks/${task.id}/comments`;
       const result = withTransaction(db, () => {
+        if (operationId && db.dialect === 'postgres') {
+          db.prepare('SELECT pg_advisory_xact_lock(hashtext(current_schema()),hashtext(?))').get(JSON.stringify([req.auth.workspaceId,req.auth.userId,operationId]));
+          const receipt = db.prepare('SELECT * FROM mutation_receipts WHERE workspace_id=? AND principal_id=? AND operation_id=?')
+            .get(req.auth.workspaceId,req.auth.userId,operationId);
+          if (receipt) {
+            if (receipt.payload_hash !== fingerprint || receipt.action !== action) throw new HttpError(409,'operationId đã dùng với nội dung khác');
+            const response = JSON.parse(receipt.response_json);
+            if (!db.prepare('SELECT 1 FROM task_comments WHERE id=? AND task_id=?').get(response.comment.id,task.id))
+              throw new HttpError(409,'Bình luận đã bị xóa. Hãy gửi yêu cầu mới.');
+            return { status: 200, response };
+          }
+        }
+        const created = (() => {
         let files = [];
         if (attachmentIds.length) {
           const placeholders = attachmentIds.map(() => "?").join(", ");
@@ -959,8 +990,17 @@ export function registerTaskDetailRoutes(
           row: comment,
           attachments: commentAttachmentRows(db, id, task.id, req.auth.workspaceId),
         };
+        })();
+        const existingRun = db.dialect === 'postgres' && db.prepare('SELECT * FROM ai_comment_runs WHERE comment_id=?').get(created.row.id);
+        const aiRun = existingRun ? aiRunJson(existingRun, req.auth) : created.status === 201
+          ? app.locals.enqueueAiComment?.({ task, auth: req.auth, comment: created.row, createdAt: now }) : null;
+        const response = { comment: commentJson(created.row, created.attachments), ...(aiRun ? { aiRun } : {}) };
+        if (operationId && db.dialect === 'postgres') db.prepare(`INSERT INTO mutation_receipts(workspace_id,principal_id,operation_id,action,resource_id,payload_hash,response_status,response_json,committed_at)
+          VALUES(?,?,?,?,?,?,?,?,?)`).run(req.auth.workspaceId,req.auth.userId,operationId,action,task.id,fingerprint,created.status,JSON.stringify(response),now);
+        return { status: created.status, response };
       });
-      return res.status(result.status).json({ comment: commentJson(result.row, result.attachments) });
+      app.locals.wakeCommentAssistant?.();
+      return res.status(result.status).json(result.response);
     } catch (error) {
       return next(error);
     }

@@ -12,7 +12,7 @@ import ZaloOa from "./ZaloOa.jsx";
 import TaskTemplates from "./TaskTemplates.jsx";
 import AssistantChat from "./AssistantChat.jsx";
 import {GoogleAccount} from "./OperationsSettings.jsx";
-import Account, { ThemeSettings } from "./Account.jsx";
+import Account, { AssistantSettings, ThemeSettings } from "./Account.jsx";
 import ThemeToggle, { ThemeToggleButton } from "./ThemeToggle.jsx";
 import { useTheme } from "./theme.js";
 import BoardTransfer from "./BoardTransfer.jsx";
@@ -1435,6 +1435,7 @@ export default function App() {
                     ? { ...member, name: user.name, email: user.email } : member),
                 }));
               }} />
+              <AssistantSettings key={`assistant-${me.workspace.id}`} api={api} user={me.user} workspaceId={me.workspace.id} />
               <WebPushSettings key={`push-${me.user.id}`} api={api} />
               <ThemeSettings disabledReason={appearance.themeDisabledReason} />
               <button className="button" onClick={() => go("appearance")}><Palette size={16} /> Cá nhân hóa toàn bộ giao diện</button>
@@ -2210,6 +2211,7 @@ export default function App() {
               onEdit={(task) => openTeamTask({ item: task, readOnly: task.teamArchived })}
               onTrash={(task) => requestTrash("task", task)}
               onBack={closeTaskDetail}
+              onOpenTask={aiTaskId ? openAiTask : openTaskDetail}
             />
           </div>
         </div>

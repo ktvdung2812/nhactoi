@@ -25,7 +25,7 @@ import {registerGoogleRoutes} from "./google-login.mjs";
 import {registerBackupRoutes} from "./backups.mjs";
 import {registerEventRoutes,processEventReminders} from "./calendar-events.mjs";
 import { recordRevision, assertRevision } from "./record-revision.mjs";
-import { registerTaskMutationPipeline } from "./task-mutation-pipeline.mjs";
+import { registerTaskMutationPipeline, registerTaskMutationCommand } from "./task-mutation-pipeline.mjs";
 import {registerBoardTransferRoutes} from "./board-transfer.mjs";
 import {JSON_BODY_LIMIT_BYTES} from "../shared/board-transfer.mjs";
 import { registerCollaborationRoutes } from "./collaboration.mjs";
@@ -853,7 +853,7 @@ function assertOrigin(req, config) {
 
 function requireAuth(req, res, next) {
   if (!req.auth) return fail(res, 401, "authentication required");
-  if (req.auth.memberType === 'guest' && !/^\/api\/(?:tasks(?:\/|$)|boards(?:\/|$)|projects(?:\/|$)|personal-tasks$|dashboard$|operations-dashboard$|timers(?:\/|$)|time-entries(?:\/|$)|reports\/(?:capacity|portfolio|sla)$|me$|workspaces(?:\/|$)|notifications(?:\/|$)|task-labels$|appearance(?:\/|$)|mobile\/(?:auth(?:\/|$)|notifications(?:\/|$)|devices(?:\/|$))|web-push(?:\/|$))/.test(req.path))
+  if (req.auth.memberType === 'guest' && req.path !== '/api/ai/config' && !/^\/api\/(?:tasks(?:\/|$)|boards(?:\/|$)|projects(?:\/|$)|personal-tasks$|dashboard$|operations-dashboard$|timers(?:\/|$)|time-entries(?:\/|$)|reports\/(?:capacity|portfolio|sla)$|me$|workspaces(?:\/|$)|notifications(?:\/|$)|task-labels$|appearance(?:\/|$)|mobile\/(?:auth(?:\/|$)|notifications(?:\/|$)|devices(?:\/|$))|web-push(?:\/|$))/.test(req.path))
     return fail(res, 403, "Khách chỉ được truy cập dự án được chia sẻ");
   return next();
 }
@@ -2786,7 +2786,8 @@ function createApp(options = {}) {
   registerAiAssistantRoutes(app, {
     db, clock, config, requireAuth, requirePlatformAdmin, ensureWritable, HttpError,
     withTransaction, writeStoredSetting, loadStoredSettings, settingsKey, writeAdminAudit,
-    taskRowsFiltered, fetchImpl: options.aiFetch,
+    taskRowsFiltered, fetchImpl: options.aiFetch, startWorker: Boolean(options.startWorker),
+    sourceReader: options.aiSourceReader, sourceOptions: options.aiSourceOptions,
     refreshAuth: req => authContext(db, req.sessionToken, clock, req.auth.sessionKind),
   });
 
@@ -3966,8 +3967,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.post("/api/tasks", requireAuth, (req, res, next) => {
-    try {
+  registerTaskMutationCommand(app, "POST", "/api/tasks", requireAuth, (req) => {
       ensureWritable(req);
       const title = cleanString(req.body?.title, {
         required: true,
@@ -4099,17 +4099,12 @@ function createApp(options = {}) {
       );
       recordTaskActivity(db,{taskId:id,actorUserId:req.auth.userId,action:"task_created",summary:"đã tạo công việc",createdAt:now});
       });
-      return res
-        .status(201)
-        .json({
+      return {
           task: taskJson(
             taskRowById(db, id, req.auth.workspaceId), req.auth,
           ),
-        });
-    } catch (error) {
-      return next(error);
-    }
-  });
+        };
+  }, 201);
 
   app.get("/api/tasks/:id", requireAuth, (req, res, next) => {
     try {
@@ -4123,8 +4118,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.patch("/api/tasks/:id", requireAuth, (req, res, next) => {
-    try {
+  registerTaskMutationCommand(app, "PATCH", "/api/tasks/:id", requireAuth, (req) => {
       const result = withTransaction(db, () => {
       ensureWritable(req);
       const task = db
@@ -4357,10 +4351,7 @@ function createApp(options = {}) {
           : null,
       };
       });
-      return res.json(result);
-    } catch (error) {
-      return next(error);
-    }
+      return result;
   });
 
   app.delete("/api/tasks/:id", requireAuth, (req, res, next) => {
@@ -5293,6 +5284,7 @@ function createApp(options = {}) {
           processReminders({ db, config, clock });
           app.locals.processServiceReminders();
           app.locals.processAutomations?.();
+          void app.locals.processAiComments?.().catch(()=>console.warn('[nhactoi] assistant worker failed'));
           app.locals.processWorkTimers?.();
           void app.locals.processWebhooks?.().catch(()=>console.error("[nhactoi] webhook worker failed"));
           void app.locals.processGoogleCalendar?.().catch(()=>console.error("[nhactoi] calendar sync failed"));
@@ -5313,6 +5305,7 @@ function createApp(options = {}) {
     app.locals.reminderInterval = interval;
   }
   app.locals.close = () => {
+    app.locals.stopCommentAssistant?.();
     if (app.locals.reminderInterval) clearInterval(app.locals.reminderInterval);
     if (!options.db && db?.close) db.close();
   };

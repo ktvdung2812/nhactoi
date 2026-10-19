@@ -60,9 +60,21 @@ export type Attachment = {
   mimeType?: string;
   downloadUrl?: string;
 };
+export type AssistantConfig = {
+  ready: boolean;
+  provider: string;
+  model: string;
+  assistant: { name: string; handle: string; enabled: boolean; ready?: boolean; canManage?: boolean };
+  canManageAssistant?: boolean;
+  capabilities?: { images: boolean; pdf: boolean };
+};
+export type AiAction = { id?: string; name: string; status?: string; summary?: string; error?: string };
+export type AiRun = { id: string; commentId: string; status: string; canRetry?: boolean; error?: string; updatedAt?: string; sources?: AiSource[]; actions?: AiAction[] };
+export type AiSource = { id?: string; title?: string; url?: string; status: string; error?: string; detail?: string; note?: string; attachmentId?: string; taskId?: string; kind?: string };
 export type Detail = {
   task: Task;
   canWrite: boolean;
+  canComment?: boolean;
   checklists: {
     id: string;
     title: string;
@@ -72,6 +84,10 @@ export type Detail = {
     id: string;
     body: string;
     authorName: string;
+    authorType?: "human" | "assistant";
+    replyToCommentId?: string;
+    sources?: AiSource[];
+    actions?: AiAction[];
     createdAt: string;
     attachments: Attachment[];
   }[];

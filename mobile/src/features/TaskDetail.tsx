@@ -1,16 +1,18 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {TaskWork} from "./WorkManagement";
 import {
   Alert,
+  Linking,
   ScrollView,
   Pressable,
   RefreshControl,
   View,
 } from "react-native";
+import * as Crypto from "expo-crypto";
 import { router } from "expo-router";
 import type { DocumentPickerAsset } from "expo-document-picker";
 import { useResource, useSession, refreshData } from "../core/session";
-import type { Detail, Column, Member } from "../core/types";
+import type { Detail, Column, Member, AssistantConfig, AiRun, AiSource, AiAction } from "../core/types";
 import { dateLabel, statuses, priorities, recurrenceLabel } from "../core/policy";
 import { queueable } from "../core/offline-state";
 import { errorMessage } from "../core/api";
@@ -34,6 +36,7 @@ type Collaboration = {
   comments: {
     id: string;
     canEdit: boolean;
+    canDelete?: boolean;
     reactions: { emoji: string; count: number; mine: boolean }[];
   }[];
 };
@@ -52,6 +55,24 @@ type Reminders = {
 function deliveryStatus(status?: string) {
   return ({ delivered:"Đã chuyển tới người nhận",read:"Người nhận đã đọc",retry:"Chờ thử lại",sending:"Đang gửi",suppressed:"Đã chặn",sent: "Nhà cung cấp đã tiếp nhận", accepted: "Nhà cung cấp đã tiếp nhận", pending: "Đang chờ gửi", failed: "Gửi thất bại", skipped: "Đã bỏ qua", unknown: "Chưa rõ kết quả" } as Record<string, string>)[status || ""] || (status ? "Chưa rõ kết quả" : "Không có lượt gửi");
 }
+function AiEvidence({ sources = [], actions = [], token, onError }: { sources?: AiSource[]; actions?: AiAction[]; token?: string; onError: (message: string) => void }) {
+  const filePath = (source: AiSource) => /^\/api\/tasks\/([^/?#]+)\/attachments\/([^/?#]+)\/download$/.exec(source.url || "");
+  async function openSource(source: AiSource) {
+    try {
+      const path = filePath(source);
+      if (source.kind === "task" && source.taskId) router.push({ pathname: "/task/[id]", params: { id: source.taskId } });
+      else if (path && token) await openAttachment(decodeURIComponent(path[1]), { id: decodeURIComponent(path[2]), title: source.title || "Tài liệu", kind: "file" }, token);
+      else if (source.url && /^https?:\/\//i.test(source.url)) await Linking.openURL(source.url);
+    } catch (reason) { onError(errorMessage(reason)); }
+  }
+  return <>
+    {sources.length > 0 && <View style={{ gap: 5 }}><Text style={s.label}>Nguồn tham chiếu</Text>{sources.map((source, index) => <View key={source.id || index}>
+      <Text style={s.muted}>{source.title || source.url || "Ngữ cảnh công việc"} · {({ read: "Đã đọc", partial: "Đọc một phần", failed: "Chưa đọc được", unread: "Chưa đọc", unsupported: "Chưa hỗ trợ", summarized: "Đã đọc và tóm tắt" } as Record<string, string>)[source.status] || source.status}{(source.detail || source.note || source.error) ? ` · ${source.detail || source.note || source.error}` : ""}</Text>
+      {(source.kind === "task" && source.taskId || (filePath(source) ? !!token : /^https?:\/\//i.test(source.url || ""))) && <Button label={`Mở nguồn ${source.title || source.url}`} secondary onPress={() => void openSource(source)} />}
+    </View>)}</View>}
+    {actions.length > 0 && <View style={{ gap: 5 }}><Text style={s.label}>Kết quả thao tác</Text>{actions.map((action, index) => <Text key={action.id || index} style={s.muted}>{action.summary || action.name}{action.status ? ` · ${{ completed: "Hoàn tất", failed: "Chưa thực hiện" }[action.status] || action.status}` : ""}{action.error ? ` · ${action.error}` : ""}</Text>)}</View>}
+  </>;
+}
 export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const { api, session, writable, taskWritable = writable, online, saveDraft, readDraft } = useSession();
   const base = `/tasks/${encodeURIComponent(id)}`;
@@ -63,6 +84,26 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
     base + "/upload-policy", !id.startsWith("local:"),
   );
   const reminders = useResource<Reminders>(base + "/reminders", !id.startsWith("local:"));
+  const aiConfig = useResource<AssistantConfig>("/ai/config", !id.startsWith("local:"));
+  const aiRuns = useResource<{ runs: AiRun[] }>(base + "/ai-runs", !id.startsWith("local:"));
+  const assistant = aiConfig.data?.value.assistant;
+  const runSignature = JSON.stringify(aiRuns.data?.value.runs || []);
+  const previousRuns = useRef<string | null>(null);
+  const refetchAi = useRef(aiRuns.refetch), refetchDetail = useRef(result.refetch), refetchCollaboration = useRef(collaboration.refetch);
+  useEffect(() => { refetchAi.current = aiRuns.refetch; refetchDetail.current = result.refetch; refetchCollaboration.current = collaboration.refetch; }, [aiRuns.refetch, result.refetch, collaboration.refetch]);
+  useEffect(() => {
+    if (!online || id.startsWith("local:")) return;
+    const timer = setInterval(() => { void refetchAi.current(); }, 3000);
+    return () => clearInterval(timer);
+  }, [online, id]);
+  useEffect(() => { previousRuns.current = null; }, [id]);
+  useEffect(() => {
+    if (previousRuns.current !== null && previousRuns.current !== runSignature) { void refetchDetail.current(); void refetchCollaboration.current(); }
+    previousRuns.current = runSignature;
+  }, [runSignature]);
+  const commentOperation = useRef<{ fingerprint: string; operationId: string } | null>(null);
+  const sending = useRef(false);
+  const [commentCursor, setCommentCursor] = useState(0);
   const task = result.data?.value.task;
   const board = useResource<{ columns: Column[] }>(
     `/boards?${task?.projectId ? `projectId=${encodeURIComponent(task.projectId)}` : `teamId=${task?.teamId || ""}`}`,
@@ -85,6 +126,23 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
     } | null>(null),
     [linkTitle, setLinkTitle] = useState(""),
     [linkUrl, setLinkUrl] = useState("");
+  const mention = /(^|\s)@([^\s@]*)$/.exec(comment.slice(0, commentCursor));
+  const suggestedAssistant = assistant?.enabled && mention && [assistant.name, assistant.handle].some(value => value.toLocaleLowerCase().includes(mention[2].toLocaleLowerCase())) ? assistant : null;
+  const canComment = taskWritable && !!(result.data?.value.canComment ?? result.data?.value.canWrite) && !result.error;
+  function pickAssistant() {
+    if (!mention || !suggestedAssistant) return;
+    const start = commentCursor - mention[2].length - 1;
+    const insertion = `@${suggestedAssistant.handle} `;
+    setComment(comment.slice(0, start) + insertion + comment.slice(commentCursor));
+    setCommentCursor(start + insertion.length);
+  }
+  async function retryAi(run: AiRun) {
+    if (!online || !canComment || busy) return;
+    setBusy(true); setError("");
+    try { await api(`${base}/ai-runs/${encodeURIComponent(run.id)}/retry`, { method: "POST" }); await aiRuns.refetch(); }
+    catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(false); }
+  }
   const canWrite =
     taskWritable &&
     !!result.data?.value.canWrite &&
@@ -95,7 +153,7 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
     body?: unknown,
     after?: () => void,
   ) {
-    if (!canWrite || busy) return;
+    if ((/\/comments\//.test(path) ? !canComment : !canWrite) || busy) return;
     if(!online&&!queueable(path,method)){setError('Thao tác này cần kết nối mạng; chưa được đưa vào hàng đợi.');return;}
     setBusy(true);
     setError("");
@@ -139,7 +197,8 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
     }
   }
   async function send() {
-    if (!session || busy || !canWrite || !online) return;
+    if (!session || sending.current || busy || !canComment || !online) return;
+    sending.current = true;
     setBusy(true);
     setError("");
     try {
@@ -151,22 +210,23 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
           setFiles([...updated]);
         }
       }
+      const payload = { body: comment.trim(), mentionIds, attachmentIds: updated.map((f) => f.id) };
+      const fingerprint = JSON.stringify(payload);
+      if (commentOperation.current?.fingerprint !== fingerprint) commentOperation.current = { fingerprint, operationId: Crypto.randomUUID() };
       await api(base + "/comments", {
         method: "POST",
-        body: JSON.stringify({
-          body: comment,
-          mentionIds,
-          attachmentIds: updated.map((f) => f.id),
-        }),
+        body: JSON.stringify({ ...payload, operationId: commentOperation.current.operationId }),
       });
-      if(saveDraft)await saveDraft(`comment:${id}`,null);
+      commentOperation.current = null;
       setComment("");
       setFiles([]);
       setMentionIds([]);
+      if (saveDraft) await saveDraft(`comment:${id}`, null).catch(() => setLocalMessage("Đã gửi bình luận; chưa xóa được bản nháp trên thiết bị."));
       await refreshData();
     } catch (e) {
       setError(errorMessage(e));
     } finally {
+      sending.current = false;
       setBusy(false);
     }
   }
@@ -601,15 +661,19 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
       </Card>
       <Card>
         <Text style={s.cardTitle}>Trao đổi</Text>
-        {canWrite && (
+        {canComment && (
           <>
             <Field
               label="Bình luận"
               multiline
               value={comment}
-              onChangeText={setComment}
+              onChangeText={text => { setComment(text); setCommentCursor(text.length); }}
+              onSelectionChange={event => setCommentCursor(event.nativeEvent.selection.end)}
+              editable={!busy}
               maxLength={5000}
             />
+            {suggestedAssistant && <Button label={`@${suggestedAssistant.handle} · ${suggestedAssistant.name} · Trợ lý AI`} secondary onPress={pickAssistant} />}
+            {assistant?.enabled && <Text style={s.muted}>Gọi @{assistant.handle} để đọc ngữ cảnh và thực hiện yêu cầu trong quyền của bạn.</Text>}
             {saveDraft&&<Row><Button label="Lưu nháp bình luận" secondary onPress={()=>void saveDraft(`comment:${id}`,{body:comment,mentionIds}).then(()=>setLocalMessage('Đã lưu nháp mã hóa; bình luận chưa gửi.')).catch(e=>setError(errorMessage(e)))}/><Button label="Khôi phục bình luận" secondary onPress={()=>void readDraft(`comment:${id}`).then(d=>{if(d){setComment(String(d.body||''));setMentionIds((d.mentionIds||[]) as string[]);}}).catch(e=>setError(errorMessage(e)))}/></Row>}
             {!online&&<Text>Bình luận ngoại tuyến chỉ lưu nháp, không tự gửi khi có mạng.</Text>}
             <Select
@@ -663,6 +727,14 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
             </Row>
           </>
         )}
+        {aiRuns.error && <ErrorNotice message={`Chưa cập nhật được trạng thái trợ lý: ${errorMessage(aiRuns.error)}`} />}
+        {(aiRuns.data?.value.runs || []).map(run => <View key={run.id} style={{ gap: 6, paddingVertical: 8 }}>
+          <Text accessibilityLiveRegion="polite">{assistant?.name || "Trợ lý AI"} · {({ queued: "Đang chờ", reading: "Đang đọc ngữ cảnh", executing: "Đang thực hiện", completed: "Hoàn tất", failed: "Có lỗi", cancelled: "Đã dừng" } as Record<string, string>)[run.status] || run.status}</Text>
+          {run.error ? <ErrorNotice message={run.error} /> : null}
+          <Button label="Xem yêu cầu gốc" secondary onPress={() => { const original = data.comments.find(value => value.id === run.commentId); Alert.alert("Yêu cầu gốc", original?.body || "Bình luận đã được xóa."); }} />
+          {run.status !== "completed" && <AiEvidence sources={run.sources} actions={run.actions} token={session?.token} onError={setError} />}
+          {run.canRetry && <Button label="Thử lại yêu cầu AI" disabled={!canComment || busy || !online} secondary onPress={() => void retryAi(run)} />}
+        </View>)}
         {data.comments.map((c) => {
           const meta = collaboration.data?.value.comments.find(
             (m) => m.id === c.id,
@@ -675,12 +747,15 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
                 paddingTop: 12,
                 borderTopWidth: 1,
                 borderColor: colors.line,
+                ...(c.authorType === "assistant" ? { backgroundColor: colors.pale, padding: 12, borderRadius: 12 } : {}),
               }}
             >
               <Text style={s.label}>
-                {c.authorName} · {dateLabel(c.createdAt)}
+                {c.authorName}{c.authorType === "assistant" ? " · AI" : ""} · {dateLabel(c.createdAt)}
               </Text>
-              <Text>{c.body}</Text>
+              {c.replyToCommentId && <Button label="Trả lời bình luận gốc" secondary onPress={() => { const original = data.comments.find(value => value.id === c.replyToCommentId); Alert.alert("Bình luận gốc", original?.body || "Bình luận đã được xóa."); }} />}
+              <Text selectable>{c.body}</Text>
+              <AiEvidence sources={c.sources} actions={c.actions} token={session?.token} onError={setError} />
               {c.attachments.map((a) => (
                 <Text key={a.id} style={s.muted}>
                   📎 {a.title}
@@ -692,7 +767,7 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
                     key={r.emoji}
                     label={`${r.emoji} ${r.count || ""}`}
                     secondary={!r.mine}
-                    disabled={disabled}
+                    disabled={!canComment || busy}
                     onPress={() =>
                       void mutate(base + `/comments/${c.id}/reaction`, "PUT", {
                         emoji: r.emoji,
@@ -701,8 +776,7 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
                     }
                   />
                 ))}
-                {canWrite && meta?.canEdit && (
-                  <>
+                {canComment && meta?.canEdit && (
                     <Button
                       label="Sửa bình luận"
                       secondary
@@ -715,6 +789,8 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
                         })
                       }
                     />
+                )}
+                {canComment && (meta?.canDelete ?? meta?.canEdit) && (
                     <Button
                       label="Xóa bình luận"
                       secondary
@@ -724,7 +800,6 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
                         remove(base + `/comments/${c.id}`, "Xóa bình luận này?")
                       }
                     />
-                  </>
                 )}
               </Row>
             </View>

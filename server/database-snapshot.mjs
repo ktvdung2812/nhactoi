@@ -1,4 +1,4 @@
-import { TABLE_COLUMNS, V2_TABLE_COLUMNS, V3_TABLE_COLUMNS, V4_TABLE_COLUMNS, V5_TABLE_COLUMNS, V6_TABLE_COLUMNS, V7_TABLE_COLUMNS, V8_TABLE_COLUMNS, V9_TABLE_COLUMNS, V10_TABLE_COLUMNS, V11_TABLE_COLUMNS, V12_TABLE_COLUMNS } from './database-tables.mjs';
+import { TABLE_COLUMNS, V2_TABLE_COLUMNS, V3_TABLE_COLUMNS, V4_TABLE_COLUMNS, V5_TABLE_COLUMNS, V6_TABLE_COLUMNS, V7_TABLE_COLUMNS, V8_TABLE_COLUMNS, V9_TABLE_COLUMNS, V10_TABLE_COLUMNS, V11_TABLE_COLUMNS, V12_TABLE_COLUMNS, V14_TABLE_COLUMNS } from './database-tables.mjs';
 import { SCHEMA_VERSION, withTransaction } from './db.mjs';
 export const quoteIdentifier = name => '"' + name.replaceAll('"', '""') + '"';
 
@@ -17,8 +17,9 @@ const SNAPSHOT_COLUMNS = {
   10: V10_TABLE_COLUMNS,
   11: V11_TABLE_COLUMNS,
   12: V12_TABLE_COLUMNS,
-  13: TABLE_COLUMNS,
-  14: TABLE_COLUMNS,
+  13: V14_TABLE_COLUMNS,
+  14: V14_TABLE_COLUMNS,
+  15: TABLE_COLUMNS,
 };
 
 export function validateSnapshot(snapshot) {
@@ -62,7 +63,12 @@ export function upgradeSnapshot(snapshot) {
   validateSnapshot(snapshot);
   if (snapshot.schemaVersion === SCHEMA_VERSION) return snapshot;
   // Version 14 adds an index only; the version 13 data contract is unchanged.
-  if (snapshot.schemaVersion === 13) return { ...snapshot, schemaVersion: 14 };
+  if (snapshot.schemaVersion === 14) return { ...snapshot, schemaVersion: 15, tables: { ...snapshot.tables,
+    task_comments: { columns: TABLE_COLUMNS.task_comments, rows: snapshot.tables.task_comments.rows.map(row => [...row, 'human', null, null, null, '{}']) },
+    workspace_ai_settings: { columns: TABLE_COLUMNS.workspace_ai_settings, rows: [] },
+    ai_comment_runs: { columns: TABLE_COLUMNS.ai_comment_runs, rows: [] },
+  } };
+  if (snapshot.schemaVersion === 13) return upgradeSnapshot({ ...snapshot, schemaVersion: 14 });
   if (snapshot.schemaVersion === 12) return upgradeSnapshot({ ...snapshot, schemaVersion: 13, tables: { ...snapshot.tables,
     business_events: {columns:TABLE_COLUMNS.business_events,rows:snapshot.tables.business_events.rows.map(row=>[...row,null])},
     ...Object.fromEntries(['api_tokens','webhook_subscriptions','webhook_deliveries','webhook_attempts'].map(table=>[table,{columns:TABLE_COLUMNS[table],rows:[]}]))

@@ -1,3 +1,4 @@
+import { registerTaskMutationCommand } from './task-mutation-pipeline.mjs';
 import { canAccessProject, defaultProjectId, getProjectAccess } from './projects.mjs';
 import { canAccessTask } from './task-access.mjs';
 import { RECURRENCES as RECURRENCE_VALUES } from "../shared/task-recurrence.mjs";
@@ -700,8 +701,7 @@ export function registerTaskExtrasRoutes(
     }
   });
 
-  app.put("/api/tasks/:id/extras", requireAuth, (req, res, next) => {
-    try {
+  registerTaskMutationCommand(app, "PUT", "/api/tasks/:id/extras", requireAuth, (req) => {
       ensureWritable(req);
       const task = taskOr404(req, { write: true });
       assertKeys(req.body, new Set(["assigneeIds", "labelIds"]), HttpError);
@@ -723,10 +723,7 @@ export function registerTaskExtrasRoutes(
           createdAt: now,
         });
       });
-      return res.json(extrasPayload(db, req.auth, taskRow(db, req.auth.workspaceId, task.id)));
-    } catch (error) {
-      return next(error);
-    }
+      return extrasPayload(db, req.auth, taskRow(db, req.auth.workspaceId, task.id));
   });
 
   app.get("/api/task-labels", requireAuth, (req, res, next) => {

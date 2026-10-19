@@ -4,6 +4,15 @@ import { boot, call, user } from './roadmap-helpers.mjs';
 import { openDatabase } from './database-helpers.mjs';
 import { migrateDatabase, SCHEMA_VERSION, withTransaction } from '../server/db.mjs';
 import { exportSnapshot, importSnapshot, upgradeSnapshot, validateSnapshot } from '../server/database-snapshot.mjs';
+import { V14_TABLE_COLUMNS } from '../server/database-tables.mjs';
+
+function historicalSnapshot(db) {
+  return { format: 'nhactoi-postgresql', version: 1, schemaVersion: 13,
+    tables: Object.fromEntries(Object.entries(V14_TABLE_COLUMNS).map(([table, columns]) => [table, {
+      columns: [...columns], rows: db.prepare(`SELECT ${columns.map(column => `"${column}"`).join(',')} FROM "${table}"`).all().map(row => columns.map(column => row[column])),
+    }])),
+  };
+}
 
 // TC-W1-T01-A/B/D; TC-X07 index-only upgrade. This reconstructs the actual
 // schema-13 database (no index and no migration-14 row), not just a version tag.
@@ -57,17 +66,24 @@ test('schema 13 task-page index upgrade preserves rows, receipt replay, ordering
     return ids;
   };
   withTransaction(s.db, () => {
+    // Reconstruct schema 13 physically, including removal of later additive
+    // assistant schema, so the test still exercises a genuine index upgrade.
+    s.db.exec('ALTER TABLE task_comments DROP CONSTRAINT task_comments_ai_run_fk');
+    s.db.exec('DROP TABLE ai_comment_runs, workspace_ai_settings');
+    s.db.exec('ALTER TABLE task_comments DROP COLUMN author_type, DROP COLUMN author_name_snapshot, DROP COLUMN reply_to_comment_id, DROP COLUMN ai_run_id, DROP COLUMN ai_metadata');
     s.db.exec('DROP INDEX tasks_active_page_order');
-    s.db.prepare('DELETE FROM schema_migrations WHERE version=14').run();
+    s.db.prepare('DELETE FROM schema_migrations WHERE version>13').run();
   });
   assert.equal(s.db.prepare('SELECT max(version) n FROM schema_migrations').get().n, 13);
   const index = db => db.prepare("SELECT indexrelid::text id,indisvalid,indisready,pg_get_indexdef(indexrelid) definition FROM pg_index WHERE indexrelid=to_regclass('tasks_active_page_order')").get();
   assert.equal(index(s.db), undefined);
   await pages();
-  const historical = { ...exportSnapshot(s.db), schemaVersion: 13 };
+  const historical = historicalSnapshot(s.db);
   const frozen = structuredClone(historical);
   assert.equal(validateSnapshot(historical), historical);
-  assert.deepEqual(upgradeSnapshot(historical), { ...historical, schemaVersion: SCHEMA_VERSION });
+  const upgraded = upgradeSnapshot(historical);
+  assert.equal(upgraded.schemaVersion, SCHEMA_VERSION);
+  assert.deepEqual(upgraded.tables.task_comments.rows, historical.tables.task_comments.rows.map(row => [...row, 'human', null, null, null, '{}']));
   assert.deepEqual(historical, frozen);
 
   // Failure after transactional CREATE INDEX must roll back both the index and
@@ -82,7 +98,7 @@ test('schema 13 task-page index upgrade preserves rows, receipt replay, ordering
   finally { s.db.exec = execute; }
   assert.equal(s.db.prepare('SELECT max(version) n FROM schema_migrations').get().n, 13);
   assert.equal(index(s.db), undefined);
-  assert.deepEqual(exportSnapshot(s.db).tables, historical.tables);
+  assert.deepEqual(historicalSnapshot(s.db).tables, historical.tables);
 
   migrateDatabase(s.db, { bootstrapAdmin: false });
   const firstIndex = index(s.db), migration = s.db.prepare('SELECT * FROM schema_migrations WHERE version=14').get();
@@ -92,11 +108,11 @@ test('schema 13 task-page index upgrade preserves rows, receipt replay, ordering
   assert.deepEqual(index(s.db), firstIndex, 'rerun does not rebuild the index');
   assert.deepEqual(s.db.prepare('SELECT * FROM schema_migrations WHERE version=14').all(), [migration]);
   assert.equal(s.db.prepare('SELECT max(version) n FROM schema_migrations').get().n, SCHEMA_VERSION);
-  assert.deepEqual(exportSnapshot(s.db).tables, historical.tables, 'all rows, keys, revisions, receipts and pending effects remain byte-for-byte equal');
+  assert.deepEqual(exportSnapshot(s.db), upgraded, 'all rows, keys, revisions, receipts and pending effects remain byte-for-byte equal with new assistant defaults');
   await pages();
   const replay = await api('/tasks', 'POST', payload);
   assert.equal(replay.status, 201); assert.deepEqual(replay.body, original.body);
-  assert.deepEqual(exportSnapshot(s.db).tables, historical.tables, 'receipt retry after migration causes no new mutation or effect');
+  assert.deepEqual(exportSnapshot(s.db), upgraded, 'receipt retry after migration causes no new mutation or effect');
 
   const empty = exportSnapshot(target);
   const invalid = structuredClone(historical); invalid.tables.tasks.columns.push('unexpected');

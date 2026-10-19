@@ -686,11 +686,18 @@ export const V12_TABLE_COLUMNS = {
   zalo_oa_callbacks: ["connection_id", "event_id", "delivery_id", "status", "received_at"],
 };
 
-export const TABLE_COLUMNS = {
+export const V14_TABLE_COLUMNS = {
   ...V12_TABLE_COLUMNS,
   business_events: [...V12_TABLE_COLUMNS.business_events, 'resource_revision'],
   api_tokens: ['id','workspace_id','created_by','name','token_hash','scopes_json','projects_json','created_at','last_used_at','revoked_at'],
   webhook_subscriptions: ['id','workspace_id','created_by','name','url','projects_json','events_json','active','key_version','created_at','updated_at'],
   webhook_deliveries: ['id','subscription_id','workspace_id','event_id','state','attempt_count','manual_retries','next_attempt_at','lease_token','lease_until','last_status','last_error','created_at','updated_at'],
   webhook_attempts: ['id','delivery_id','attempt_number','key_version','started_at','completed_at','status','outcome'],
+};
+
+export const TABLE_COLUMNS = {
+  ...V14_TABLE_COLUMNS,
+  workspace_ai_settings: ['workspace_id','name','handle','enabled','updated_at'],
+  task_comments: [...V14_TABLE_COLUMNS.task_comments,'author_type','author_name_snapshot','reply_to_comment_id','ai_run_id','ai_metadata'],
+  ai_comment_runs: ['id','workspace_id','project_id','task_id','comment_id','requested_by','request_body','assistant_name','assistant_handle','status','error','reply_comment_id','state_json','sources_json','actions_json','attempts','lease_token','lease_until','created_at','updated_at'],
 };
