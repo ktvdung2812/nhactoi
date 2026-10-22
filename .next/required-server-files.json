@@ -105,7 +105,7 @@
         "transform": "lodash/{{member}}"
       }
     },
-    "outputFileTracingRoot": "/home/runner/work/nhactoi/nhactoi",
+    "outputFileTracingRoot": "/private/tmp/nhactoi-deploy-build",
     "allowedDevOrigins": [
       "nhactoi.test"
     ],
@@ -178,7 +178,7 @@
       "proxyPrefetch": "flexible",
       "optimisticClientCache": true,
       "manualClientBasePath": false,
-      "cpus": 1,
+      "cpus": 9,
       "memoryBasedWorkersCount": false,
       "imgOptConcurrency": null,
       "imgOptOperationCache": null,
@@ -330,7 +330,10 @@
       "nodemailer",
       "google-auth-library",
       "web-push",
-      "@aws-sdk/client-s3"
+      "@aws-sdk/client-s3",
+      "mammoth",
+      "exceljs",
+      "html-to-text"
     ],
     "outputFileTracingIncludes": {
       "/*": [
@@ -348,14 +351,14 @@
         "./*.tar.gz"
       ]
     },
-    "repoRoot": "/home/runner/work/nhactoi/nhactoi",
+    "repoRoot": "/private/tmp/nhactoi-deploy-build",
     "turbopack": {
-      "root": "/home/runner/work/nhactoi/nhactoi"
+      "root": "/private/tmp/nhactoi-deploy-build"
     },
     "distDirRoot": ".next",
     "supportsImmutableAssets": false
   },
-  "appDir": "/home/runner/work/nhactoi/nhactoi",
+  "appDir": "/private/tmp/nhactoi-deploy-build",
   "relativeAppDir": "",
   "files": [
     ".next/package.json",

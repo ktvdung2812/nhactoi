@@ -1,13 +1,13 @@
 {
   "app/client-app.jsx -> ../src/App.jsx": {
-    "id": 5898,
+    "id": 2563,
     "files": [
-      "static/css/557a2ce354a1555e.css",
+      "static/css/fe2da707e94bd911.css",
       "static/css/c01eb43830141ff5.css",
-      "static/css/982014c74da7c48a.css",
-      "static/css/a66017310ea11058.css",
-      "static/chunks/314.ae1e7da23fa42c61.js",
-      "static/chunks/898.7037ca8a2df494ba.js"
+      "static/css/89bd970069361d6c.css",
+      "static/css/4ce075e9ba96b7fa.css",
+      "static/chunks/631.19e68f8490d7bac0.js",
+      "static/chunks/563.c7bd3081baadda28.js"
     ]
   }
 }
