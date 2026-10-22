@@ -12,7 +12,7 @@ import ZaloOa from "./ZaloOa.jsx";
 import TaskTemplates from "./TaskTemplates.jsx";
 import AssistantChat from "./AssistantChat.jsx";
 import {GoogleAccount} from "./OperationsSettings.jsx";
-import Account, { AssistantSettings, ThemeSettings } from "./Account.jsx";
+import Account, { AssistantSettings, EmailChange, ThemeSettings } from "./Account.jsx";
 import ThemeToggle, { ThemeToggleButton } from "./ThemeToggle.jsx";
 import { useTheme } from "./theme.js";
 import BoardTransfer from "./BoardTransfer.jsx";
@@ -178,7 +178,7 @@ async function api(path, options = {}) {
       "localPath cannot be inspected": "Máy chủ không đọc được thông tin thư mục. Kiểm tra đường dẫn và quyền truy cập.",
       "localPath must be a directory": "Đường dẫn phải trỏ tới thư mục lưu tệp.",
       "email or password is incorrect": "Email hoặc mật khẩu chưa đúng.",
-      "email is already registered": path.startsWith("/admin/") || path === "/me"
+      "email is already registered": path.startsWith("/admin/") || path === "/me" || path.startsWith("/me/")
         ? "Email này đã được sử dụng bởi tài khoản khác."
         : "Email đã có tài khoản. Vui lòng đăng nhập.",
       "email is already a workspace member":
@@ -267,7 +267,7 @@ async function api(path, options = {}) {
     const error = new Error(
       known[raw] ||
         ((path.startsWith("/ai/") || path.startsWith("/web-push/")) && /[^\x00-\x7F]/.test(raw) ? raw : null) ||
-        (path.startsWith("/auth/") && [400, 403, 409, 429, 503].includes(r.status) && /[^\x00-\x7F]/.test(raw) ? raw : null) ||
+        ((path.startsWith("/auth/") || path === "/me" || path.startsWith("/me/")) && [400, 403, 409, 429, 503].includes(r.status) && /[^\x00-\x7F]/.test(raw) ? raw : null) ||
         authValidation ||
         profileValidation ||
         adminValidation ||
@@ -529,6 +529,14 @@ export default function App() {
   useEffect(()=>{setCalendarPage(1);},[page,taskTeamFilter,projectFilter,search,filter]);
   useEffect(() => { setTaskPage(1); }, [page, customerScope, customerTaskFilter, taskTeamFilter, projectFilter, search, filter]);
   useEffect(() => { setCustomerTaskFilter("all"); }, [page]);
+  function saveAccountUser(user) {
+    setMe((current) => current ? { ...current, user: { ...current.user, ...user } } : current);
+    setData((current) => ({
+      ...current,
+      members: (current.members || []).map((member) => member.id === user.id
+        ? { ...member, name: user.name, email: user.email } : member),
+    }));
+  }
   async function refresh() {
     const sequence = ++refreshSequence.current, workspaceId = workspaceRef.current;
     const [m, d, p] = await Promise.all([api("/me"), api(dashboardPath), api("/projects")]);
@@ -1447,14 +1455,8 @@ export default function App() {
           {page === "account" && <>
             <PageHeading title="Tài khoản" subtitle="Quản lý thông tin cá nhân và các phương thức đăng nhập của bạn." />
             <div className="account-sections">
-              <Account key={me.user.id} api={api} user={me.user} onSaved={(user) => {
-                setMe((current) => current ? { ...current, user } : current);
-                setData((current) => ({
-                  ...current,
-                  members: (current.members || []).map((member) => member.id === user.id
-                    ? { ...member, name: user.name, email: user.email } : member),
-                }));
-              }} />
+              <Account key={me.user.id} api={api} user={me.user} onSaved={saveAccountUser} />
+              <EmailChange key={`email-${me.user.id}`} api={api} user={me.user} onSaved={saveAccountUser} />
               <AssistantSettings key={`assistant-${me.workspace.id}`} api={api} user={me.user} workspaceId={me.workspace.id} />
               <WebPushSettings key={`push-${me.user.id}`} api={api} />
               <ThemeSettings disabledReason={appearance.themeDisabledReason} />

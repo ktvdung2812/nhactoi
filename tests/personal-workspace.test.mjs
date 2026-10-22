@@ -130,7 +130,8 @@ test('snapshots keep workspace kind and upgrade schema 15 workspaces as team wor
   assert.throws(() => target.prepare('DELETE FROM workspaces WHERE id=?').run(solo.body.workspace.id), /cannot be deleted/);
 
   const columns = V15_TABLE_COLUMNS.workspaces;
-  const old = { ...snapshot, schemaVersion: 15, tables: { ...snapshot.tables, workspaces: {
+  const { email_change_requests: _added17, ...tables16 } = snapshot.tables;
+  const old = { ...snapshot, schemaVersion: 15, tables: { ...tables16, workspaces: {
     columns: [...columns], rows: snapshot.tables.workspaces.rows.map(row => row.slice(0, columns.length)),
   } } };
   const upgraded = upgradeSnapshot(old);
@@ -138,4 +139,5 @@ test('snapshots keep workspace kind and upgrade schema 15 workspaces as team wor
   assert.deepEqual(upgraded.tables.workspaces.columns, snapshot.tables.workspaces.columns);
   assert.ok(upgraded.tables.workspaces.rows.every(row => row.at(-2) === 'team' && row.at(-1) === null));
   assert.deepEqual(kinds(upgraded.tables.workspaces.rows)[team.workspace.id], ['team', null]);
+  assert.deepEqual(upgraded.tables.email_change_requests, { columns: snapshot.tables.email_change_requests.columns, rows: [] });
 });

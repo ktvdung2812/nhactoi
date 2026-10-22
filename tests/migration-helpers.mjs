@@ -18,9 +18,10 @@ export function removeRoadmapSchema(db){
  DELETE FROM schema_migrations WHERE version>=11;`);
 }
 
-// Physically removes migration 016 so older-schema fixtures can replay it.
+// Physically removes migrations 016 and 017 so older-schema fixtures can replay them.
 export function removePersonalWorkspaceSchema(db){
- db.exec(`DROP TRIGGER IF EXISTS workspaces_personal_protect ON workspaces; DROP TRIGGER IF EXISTS workspace_members_personal_only ON workspace_members; DROP TRIGGER IF EXISTS invitations_personal_none ON invitations;
+ db.exec(`DROP TABLE IF EXISTS email_change_requests;
+ DROP TRIGGER IF EXISTS workspaces_personal_protect ON workspaces; DROP TRIGGER IF EXISTS workspace_members_personal_only ON workspace_members; DROP TRIGGER IF EXISTS invitations_personal_none ON invitations;
  DROP FUNCTION IF EXISTS nhactoi_protect_personal_workspace(); DROP FUNCTION IF EXISTS nhactoi_personal_workspace_members();
  ALTER TABLE workspaces DROP CONSTRAINT IF EXISTS workspaces_personal_owner_check, DROP COLUMN IF EXISTS personal_owner_id, DROP COLUMN IF EXISTS kind;`);
 }

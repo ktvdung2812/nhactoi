@@ -17,6 +17,7 @@ import { validateRecurrenceOptions, storedRecurrenceOptions } from "./recurrence
 import { registerReminderRoutes, processWorkflowReminders, legacyReminderAllowed, processReminderEmails } from "./reminder-workflow.mjs";
 import { registerAppearanceRoutes } from "./appearance.mjs";
 import { DEMO_EMAILS, seedDemo } from "./seed.mjs";
+import { registerEmailChangeRoutes } from "./email-change.mjs";
 import { registerPersonalTaskRoutes } from "./personal-tasks.mjs";
 import { registerAiAssistantRoutes } from "./ai-assistant.mjs";
 import {registerTaskExtrasRoutes,extraAssigneeIds,reconcileTaskAssignees,copyRecurringExtras,taskScopeLinkConflict} from "./task-extras.mjs";
@@ -860,7 +861,7 @@ function assertOrigin(req, config) {
 
 function requireAuth(req, res, next) {
   if (!req.auth) return fail(res, 401, "authentication required");
-  if (req.auth.memberType === 'guest' && req.path !== '/api/ai/config' && !/^\/api\/(?:tasks(?:\/|$)|boards(?:\/|$)|projects(?:\/|$)|personal-tasks$|dashboard$|operations-dashboard$|timers(?:\/|$)|time-entries(?:\/|$)|reports\/(?:capacity|portfolio|sla)$|me$|workspaces(?:\/|$)|notifications(?:\/|$)|task-labels$|appearance(?:\/|$)|mobile\/(?:auth(?:\/|$)|notifications(?:\/|$)|devices(?:\/|$))|web-push(?:\/|$))/.test(req.path))
+  if (req.auth.memberType === 'guest' && req.path !== '/api/ai/config' && !/^\/api\/(?:tasks(?:\/|$)|boards(?:\/|$)|projects(?:\/|$)|personal-tasks$|dashboard$|operations-dashboard$|timers(?:\/|$)|time-entries(?:\/|$)|reports\/(?:capacity|portfolio|sla)$|me(?:\/email-change(?:\/confirm)?)?$|workspaces(?:\/|$)|notifications(?:\/|$)|task-labels$|appearance(?:\/|$)|mobile\/(?:auth(?:\/|$)|notifications(?:\/|$)|devices(?:\/|$))|web-push(?:\/|$))/.test(req.path))
     return fail(res, 403, "Khách chỉ được truy cập dự án được chia sẻ");
   return next();
 }
@@ -2899,11 +2900,19 @@ function createApp(options = {}) {
     setSessionCookie,
   });
 
+  // Recovery and email-change codes share one mailer so tests can read both.
+  const accountMailTransport = () => options.passwordResetTransport || smtpTransport(config);
   registerPasswordResetRoutes(app, {
     db, clock, config, settingsKey, withTransaction, HttpError,
     emailValue, passwordValue, clearSessionCookie,
     limit: limitAuthRequests,
-    transport: () => options.passwordResetTransport || smtpTransport(config),
+    transport: accountMailTransport,
+  });
+  registerEmailChangeRoutes(app, {
+    db, clock, config, settingsKey, withTransaction, HttpError,
+    requireAuth, emailValue,
+    limit: limitAuthRequests,
+    transport: accountMailTransport,
   });
 
   app.post(["/api/auth/register", "/api/mobile/auth/register"],
@@ -3188,34 +3197,20 @@ function createApp(options = {}) {
   app.patch("/api/me", requireAuth, (req, res, next) => {
     try {
       const body = req.body;
+      if (body && typeof body === "object" && !Array.isArray(body) && "email" in body)
+        throw new HttpError(400, "Email được đổi qua bước xác nhận riêng trong mục Tài khoản.");
       if (
         !body || typeof body !== "object" || Array.isArray(body) ||
         !Object.keys(body).length ||
-        Object.keys(body).some((key) => !["name", "email"].includes(key))
+        Object.keys(body).some((key) => key !== "name")
       ) {
-        throw new HttpError(400, "Chỉ có thể cập nhật họ tên và email.");
+        throw new HttpError(400, "Chỉ có thể cập nhật họ tên.");
       }
-      for (const key of Object.keys(body)) {
-        if (typeof body[key] !== "string")
-          throw new HttpError(400, "Họ tên và email phải là văn bản.");
-      }
-      const name = body.name === undefined
-        ? req.auth.user.name
-        : cleanString(body.name, { required: true, max: 120, field: "name" });
-      const email = body.email === undefined
-        ? req.auth.user.email
-        : emailValue(body.email);
-      withTransaction(db, () => {
-        const duplicate = db
-          .prepare("SELECT id FROM users WHERE email = ? AND id != ?")
-          .get(email, req.auth.userId);
-        if (duplicate) {
-          throw new HttpError(409, "email is already registered");
-        }
-        db.prepare("UPDATE users SET name = ?, email = ? WHERE id = ?")
-          .run(name, email, req.auth.userId);
-      });
-      return res.json({ user: { ...req.auth.user, name, email } });
+      if (typeof body.name !== "string")
+        throw new HttpError(400, "Họ tên phải là văn bản.");
+      const name = cleanString(body.name, { required: true, max: 120, field: "name" });
+      db.prepare("UPDATE users SET name = ? WHERE id = ?").run(name, req.auth.userId);
+      return res.json({ user: { ...req.auth.user, name } });
     } catch (error) {
       return next(error);
     }

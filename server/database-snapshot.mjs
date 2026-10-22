@@ -1,4 +1,4 @@
-import { TABLE_COLUMNS, V2_TABLE_COLUMNS, V3_TABLE_COLUMNS, V4_TABLE_COLUMNS, V5_TABLE_COLUMNS, V6_TABLE_COLUMNS, V7_TABLE_COLUMNS, V8_TABLE_COLUMNS, V9_TABLE_COLUMNS, V10_TABLE_COLUMNS, V11_TABLE_COLUMNS, V12_TABLE_COLUMNS, V14_TABLE_COLUMNS, V15_TABLE_COLUMNS } from './database-tables.mjs';
+import { TABLE_COLUMNS, V2_TABLE_COLUMNS, V3_TABLE_COLUMNS, V4_TABLE_COLUMNS, V5_TABLE_COLUMNS, V6_TABLE_COLUMNS, V7_TABLE_COLUMNS, V8_TABLE_COLUMNS, V9_TABLE_COLUMNS, V10_TABLE_COLUMNS, V11_TABLE_COLUMNS, V12_TABLE_COLUMNS, V14_TABLE_COLUMNS, V15_TABLE_COLUMNS, V16_TABLE_COLUMNS } from './database-tables.mjs';
 import { SCHEMA_VERSION, withTransaction } from './db.mjs';
 export const quoteIdentifier = name => '"' + name.replaceAll('"', '""') + '"';
 
@@ -20,7 +20,8 @@ const SNAPSHOT_COLUMNS = {
   13: V14_TABLE_COLUMNS,
   14: V14_TABLE_COLUMNS,
   15: V15_TABLE_COLUMNS,
-  16: TABLE_COLUMNS,
+  16: V16_TABLE_COLUMNS,
+  17: TABLE_COLUMNS,
 };
 
 export function validateSnapshot(snapshot) {
@@ -63,10 +64,14 @@ export function validateSnapshot(snapshot) {
 export function upgradeSnapshot(snapshot) {
   validateSnapshot(snapshot);
   if (snapshot.schemaVersion === SCHEMA_VERSION) return snapshot;
-  // Version 16 marks every historical workspace as a team workspace.
-  if (snapshot.schemaVersion === 15) return { ...snapshot, schemaVersion: 16, tables: { ...snapshot.tables,
-    workspaces: { columns: TABLE_COLUMNS.workspaces, rows: snapshot.tables.workspaces.rows.map(row => [...row, 'team', null]) },
+  // Version 17 adds pending email changes; none exist in an older backup.
+  if (snapshot.schemaVersion === 16) return { ...snapshot, schemaVersion: 17, tables: { ...snapshot.tables,
+    email_change_requests: { columns: TABLE_COLUMNS.email_change_requests, rows: [] },
   } };
+  // Version 16 marks every historical workspace as a team workspace.
+  if (snapshot.schemaVersion === 15) return upgradeSnapshot({ ...snapshot, schemaVersion: 16, tables: { ...snapshot.tables,
+    workspaces: { columns: V16_TABLE_COLUMNS.workspaces, rows: snapshot.tables.workspaces.rows.map(row => [...row, 'team', null]) },
+  } });
   // Version 14 adds an index only; the version 13 data contract is unchanged.
   if (snapshot.schemaVersion === 14) return upgradeSnapshot({ ...snapshot, schemaVersion: 15, tables: { ...snapshot.tables,
     task_comments: { columns: V15_TABLE_COLUMNS.task_comments, rows: snapshot.tables.task_comments.rows.map(row => [...row, 'human', null, null, null, '{}']) },

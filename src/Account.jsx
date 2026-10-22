@@ -4,6 +4,7 @@ import {
   AlertCircle,
   CheckCircle2,
   LoaderCircle,
+  Mail,
   Monitor,
   Moon,
   Sun,
@@ -14,19 +15,20 @@ import "./account.css";
 
 const LIMITS = { name: 120, email: 320 };
 
-function normalizedUser(user) {
-  return {
-    name: String(user?.name || "").trim(),
-    email: String(user?.email || "").trim().toLowerCase(),
-  };
+function normalizedName(user) {
+  return String(user?.name || "").trim();
 }
 
-function validate(values) {
-  const name = values.name.trim();
-  const email = values.email.trim().toLowerCase();
+function validateName(value) {
+  const name = value.trim();
   if (!name) return "Họ và tên không được để trống.";
   if (name.length > LIMITS.name)
     return `Họ và tên không được dài quá ${LIMITS.name} ký tự.`;
+  return "";
+}
+
+function validateEmail(value) {
+  const email = value.trim().toLowerCase();
   if (!email) return "Email không được để trống.";
   if (email.length > LIMITS.email)
     return `Email không được dài quá ${LIMITS.email} ký tự.`;
@@ -107,32 +109,23 @@ export function ThemeSettings({ disabledReason = "" }) {
 }
 
 export default function Account({ api, user, onSaved }) {
-  const initial = normalizedUser(user);
+  const initial = normalizedName(user);
   const [saved, setSaved] = useState(initial);
-  const [values, setValues] = useState(initial);
+  const [name, setName] = useState(initial);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
-    const next = normalizedUser(user);
+    const next = normalizedName(user);
     setSaved(next);
-    setValues(next);
-  }, [user?.id, user?.name, user?.email]);
+    setName(next);
+  }, [user?.id, user?.name]);
 
-  const dirty =
-    values.name !== saved.name || values.email !== saved.email;
-
-  function change(field) {
-    return (event) => {
-      setValues((current) => ({ ...current, [field]: event.target.value }));
-      setError("");
-      setNotice("");
-    };
-  }
+  const dirty = name !== saved;
 
   function cancel() {
-    setValues(saved);
+    setName(saved);
     setError("");
     setNotice("");
   }
@@ -140,11 +133,8 @@ export default function Account({ api, user, onSaved }) {
   async function submit(event) {
     event.preventDefault();
     if (saving || !dirty) return;
-    const next = {
-      name: values.name.trim(),
-      email: values.email.trim().toLowerCase(),
-    };
-    const validationError = validate(next);
+    const next = name.trim();
+    const validationError = validateName(next);
     if (validationError) {
       setError(validationError);
       return;
@@ -155,13 +145,13 @@ export default function Account({ api, user, onSaved }) {
     try {
       const result = await api("/me", {
         method: "PATCH",
-        body: JSON.stringify(next),
+        body: JSON.stringify({ name: next }),
       });
-      const updated = normalizedUser(result.user);
+      const updated = normalizedName(result.user);
       setSaved(updated);
-      setValues(updated);
+      setName(updated);
       setNotice("Đã cập nhật thông tin cá nhân.");
-      onSaved({ ...result.user, ...updated });
+      onSaved({ ...result.user, name: updated });
     } catch (reason) {
       setError(reason?.message || "Không thể cập nhật thông tin cá nhân.");
     } finally {
@@ -184,7 +174,7 @@ export default function Account({ api, user, onSaved }) {
           <h2 id="account-profile-title">
             <UserRound size={19} /> Thông tin cá nhân
           </h2>
-          <p>Cập nhật tên và email dùng cho tài khoản của bạn.</p>
+          <p>Cập nhật tên hiển thị của bạn.</p>
         </div>
       </div>
       <form onSubmit={submit} noValidate aria-busy={saving}>
@@ -194,29 +184,19 @@ export default function Account({ api, user, onSaved }) {
               <span>Họ và tên</span>
               <input
                 name="name"
-                value={values.name}
-                onChange={change("name")}
+                value={name}
+                onChange={(event) => {
+                  setName(event.target.value);
+                  setError("");
+                  setNotice("");
+                }}
                 maxLength={LIMITS.name}
                 autoComplete="name"
                 required
               />
             </label>
-            <label className="field">
-              <span>Email</span>
-              <input
-                name="email"
-                type="email"
-                value={values.email}
-                onChange={change("email")}
-                maxLength={LIMITS.email}
-                autoComplete="email"
-                aria-describedby="account-email-help"
-                required
-              />
-            </label>
           </div>
         </fieldset>
-        <p id="account-email-help" className="account-help">Sau khi đổi email, hãy dùng email mới để đăng nhập bằng mật khẩu.</p>
         {error && (
           <p className="td-error" role="alert">
             <AlertCircle size={16} /> {error}
@@ -242,6 +222,181 @@ export default function Account({ api, user, onSaved }) {
           </button>
         </div>
       </form>
+    </section>
+  );
+}
+
+// Step 1 asks for the new address and the current password; step 2 confirms
+// the 6-digit code mailed to that address. The email changes only then.
+export function EmailChange({ api, user, onSaved }) {
+  const [pending, setPending] = useState(null);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    api("/me/email-change")
+      .then((result) => { if (active) setPending(result.pending); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [api, user?.id]);
+  useEffect(() => {
+    if (!cooldown) return undefined;
+    const timer = setTimeout(() => setCooldown((value) => Math.max(0, value - 1)), 1000);
+    return () => clearTimeout(timer);
+  }, [cooldown]);
+
+  async function run(action) {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await action();
+    } catch (reason) {
+      setError(reason?.message || "Không thể đổi email.");
+      if (reason?.status === 429) setCooldown(Number(reason.retryAfterSeconds) || 60);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function sendCode(target) {
+    return run(async () => {
+      const next = target.trim().toLowerCase();
+      const validationError = validateEmail(next);
+      if (validationError) throw new Error(validationError);
+      const result = await api("/me/email-change", {
+        method: "POST",
+        body: JSON.stringify({ email: next, ...(password ? { password } : {}) }),
+      });
+      setPending({ email: result.email, expiresAt: result.expiresAt });
+      setCooldown(Number(result.retryAfterSeconds) || 60);
+      setCode("");
+      setNotice(`Đã gửi mã xác nhận tới ${result.email}. Vui lòng kiểm tra cả thư rác.`);
+    });
+  }
+
+  function confirm(event) {
+    event.preventDefault();
+    return run(async () => {
+      if (!/^\d{6}$/.test(code.trim())) throw new Error("Mã xác nhận gồm 6 chữ số.");
+      const result = await api("/me/email-change/confirm", {
+        method: "POST",
+        body: JSON.stringify({ code: code.trim() }),
+      });
+      setPending(null);
+      setEmail("");
+      setPassword("");
+      setCode("");
+      setNotice("Đã đổi email đăng nhập. Các thiết bị khác đã được đăng xuất.");
+      onSaved(result.user);
+    });
+  }
+
+  function cancel() {
+    return run(async () => {
+      await api("/me/email-change", { method: "DELETE" });
+      setPending(null);
+      setCode("");
+      setCooldown(0);
+    });
+  }
+
+  return (
+    <section className="td-panel account-profile-panel" aria-labelledby="account-email-title">
+      <div className="td-section-heading">
+        <div>
+          <h2 id="account-email-title">
+            <Mail size={19} /> Email đăng nhập
+          </h2>
+          <p>Email hiện tại: <strong>{user?.email}</strong></p>
+        </div>
+      </div>
+      {pending ? (
+        <form onSubmit={confirm} noValidate aria-busy={busy}>
+          <p className="account-help">
+            Nhập mã 6 chữ số đã gửi tới <strong>{pending.email}</strong>. Email chỉ được đổi sau khi xác nhận.
+          </p>
+          <fieldset disabled={busy}>
+            <div className="form-grid">
+              <label className="field">
+                <span>Mã xác nhận</span>
+                <input
+                  name="code"
+                  value={code}
+                  onChange={(event) => { setCode(event.target.value); setError(""); }}
+                  required
+                  inputMode="numeric"
+                  pattern="[0-9]{6}"
+                  autoComplete="one-time-code"
+                  placeholder="000000"
+                  maxLength={6}
+                />
+              </label>
+            </div>
+          </fieldset>
+          {error && <p className="td-error" role="alert"><AlertCircle size={16} /> {error}</p>}
+          {notice && <p className="td-notice" role="status"><CheckCircle2 size={16} /> {notice}</p>}
+          <div className="modal-actions">
+            <button type="button" className="button secondary" onClick={cancel} disabled={busy}>Hủy đổi email</button>
+            <button type="button" className="button secondary" onClick={() => sendCode(pending.email)} disabled={busy || cooldown > 0}>
+              {cooldown > 0 ? `Gửi lại mã sau ${cooldown}s` : "Gửi lại mã"}
+            </button>
+            <button type="submit" className="button" disabled={busy}>
+              {busy ? <LoaderCircle className="spin" size={16} /> : <CheckCircle2 size={16} />}
+              Xác nhận
+            </button>
+          </div>
+        </form>
+      ) : (
+        <form onSubmit={(event) => { event.preventDefault(); sendCode(email); }} noValidate aria-busy={busy}>
+          <fieldset disabled={busy}>
+            <div className="form-grid">
+              <label className="field">
+                <span>Email mới</span>
+                <input
+                  name="email"
+                  type="email"
+                  value={email}
+                  onChange={(event) => { setEmail(event.target.value); setError(""); setNotice(""); }}
+                  maxLength={LIMITS.email}
+                  autoComplete="email"
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>Mật khẩu hiện tại</span>
+                <input
+                  name="password"
+                  type="password"
+                  value={password}
+                  onChange={(event) => { setPassword(event.target.value); setError(""); }}
+                  maxLength={256}
+                  autoComplete="current-password"
+                  aria-describedby="account-email-help"
+                />
+              </label>
+            </div>
+          </fieldset>
+          <p id="account-email-help" className="account-help">
+            Mã xác nhận sẽ được gửi tới email mới. Bỏ trống mật khẩu nếu bạn chỉ đăng nhập bằng Google đã liên kết.
+          </p>
+          {error && <p className="td-error" role="alert"><AlertCircle size={16} /> {error}</p>}
+          {notice && <p className="td-notice" role="status"><CheckCircle2 size={16} /> {notice}</p>}
+          <div className="modal-actions">
+            <button type="submit" className="button" disabled={busy || cooldown > 0 || !email.trim()}>
+              {busy ? <LoaderCircle className="spin" size={16} /> : <Mail size={16} />}
+              {cooldown > 0 ? `Gửi mã sau ${cooldown}s` : "Gửi mã xác nhận"}
+            </button>
+          </div>
+        </form>
+      )}
     </section>
   );
 }

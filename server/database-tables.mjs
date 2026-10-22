@@ -702,7 +702,12 @@ export const V15_TABLE_COLUMNS = {
   ai_comment_runs: ['id','workspace_id','project_id','task_id','comment_id','requested_by','request_body','assistant_name','assistant_handle','status','error','reply_comment_id','state_json','sources_json','actions_json','attempts','lease_token','lease_until','created_at','updated_at'],
 };
 
-export const TABLE_COLUMNS = {
+export const V16_TABLE_COLUMNS = {
   ...V15_TABLE_COLUMNS,
   workspaces: [...V15_TABLE_COLUMNS.workspaces, 'kind', 'personal_owner_id'],
+};
+
+export const TABLE_COLUMNS = {
+  ...V16_TABLE_COLUMNS,
+  email_change_requests: ['id','user_id','previous_email','new_email','code_hash','expires_at','attempts','created_at','consumed_at'],
 };
