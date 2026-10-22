@@ -77,7 +77,7 @@ test("profile updates reject invalid input, direct email changes and privilege c
 test("email change needs the current password and a code sent to the new address", async (t) => {
   const s = await setup(t);
   const actor = await user(s, "change-me@example.test");
-  const wrong = await requestChange(s, actor, { email: "wrong-try@example.test", password: "WrongPassword123!" });
+  const wrong = await requestChange(s, actor, { email: "changed@example.test", password: "WrongPassword123!" });
   assert.equal(wrong.status, 403);
   const missing = await requestChange(s, actor, { email: "changed-too@example.test" });
   assert.equal(missing.status, 403);
@@ -203,7 +203,7 @@ test("Google-linked accounts may skip the password; profile edits preserve the G
     assert.equal(response.status, 200);
     assert.equal(response.body.user.email, actor.user.email);
   }
-  assert.equal((await requestChange(s, actor, { email: "google-wrong@example.test", password: "WrongPassword123!" })).status, 403,
+  assert.equal((await requestChange(s, actor, { email: "google-new@example.test", password: "WrongPassword123!" })).status, 403,
     "a supplied password is still checked");
   assert.equal((await requestChange(s, actor, { email: "google-new@example.test" })).status, 200);
   const confirmed = await confirmChange(s, actor, s.code());

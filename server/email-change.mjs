@@ -43,9 +43,10 @@ export function registerEmailChangeRoutes(app, {
     }
   });
 
+  // The 60-second resend cooldown is per account and starts only once a code
+  // was sent, so a mistyped password does not lock the address for a minute.
   app.post("/api/me/email-change", requireAuth, postgresOnly, limit("email-change", {
-    ipLimit: 20, windowMs: ttl,
-    emailLimits: [{ limit: 1, windowMs: resendMs }, { limit: 5, windowMs: 60 * 60_000 }],
+    ipLimit: 20, windowMs: ttl, emailLimits: [{ limit: 5, windowMs: 60 * 60_000 }],
   }), (req, res, next) => {
     try {
       if (typeof req.body?.email !== "string") throw new HttpError(400, "Email mới không hợp lệ.");
