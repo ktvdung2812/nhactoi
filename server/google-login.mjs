@@ -1,7 +1,8 @@
 import {OAuth2Client} from 'google-auth-library';
 import {createHash,randomBytes} from 'node:crypto';
-import {createId,hashPassword} from './auth.mjs';
+import {createId,hashPassword,verifyPassword} from './auth.mjs';
 import {createPersonalWorkspace} from './personal-workspace.mjs';
+import {claimAttempt,releaseAttempt} from './password-reset.mjs';
 const hash=v=>createHash('sha256').update(v).digest('hex');
 export function registerGoogleRoutes(app,{db,config,clock,requirePlatformAdmin,requireAuth,HttpError,withTransaction,writeStoredSetting,loadStoredSettings,settingsKey,writeAdminAudit,createSession,setSessionCookie}){
  const settings=()=>{const s=loadStoredSettings(db,settingsKey).get('googleLogin');return s?JSON.parse(s):{enabled:false,clientId:'',clientSecret:''}};
@@ -9,7 +10,27 @@ export function registerGoogleRoutes(app,{db,config,clock,requirePlatformAdmin,r
  app.get('/api/auth/google/config',(req,res)=>{const s=settings();res.json({enabled:!!(s.enabled&&s.clientId&&s.clientSecret),linked:!!(req.auth&&db.prepare('SELECT 1 FROM google_identities WHERE user_id=?').get(req.auth.userId))})});
  app.get('/api/admin/google-login',requirePlatformAdmin,(req,res)=>{const s=settings();res.json({enabled:!!s.enabled,clientId:s.clientId||'',hasSecret:!!s.clientSecret,redirectUri:callback()})});
  app.put('/api/admin/google-login',requirePlatformAdmin,(req,res,next)=>{try{const b=req.body||{},old=settings();if(typeof b.enabled!=='boolean'||typeof b.clientId!=='string'||b.clientId.length>300||typeof b.reason!=='string'||b.reason.trim().length<3||b.reason.length>500||b.clientSecret!==undefined&&(typeof b.clientSecret!=='string'||b.clientSecret.length>1000))throw new HttpError(400,'Cấu hình Google hoặc lý do không hợp lệ');const value={enabled:b.enabled,clientId:b.clientId.trim(),clientSecret:b.clientSecret||old.clientSecret||''};if(value.enabled&&(!value.clientId||!value.clientSecret))throw new HttpError(400,'Cần Client ID và Client Secret trước khi bật');const at=new Date(clock()).toISOString();withTransaction(db,()=>{writeStoredSetting(db,'googleLogin',value,{encrypted:true,keyBytes:settingsKey,updatedAt:at});writeAdminAudit(db,{actorUserId:req.auth.userId,action:'google.configure',targetType:'settings',targetId:'googleLogin',reason:b.reason.trim(),before:{enabled:!!old.enabled},after:{enabled:value.enabled,clientId:value.clientId,secretChanged:!!b.clientSecret},createdAt:at})});res.json({ok:true})}catch(e){next(e)}});
- app.get('/api/auth/google/start',(req,res,next)=>{try{const s=settings();if(!s.enabled||!s.clientId||!s.clientSecret)throw new HttpError(503,'Đăng nhập Google chưa được cấu hình');const state=randomBytes(32).toString('base64url'),nonce=randomBytes(32).toString('base64url'),verifier=randomBytes(48).toString('base64url');db.prepare('DELETE FROM google_oauth_states WHERE expires_at<?').run(new Date(clock()).toISOString());db.prepare('INSERT INTO google_oauth_states(state_hash,nonce,verifier,user_id,expires_at) VALUES (?,?,?,?,?)').run(hash(state),nonce,verifier,req.auth?.userId||null,new Date(new Date(clock()).getTime()+600000).toISOString());res.setHeader('Set-Cookie',`nhactoi_google_state=${state}; HttpOnly; SameSite=Lax; Path=/api/auth/google; Max-Age=600${config.cookieSecure?'; Secure':''}`);const client=new OAuth2Client(s.clientId,s.clientSecret,callback());res.redirect(client.generateAuthUrl({scope:['openid','email','profile'],state,nonce,code_challenge:createHash('sha256').update(verifier).digest('base64url'),code_challenge_method:'S256',prompt:'select_account'}))}catch(e){next(e)}});
+ // A state row with user_id links Google to that account. Only /link creates
+ // one, after the current password, so a stolen session cannot attach the
+ // thief's Google account and then skip the password for an email change.
+ const begin=(res,s,userId)=>{const state=randomBytes(32).toString('base64url'),nonce=randomBytes(32).toString('base64url'),verifier=randomBytes(48).toString('base64url');db.prepare('DELETE FROM google_oauth_states WHERE expires_at<?').run(new Date(clock()).toISOString());db.prepare('INSERT INTO google_oauth_states(state_hash,nonce,verifier,user_id,expires_at) VALUES (?,?,?,?,?)').run(hash(state),nonce,verifier,userId,new Date(new Date(clock()).getTime()+600000).toISOString());res.setHeader('Set-Cookie',`nhactoi_google_state=${state}; HttpOnly; SameSite=Lax; Path=/api/auth/google; Max-Age=600${config.cookieSecure?'; Secure':''}`);const client=new OAuth2Client(s.clientId,s.clientSecret,callback());return client.generateAuthUrl({scope:['openid','email','profile'],state,nonce,code_challenge:createHash('sha256').update(verifier).digest('base64url'),code_challenge_method:'S256',prompt:'select_account'})};
+ const configured=()=>{const s=settings();if(!s.enabled||!s.clientId||!s.clientSecret)throw new HttpError(503,'Đăng nhập Google chưa được cấu hình');return s};
+ app.get('/api/auth/google/start',(req,res,next)=>{try{if(req.auth)throw new HttpError(400,'Hãy liên kết Google trong mục Tài khoản.');res.redirect(begin(res,configured(),null))}catch(e){next(e)}});
+ app.post('/api/auth/google/link',requireAuth,(req,res,next)=>{try{
+  const password=req.body?.password;
+  if(typeof password!=='string'||!password||password.length>256)throw new HttpError(400,'Vui lòng nhập mật khẩu hiện tại.');
+  const s=configured();
+  // Claim before verifying so parallel guesses cannot outrun the counter;
+  // 403 rather than 401 because the client signs out on 401.
+  const bucket=`google-link:password:${req.auth.userId}`,now=new Date(clock()).getTime();
+  const attempt=claimAttempt(db,{bucket,limit:5,windowMs:15*60_000,now});
+  if(!attempt.claimed){res.set('Retry-After',String(attempt.retryAfterSeconds));throw new HttpError(429,'Bạn đã nhập sai mật khẩu quá nhiều lần. Vui lòng thử lại sau 15 phút.')}
+  const user=db.prepare('SELECT password_hash FROM users WHERE id=?').get(req.auth.userId);
+  if(!verifyPassword(password,user.password_hash))throw new HttpError(403,'Mật khẩu hiện tại không đúng.');
+  releaseAttempt(db,{bucket});
+  res.set('Cache-Control','no-store');
+  res.json({url:begin(res,s,req.auth.userId)});
+ }catch(e){next(e)}});
  app.get('/api/auth/google/callback', async (req, res, next) => {
   try {
    const state = String(req.query.state || '');
@@ -55,7 +76,7 @@ export function registerGoogleRoutes(app,{db,config,clock,requirePlatformAdmin,r
     if (!identity) db.prepare('INSERT INTO google_identities(sub,user_id,created_at) VALUES (?,?,?)').run(p.sub, userId, at);
     const membership = db.prepare("SELECT workspace_id FROM workspace_members WHERE user_id=? ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END LIMIT 1").get(userId);
     if (!membership) throw new HttpError(403, 'Tài khoản không thuộc doanh nghiệp nào');
-    return createSession(db, userId, membership.workspace_id, config, clock);
+    return createSession(db, userId, membership.workspace_id, config, clock, { authMethod: 'google' });
    });
    setSessionCookie(res, session.token, config);
    res.append('Set-Cookie', `nhactoi_google_state=; HttpOnly; SameSite=Lax; Path=/api/auth/google; Max-Age=0${config.cookieSecure?'; Secure':''}`);

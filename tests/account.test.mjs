@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { boot, call, user, addMember } from "./roadmap-helpers.mjs";
+import { enableGoogle } from "./google-helpers.mjs";
 
 async function setup(t, options = {}) {
   let now = Date.parse("2026-09-22T01:00:00Z");
@@ -208,8 +209,9 @@ test("email change locks password guessing per account, whatever address is requ
   assert.equal((await requestChange(s, actor, { email: "guess-right@example.test", password: "Password123!" })).status, 200);
 });
 
-test("Google-linked accounts may skip the password; profile edits preserve the Google link", async (t) => {
+test("only a Google sign-in from the last 10 minutes may skip the password; profile edits preserve the Google link", async (t) => {
   const s = await setup(t);
+  const google = await enableGoogle(t, s, { sub: "google-account-subject", email: "account-google@gmail.test" });
   const actor = await user(s, "account-google@example.test");
   s.db.prepare("INSERT INTO google_identities(sub, user_id, created_at) VALUES (?, ?, ?)")
     .run("google-account-subject", actor.user.id, new Date().toISOString());
@@ -220,22 +222,64 @@ test("Google-linked accounts may skip the password; profile edits preserve the G
     assert.equal(response.status, 200);
     assert.equal(response.body.user.email, actor.user.email);
   }
-  assert.equal((await requestChange(s, actor, { email: "google-new@example.test", password: "WrongPassword123!" })).status, 403,
+  const passwordSession = await requestChange(s, actor, { email: "google-new@example.test" });
+  assert.equal(passwordSession.status, 403, "a password session of a Google-linked account still needs the password");
+  assert.equal(passwordSession.body.code, undefined);
+
+  const viaGoogle = { ...actor, cookie: await google.signIn() };
+  assert.equal((await requestChange(s, viaGoogle, { email: "google-new@example.test", password: "WrongPassword123!" })).status, 403,
     "a supplied password is still checked");
-  assert.equal((await requestChange(s, actor, { email: "google-new@example.test" })).status, 200);
-  const confirmed = await confirmChange(s, actor, s.code());
+  assert.equal((await requestChange(s, viaGoogle, { email: "google-new@example.test" })).status, 200);
+  const confirmed = await confirmChange(s, viaGoogle, s.code());
   assert.equal(confirmed.status, 200);
   assert.equal(confirmed.body.user.name, "Tên mới");
   assert.equal(confirmed.body.user.email, "google-new@example.test");
-  const config = await call(s, "/auth/google/config", { cookie: actor.cookie });
+  const config = await call(s, "/auth/google/config", { cookie: viaGoogle.cookie });
   assert.equal(config.body.linked, true);
+
+  s.advance(10 * 60_000 + 1000);
+  const stale = await requestChange(s, viaGoogle, { email: "google-later@example.test" });
+  assert.equal(stale.status, 403);
+  assert.equal(stale.body.code, "reauth_required");
+  assert.match(stale.body.error, /đăng nhập lại bằng Google/);
+  const fresh = { ...actor, cookie: await google.signIn() };
+  assert.equal((await requestChange(s, fresh, { email: "google-later@example.test" })).status, 200);
 
   const plain = await user(s, "no-google@example.test");
   assert.equal((await requestChange(s, plain, { email: "no-google-new@example.test" })).status, 403);
 
   s.db.prepare("UPDATE users SET disabled_at = ? WHERE id = ?").run(new Date().toISOString(), actor.user.id);
-  const disabled = await call(s, "/me", { method: "PATCH", cookie: actor.cookie, body: { name: "Blocked" } });
+  const disabled = await call(s, "/me", { method: "PATCH", cookie: fresh.cookie, body: { name: "Blocked" } });
   assert.equal(disabled.status, 401);
+});
+
+test("switching workspace keeps how and when the session signed in", async (t) => {
+  const s = await setup(t);
+  const google = await enableGoogle(t, s, { sub: "switch-google", email: "switch@gmail.test" });
+  const actor = await user(s, "switch@example.test");
+  const owner = await user(s, "switch-owner@example.test");
+  s.db.prepare("INSERT INTO workspace_members(workspace_id, user_id, role, created_at) VALUES (?, ?, 'member', ?)")
+    .run(owner.workspace.id, actor.user.id, new Date().toISOString());
+  s.db.prepare("INSERT INTO google_identities(sub, user_id, created_at) VALUES (?, ?, ?)")
+    .run("switch-google", actor.user.id, new Date().toISOString());
+  const switchTo = async (cookie, workspaceId) => {
+    const switched = await call(s, "/workspaces/switch", { method: "POST", cookie, body: { workspaceId } });
+    assert.equal(switched.status, 200, JSON.stringify(switched.body));
+    return switched.cookie;
+  };
+
+  const fromPassword = { ...actor, cookie: await switchTo(actor.cookie, owner.workspace.id) };
+  assert.equal((await requestChange(s, fromPassword, { email: "switch-new@example.test" })).status, 403,
+    "a password session does not become a Google session by switching");
+
+  const signedIn = await google.signIn();
+  s.advance(9 * 60_000);
+  const fromGoogle = { ...actor, cookie: await switchTo(signedIn, actor.workspace.id) };
+  s.advance(2 * 60_000);
+  const stale = await requestChange(s, fromGoogle, { email: "switch-new@example.test" });
+  assert.equal(stale.status, 403, "the switched session is as old as the Google sign-in");
+  assert.equal(stale.body.code, "reauth_required");
+  assert.deepEqual(s.db.prepare("SELECT auth_method FROM sessions WHERE user_id = ? AND auth_method = 'google'").all(actor.user.id).length, 1);
 });
 
 test("email change reports missing SMTP and stays available to guests", async (t) => {

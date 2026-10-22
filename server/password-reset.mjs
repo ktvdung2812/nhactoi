@@ -2,6 +2,26 @@ import { createHmac, randomInt } from "node:crypto";
 import { hashPassword, safeEqualText } from "./auth.mjs";
 import { invalidateSessions } from './restore-safety.mjs';
 
+// Claim one attempt in `bucket` before doing the guarded work, so concurrent
+// requests cannot all slip in before a counter is bumped. Returns
+// { claimed: true } or { claimed: false, retryAfterSeconds } once `limit`
+// attempts fall within the window.
+export function claimAttempt(db, { bucket, limit, windowMs, now }) {
+  db.prepare("DELETE FROM auth_request_limits WHERE bucket = ? AND expires_at <= ?").run(bucket, now);
+  const claimed = db.prepare(`INSERT INTO auth_request_limits(bucket, expires_at, count) VALUES (?, ?, 1)
+    ON CONFLICT(bucket) DO UPDATE SET count = auth_request_limits.count + 1
+      WHERE auth_request_limits.count < ?
+    RETURNING expires_at`).get(bucket, now + windowMs, limit);
+  if (claimed) return { claimed: true };
+  const current = db.prepare("SELECT expires_at FROM auth_request_limits WHERE bucket = ?").get(bucket);
+  return { claimed: false, retryAfterSeconds: Math.max(1, Math.ceil((Number(current?.expires_at ?? now) - now) / 1000)) };
+}
+
+// Forget a bucket, e.g. after the right password, like a successful login.
+export function releaseAttempt(db, { bucket }) {
+  db.prepare("DELETE FROM auth_request_limits WHERE bucket = ?").run(bucket);
+}
+
 // Persist limits so restarting the server or changing IP cannot reset the
 // per-address send limit or the number of guesses for a recovery code.
 export function authRequestLimiter({ db, clock, settingsKey, withTransaction, HttpError }) {

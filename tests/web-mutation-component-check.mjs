@@ -13,6 +13,7 @@ const PersonalTasks=require('../src/PersonalTasks.jsx').default,WeekCalendar=req
 const TaskExtras=require('../src/TaskExtras.jsx').default,TaskDetail=require('../src/TaskDetail.jsx').default;
 const WorkflowBoard=require('../src/WorkflowBoard.jsx').default,ProjectAdvanced=require('../src/ProjectAdvanced.jsx').default;
 const {AssistantSettings,EmailChange}=require('../src/Account.jsx');
+const {GoogleAccount}=require('../src/OperationsSettings.jsx');
 const me={user:{id:'u',role:'owner',name:'Test'},workspace:{id:'w'},subscription:{status:'active',currentPeriodEnd:'2099-01-01',capabilities:['public_api']}};
 const card={id:'task-private',title:'CANARY_TASK',status:'todo',dueAt:null,plannedDate:null,planRevision:'p1'};
 const error=status=>Object.assign(new Error(`Denied ${status}`),{status});
@@ -279,4 +280,31 @@ test('resending an email-change code after a reload asks for the password again'
  await ui.submit(document.querySelector('form'));
  assert.deepEqual(writes,[['/me/email-change',{email:'moi@example.test',password:'Password123!'}]]);
  assert.ok(ui.text().includes('Đã gửi mã xác nhận tới moi@example.test.'));
+});
+
+test('linking Google sends the current password to /auth/google/link and follows the returned URL',async t=>{
+ const writes=[],assigned=[];let reject=true;
+ const api=async(path,options)=>{if(!options)return {enabled:true,linked:false};writes.push([path,options.method,JSON.parse(options.body)]);if(reject){reject=false;throw Object.assign(new Error('Mật khẩu hiện tại không đúng.'),{status:403});}return {url:'https://accounts.google.com/o/oauth2/v2/auth?state=s'};};
+ globalThis.location={assign:url=>assigned.push(url)};t.after(()=>{delete globalThis.location;});
+ const ui=await mount(t,GoogleAccount,{api});
+ assert.equal(document.querySelector('a[href="/api/auth/google/start"]'),null,'no password-less link');
+ assert.equal(document.querySelector('button[type="submit"]').disabled,true);
+ await ui.typeInput('input[name="password"]','Wrong123!');await ui.submit(document.querySelector('form'));
+ assert.ok(ui.text().includes('Mật khẩu hiện tại không đúng.'));assert.deepEqual(assigned,[]);
+ await ui.typeInput('input[name="password"]','Password123!');await ui.submit(document.querySelector('form'));
+ assert.deepEqual(writes,[['/auth/google/link','POST',{password:'Wrong123!'}],['/auth/google/link','POST',{password:'Password123!'}]]);
+ assert.deepEqual(assigned,['https://accounts.google.com/o/oauth2/v2/auth?state=s']);
+});
+
+test('a stale Google session offers to sign in with Google again before changing email',async t=>{
+ const calls=[],assigned=[];
+ const api=async(path,options)=>{if(!options)return {pending:null};calls.push(path);if(path==='/me/email-change')throw Object.assign(new Error('Hãy đăng nhập lại bằng Google rồi thử lại.'),{status:403,code:'reauth_required'});return {ok:true};};
+ globalThis.location={assign:url=>assigned.push(url)};t.after(()=>{delete globalThis.location;});
+ const ui=await mount(t,EmailChange,{api,user:{id:'u',email:'cu@example.test'},onSaved:()=>{}});
+ assert.ok(ui.text().includes('Bỏ trống mật khẩu nếu bạn vừa đăng nhập bằng Google đã liên kết.'));
+ await ui.typeInput('input[name="email"]','moi@example.test');await ui.submit(document.querySelector('form'));
+ assert.ok(ui.text().includes('Hãy đăng nhập lại bằng Google rồi thử lại.'));
+ await ui.click('Đăng nhập lại bằng Google');await act(async()=>{await new Promise(resolve=>setTimeout(resolve,0));});
+ assert.deepEqual(calls,['/me/email-change','/auth/logout']);
+ assert.deepEqual(assigned,['/api/auth/google/start']);
 });

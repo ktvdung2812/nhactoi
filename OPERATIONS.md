@@ -31,7 +31,7 @@ Không khôi phục bản sao từ nguồn không tin cậy. Công cụ chỉ d�
 
 Admin SaaS cấu hình OAuth Client ID/Secret và URI chuyển hướng hiển thị ở trang Cấu hình. Secret được mã hóa cùng cơ chế cấu hình của ứng dụng. Google cần cho phép URI của môi trường đang chạy.
 
-Tài khoản có sẵn: đăng nhập bằng mật khẩu → Tài khoản → Liên kết Google. Không tự nối tài khoản chỉ vì email trùng nhau. Tài khoản Google chưa có email trong Nhắc tôi được tạo không gian dùng thử. OAuth sử dụng state, cookie HttpOnly, PKCE, nonce và xác minh ID token.
+Tài khoản có sẵn: đăng nhập bằng mật khẩu → Tài khoản → nhập mật khẩu hiện tại → Liên kết Google (`POST /api/auth/google/link`, giới hạn 5 lần sai/15 phút mỗi tài khoản). `GET /api/auth/google/start` chỉ phục vụ đăng nhập khi chưa có phiên và trả 400 nếu đang đăng nhập. Mỗi phiên ghi `sessions.auth_method` (`password`, `google`, `dev`); chỉ phiên `google` tạo trong 10 phút được đổi email không cần mật khẩu, phiên sinh ra khi chuyển workspace giữ nguyên phương thức và thời điểm đăng nhập gốc. Không tự nối tài khoản chỉ vì email trùng nhau. Tài khoản Google chưa có email trong Nhắc tôi được tạo không gian dùng thử. OAuth sử dụng state, cookie HttpOnly, PKCE, nonce và xác minh ID token.
 
 ## Nhập / xuất bảng
 

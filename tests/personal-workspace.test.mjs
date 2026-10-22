@@ -141,9 +141,10 @@ test('snapshots keep workspace kind and upgrade schema 15 workspaces as team wor
 
   const columns = V15_TABLE_COLUMNS.workspaces;
   const { email_change_requests: _added17, ...tables16 } = snapshot.tables;
+  const sessions = V15_TABLE_COLUMNS.sessions;
   const old = { ...snapshot, schemaVersion: 15, tables: { ...tables16, workspaces: {
     columns: [...columns], rows: snapshot.tables.workspaces.rows.map(row => row.slice(0, columns.length)),
-  } } };
+  }, sessions: { columns: [...sessions], rows: snapshot.tables.sessions.rows.map(row => row.slice(0, sessions.length)) } } };
   const upgraded = upgradeSnapshot(old);
   assert.equal(upgraded.schemaVersion, snapshot.schemaVersion);
   assert.deepEqual(upgraded.tables.workspaces.columns, snapshot.tables.workspaces.columns);

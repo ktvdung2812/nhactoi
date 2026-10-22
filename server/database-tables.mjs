@@ -707,7 +707,12 @@ export const V16_TABLE_COLUMNS = {
   workspaces: [...V15_TABLE_COLUMNS.workspaces, 'kind', 'personal_owner_id'],
 };
 
-export const TABLE_COLUMNS = {
+export const V17_TABLE_COLUMNS = {
   ...V16_TABLE_COLUMNS,
   email_change_requests: ['id','user_id','previous_email','new_email','code_hash','expires_at','attempts','created_at','consumed_at'],
+};
+
+export const TABLE_COLUMNS = {
+  ...V17_TABLE_COLUMNS,
+  sessions: [...V17_TABLE_COLUMNS.sessions, 'auth_method'],
 };

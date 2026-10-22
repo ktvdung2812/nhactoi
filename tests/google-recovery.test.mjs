@@ -15,10 +15,13 @@ async function fixture(t) {
   t.mock.method(OAuth2Client.prototype, 'verifyIdToken', async () => ({ getPayload: () => ({
     sub: 'attacker-google', email: 'attacker@google.test', email_verified: true, nonce,
   }) }));
+  // With a session cookie this links Google, which needs the current password.
   s.start = async cookie => {
-    const r = await fetch(s.base + '/api/auth/google/start', { redirect: 'manual', headers: cookie ? { cookie } : {} });
-    assert.equal(r.status, 302);
-    const url = new URL(r.headers.get('location'));
+    const r = cookie
+      ? await fetch(s.base + '/api/auth/google/link', { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ password: 'Password123!' }) })
+      : await fetch(s.base + '/api/auth/google/start', { redirect: 'manual' });
+    assert.equal(r.status, cookie ? 200 : 302);
+    const url = new URL(cookie ? (await r.json()).url : r.headers.get('location'));
     nonce = url.searchParams.get('nonce');
     return { state: url.searchParams.get('state'), cookie: [cookie, r.headers.get('set-cookie').split(';')[0]].filter(Boolean).join('; ') };
   };

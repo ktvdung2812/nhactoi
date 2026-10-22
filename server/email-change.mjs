@@ -2,16 +2,17 @@ import { createHmac, randomInt } from "node:crypto";
 import { createId, safeEqualText, verifyPassword } from "./auth.mjs";
 import { invalidateSessions } from "./restore-safety.mjs";
 
-// Changing the login email needs the current password (or a linked Google
-// identity) and a code sent to the new address. Until the code is confirmed
-// the account keeps its old email, so a stolen session cannot redirect
-// password recovery to an attacker's mailbox.
+// Changing the login email needs the current password (or a Google sign-in
+// from the last 10 minutes) and a code sent to the new address. Until the
+// code is confirmed the account keeps its old email, so a stolen session
+// cannot redirect password recovery to an attacker's mailbox.
 export function registerEmailChangeRoutes(app, {
   db, clock, config, settingsKey, withTransaction, HttpError,
   requireAuth, emailValue, transport, limit,
 }) {
   const ttl = 15 * 60_000;
   const resendMs = 60_000;
+  const googleFreshMs = 10 * 60_000;
   const maxAttempts = 5;
   const maxPasswordGuesses = 5;
   const invalid = "Mã xác nhận không hợp lệ hoặc đã hết hạn. Vui lòng yêu cầu mã mới.";
@@ -58,11 +59,16 @@ export function registerEmailChangeRoutes(app, {
       if (email === user.email) throw new HttpError(400, "Email mới phải khác email hiện tại.");
       const mailer = transport();
       if (!mailer) throw new HttpError(503, "Chưa cấu hình email để gửi mã xác nhận. Vui lòng liên hệ quản trị viên.");
-      // Google sign-ups get a random password, so a linked Google identity
-      // may skip it. 403 rather than 401: the client signs out on 401.
+      // Google sign-ups get a random password, so a session that signed in
+      // with a still-linked Google account may skip it, but only while fresh:
+      // whoever holds an older cookie must prove control of Google again.
+      // 403 rather than 401: the client signs out on 401.
       if (password === undefined) {
-        if (!db.prepare("SELECT 1 FROM google_identities WHERE user_id = ?").get(user.id))
-          throw new HttpError(403, "Vui lòng nhập mật khẩu hiện tại.");
+        const viaGoogle = req.auth.sessionAuthMethod === "google"
+          && db.prepare("SELECT 1 FROM google_identities WHERE user_id = ?").get(user.id);
+        if (!viaGoogle) throw new HttpError(403, "Vui lòng nhập mật khẩu hiện tại.");
+        if (!(nowMs() - Date.parse(req.auth.sessionCreatedAt) <= googleFreshMs))
+          throw new HttpError(403, "Hãy đăng nhập lại bằng Google rồi thử lại.", undefined, { code: "reauth_required" });
       } else {
         // Wrong passwords are counted per account, so a stolen session cannot
         // keep guessing by rotating the new address or the IP. The limiter

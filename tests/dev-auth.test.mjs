@@ -136,3 +136,27 @@ test("dev quick login CSS classes and Dark mode rules are defined", () => {
   assert.ok(designSystemCss.includes(".dev-accounts-panel"));
   assert.ok(designSystemCss.includes(".dev-account-card"));
 });
+
+test("[SQLite legacy] sessions carry auth_method; dev login records 'dev' and password sign-ins 'password'", async (t) => {
+  const app = createApp({ dbPath: ":memory:", env: { NODE_ENV: "development", NHACTOI_DEV_LOGIN: "true" } });
+  const server = await new Promise((res) => { const s = app.listen(0, "127.0.0.1", () => res(s)); });
+  t.after(() => { server.close(); app.locals.close(); });
+  const db = app.locals.db;
+  const base = `http://127.0.0.1:${server.address().port}`;
+  if (db.dialect !== "postgres")
+    assert.ok(db.prepare("PRAGMA table_info(sessions)").all().some((column) => column.name === "auth_method"));
+  const post = (path, body) => fetch(`${base}/api${path}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  const dev = await post("/auth/dev-login", { email: "demo@nhactoi.local" });
+  assert.equal(dev.status, 200);
+  const devUser = (await dev.json()).user.id;
+  assert.deepEqual(db.prepare("SELECT auth_method FROM sessions WHERE user_id = ?").all(devUser).map((row) => row.auth_method), ["dev"]);
+  const registered = await post("/auth/register", {
+    name: "Legacy", email: "legacy-auth-method@example.test", password: "Password123!", workspaceName: "Legacy",
+  });
+  assert.equal(registered.status, 201);
+  const userId = (await registered.json()).user.id;
+  assert.equal((await post("/auth/login", { email: "legacy-auth-method@example.test", password: "Password123!" })).status, 200);
+  assert.deepEqual(db.prepare("SELECT auth_method FROM sessions WHERE user_id = ?").all(userId).map((row) => row.auth_method), ["password", "password"]);
+});

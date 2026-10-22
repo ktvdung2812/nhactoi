@@ -237,6 +237,7 @@ export function EmailChange({ api, user, onSaved }) {
   const [cooldown, setCooldown] = useState(0);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [reauth, setReauth] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -256,10 +257,12 @@ export function EmailChange({ api, user, onSaved }) {
     setBusy(true);
     setError("");
     setNotice("");
+    setReauth(false);
     try {
       await action();
     } catch (reason) {
       setError(reason?.message || "Không thể đổi email.");
+      setReauth(reason?.code === "reauth_required");
       if (reason?.status === 429) setCooldown(Number(reason.retryAfterSeconds) || 60);
     } finally {
       setBusy(false);
@@ -308,6 +311,14 @@ export function EmailChange({ api, user, onSaved }) {
       setNotice("Đã đổi email đăng nhập. Các thiết bị khác đã được đăng xuất.");
       onSaved(result.user);
     });
+  }
+
+  // Google sign-in only starts without a session, so sign out first; Google
+  // brings the user back with a fresh session.
+  function signInWithGoogle() {
+    setBusy(true);
+    api("/auth/logout", { method: "POST" }).catch(() => {})
+      .finally(() => location.assign("/api/auth/google/start"));
   }
 
   function cancel() {
@@ -396,11 +407,16 @@ export function EmailChange({ api, user, onSaved }) {
             </div>
           </fieldset>
           <p id="account-email-help" className="account-help">
-            Mã xác nhận sẽ được gửi tới email mới. Bỏ trống mật khẩu nếu bạn chỉ đăng nhập bằng Google đã liên kết.
+            Mã xác nhận sẽ được gửi tới email mới. Bỏ trống mật khẩu nếu bạn vừa đăng nhập bằng Google đã liên kết.
           </p>
           {error && <p className="td-error" role="alert"><AlertCircle size={16} /> {error}</p>}
           {notice && <p className="td-notice" role="status"><CheckCircle2 size={16} /> {notice}</p>}
           <div className="modal-actions">
+            {reauth && (
+              <button type="button" className="button secondary" onClick={signInWithGoogle} disabled={busy}>
+                Đăng nhập lại bằng Google
+              </button>
+            )}
             <button type="submit" className="button" disabled={busy || cooldown > 0 || !email.trim()}>
               {busy ? <LoaderCircle className="spin" size={16} /> : <Mail size={16} />}
               {cooldown > 0 ? `Gửi mã sau ${cooldown}s` : "Gửi mã xác nhận"}

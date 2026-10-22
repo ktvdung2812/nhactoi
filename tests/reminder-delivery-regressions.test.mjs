@@ -5,7 +5,7 @@ import { createECDH, randomBytes } from 'node:crypto';
 import webpush from 'web-push';
 import { boot, call, user } from './roadmap-helpers.mjs';
 import { DEFAULT_REMINDER_POLICY } from '../server/reminder-workflow.mjs';
-import { migrateDatabase, SCHEMA_VERSION, withTransaction } from './database-helpers.mjs';
+import { migrateDatabase, withTransaction } from './database-helpers.mjs';
 
 async function registerDevices(s, actor) {
   const login = await call(s, '/mobile/auth/login', { method: 'POST', body: { email: actor.user.email, password: 'Password123!' } });
@@ -29,7 +29,7 @@ for (const prefix of ['', '[SQLite legacy] ']) test(prefix + 'source migration p
     // remain installed. Replay migration 002, not the application's latest DDL.
     const sourceMigration = readFileSync(new URL('../server/migrations/postgres/002-reminder-source.sql', import.meta.url), 'utf8');
     s.db.exec(sourceMigration);
-  } else s.db.prepare('DELETE FROM schema_migrations WHERE version=?').run(SCHEMA_VERSION);
+  } else s.db.prepare('DELETE FROM schema_migrations WHERE version=?').run(32); // SQLite's copy of migration 002
   migrateDatabase(s.db); migrateDatabase(s.db);
   assert.equal(s.db.prepare('SELECT schedule_key FROM reminder_notice_context WHERE notification_id=?').get('known').schedule_key, '2026-10-01T00:00:00Z');
   assert.equal(s.db.prepare('SELECT schedule_key FROM reminder_notice_context WHERE notification_id=?').get('ambiguous').schedule_key, 'legacy:unknown');

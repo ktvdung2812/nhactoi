@@ -542,15 +542,18 @@ function positiveAmount(value) {
 }
 
 class HttpError extends Error {
-  constructor(status, message, details) {
+  // `code` is a stable machine-readable reason the client can branch on.
+  constructor(status, message, details, { code } = {}) {
     super(message);
     this.status = status;
     this.details = details;
+    if (code) this.code = code;
   }
 }
 
-function fail(res, status, message, details) {
+function fail(res, status, message, details, code) {
   const payload = { error: message };
+  if (code) payload.code = code;
   if (details !== undefined) payload.details = details;
   return res.status(status).json(payload);
 }
@@ -750,7 +753,10 @@ function ensureWritable(req) {
   return subscription;
 }
 
-function createSession(db, userId, workspaceId, config, clock, { kind = "web", days = null } = {}) {
+// `authMethod` records how the user proved who they are. Sessions derived from
+// an existing one (workspace switch) pass its method and `createdAt`, so the
+// derived session is never fresher than the sign-in it came from.
+function createSession(db, userId, workspaceId, config, clock, { kind = "web", days = null, authMethod = "password", createdAt = null } = {}) {
   const token = createToken();
   const now = currentDate(clock);
   const sessionDays =
@@ -762,8 +768,8 @@ function createSession(db, userId, workspaceId, config, clock, { kind = "web", d
   const expires = addDays(now, sessionDays).toISOString();
   db.prepare(
     `
-    INSERT INTO sessions(id, token_hash, user_id, workspace_id, expires_at, created_at, kind)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO sessions(id, token_hash, user_id, workspace_id, expires_at, created_at, kind, auth_method)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     createId("ses_"),
@@ -771,8 +777,9 @@ function createSession(db, userId, workspaceId, config, clock, { kind = "web", d
     userId,
     workspaceId,
     expires,
-    now.toISOString(),
+    createdAt || now.toISOString(),
     kind === "mobile" ? "mobile" : "web",
+    authMethod,
   );
   return { token, expires };
 }
@@ -783,7 +790,8 @@ function authContext(db, token, clock, expectedKind = null) {
     .prepare(
       `
     SELECT s.id AS session_id, s.user_id, s.workspace_id, s.expires_at,
-           s.kind AS session_kind,
+           s.kind AS session_kind, s.auth_method AS session_auth_method,
+           s.created_at AS session_created_at,
            u.id, u.name, u.email, u.is_platform_admin, u.disabled_at,
            wm.role, ${db.dialect === "postgres" ? "wm.member_type" : "'member' AS member_type"},
            w.name AS workspace_name, w.industry AS workspace_industry,
@@ -832,6 +840,8 @@ function authContext(db, token, clock, expectedKind = null) {
     },
     sessionId: session.session_id,
     sessionKind: session.session_kind || "web",
+    sessionAuthMethod: session.session_auth_method || "password",
+    sessionCreatedAt: session.session_created_at,
     expiresAt: session.expires_at,
   };
 }
@@ -847,7 +857,7 @@ function assertOrigin(req, config) {
 
 function requireAuth(req, res, next) {
   if (!req.auth) return fail(res, 401, "authentication required");
-  if (req.auth.memberType === 'guest' && req.path !== '/api/ai/config' && !/^\/api\/(?:tasks(?:\/|$)|boards(?:\/|$)|projects(?:\/|$)|personal-tasks$|dashboard$|operations-dashboard$|timers(?:\/|$)|time-entries(?:\/|$)|reports\/(?:capacity|portfolio|sla)$|me(?:\/email-change(?:\/confirm)?)?$|workspaces(?:\/|$)|notifications(?:\/|$)|task-labels$|appearance(?:\/|$)|mobile\/(?:auth(?:\/|$)|notifications(?:\/|$)|devices(?:\/|$))|web-push(?:\/|$))/.test(req.path))
+  if (req.auth.memberType === 'guest' && req.path !== '/api/ai/config' && !/^\/api\/(?:tasks(?:\/|$)|boards(?:\/|$)|projects(?:\/|$)|personal-tasks$|dashboard$|operations-dashboard$|timers(?:\/|$)|time-entries(?:\/|$)|reports\/(?:capacity|portfolio|sla)$|me(?:\/email-change(?:\/confirm)?)?$|auth\/google\/link$|workspaces(?:\/|$)|notifications(?:\/|$)|task-labels$|appearance(?:\/|$)|mobile\/(?:auth(?:\/|$)|notifications(?:\/|$)|devices(?:\/|$))|web-push(?:\/|$))/.test(req.path))
     return fail(res, 403, "Khách chỉ được truy cập dự án được chia sẻ");
   return next();
 }
@@ -3140,7 +3150,7 @@ function createApp(options = {}) {
         membership.workspace_id,
         config,
         clock,
-        { kind: "web", days: config.sessionDays },
+        { kind: "web", days: config.sessionDays, authMethod: "dev" },
       );
       setSessionCookie(
         res,
@@ -3989,7 +3999,9 @@ function createApp(options = {}) {
     let session, auth, workspaceId;
     withTransaction(db, () => {
       workspaceId = resolveWorkspaceId();
-      session = createSession(db, req.auth.userId, workspaceId, config, clock);
+      session = createSession(db, req.auth.userId, workspaceId, config, clock, {
+        authMethod: req.auth.sessionAuthMethod, createdAt: req.auth.sessionCreatedAt,
+      });
       auth = authContext(db, session.token, clock);
       if (req.sessionToken) {
         // Workspace switching rotates the cookie, while browser push belongs
@@ -4822,6 +4834,9 @@ function createApp(options = {}) {
         invite.workspace_id,
         config,
         clock,
+        // A signed-in invitee keeps how and when they signed in; a new
+        // account was just created with a password.
+        createdUser ? {} : { authMethod: req.auth.sessionAuthMethod, createdAt: req.auth.sessionCreatedAt },
       );
       setSessionCookie(res, session.token, config);
       const joinedAuth = authContext(db, session.token, clock);
@@ -5307,7 +5322,7 @@ function createApp(options = {}) {
   app.use((error, req, res, next) => {
     if (res.headersSent) return next(error);
     if (error instanceof HttpError)
-      return fail(res, error.status, error.message, error.details);
+      return fail(res, error.status, error.message, error.details, error.code);
     if (error?.type === "entity.parse.failed" && error.status === 400)
       return fail(res, 400, "Nội dung JSON không hợp lệ");
     if (error?.type === "entity.too.large" && error.status === 413)

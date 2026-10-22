@@ -293,6 +293,7 @@ async function api(path, options = {}) {
     );
     error.status = r.status;
     error.retryAfterSeconds = Number(r.headers.get("Retry-After")) || 0;
+    if (typeof data.code === "string") error.code = data.code;
     throw error;
   }
   return data;

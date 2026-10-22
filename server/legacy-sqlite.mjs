@@ -730,6 +730,7 @@ const migrations = [
   { version: 30, sql: '' },
   { version: 31, sql: WEB_PUSH_SCHEMA },
   { version: 32, sql: '' },
+  { version: 33, sql: '' },
 ];
 
 export const SCHEMA_VERSION = migrations.at(-1).version;
@@ -810,7 +811,11 @@ export function migrateDatabase(db) {
         if (!hasColumn("notifications", "entity_id"))
           db.exec("ALTER TABLE notifications ADD COLUMN entity_id TEXT");
       }
-      if (migration.version === 32) {
+      if (migration.version === 33) {
+        // Mirrors PostgreSQL migration 018: how each session signed in.
+        if (!db.prepare('PRAGMA table_info(sessions)').all().some(c => c.name === 'auth_method'))
+          db.exec("ALTER TABLE sessions ADD COLUMN auth_method TEXT NOT NULL DEFAULT 'password' CHECK(auth_method IN ('password', 'google', 'dev'))");
+      } else if (migration.version === 32) {
         if (!db.prepare('PRAGMA table_info(reminder_notice_context)').all().some(c => c.name === 'schedule_key'))
           db.exec(readFileSync(new URL('./migrations/postgres/002-reminder-source.sql', import.meta.url), 'utf8'));
       } else if (migration.version === 30) {

@@ -120,7 +120,9 @@ Kiểm thử tự động: `node --test tests/web-push.test.mjs tests/web-app.te
 
 - Web và app mobile đều có **Đăng ký** và **Quên mật khẩu** ở màn hình đăng nhập. Đăng ký tạo không gian dùng thử 14 ngày; web dùng cookie, mobile dùng phiên bearer lưu trong SecureStore.
 - Quên mật khẩu gửi mã 6 chữ số qua email. Nhập email, mã và mật khẩu mới trên web hoặc app. Mã dùng một lần, hết hạn sau 15 phút và không còn dùng được sau 5 lần nhập sai. Có thể yêu cầu mã mới sau 60 giây, tối đa 5 lần/giờ cho mỗi email.
-- Sau khi đặt lại mật khẩu, mọi phiên web/mobile cũ bị thu hồi; người dùng đăng nhập lại bằng mật khẩu mới. Liên kết Google được giữ nguyên.
+- Sau khi đặt lại mật khẩu, mọi phiên web/mobile cũ bị thu hồi; người dùng đăng nhập lại bằng mật khẩu mới. Liên kết Google cũng bị thu hồi để kẻ đã chiếm phiên không giữ được đường vào; liên kết lại trong **Tài khoản** nếu cần.
+- **Liên kết Google** (Tài khoản → Liên kết Google) cần nhập mật khẩu hiện tại; sai 5 lần thì khóa 15 phút cho tài khoản đó. Nút "Tiếp tục với Google" ở màn hình đăng nhập chỉ dùng để đăng nhập, không liên kết tài khoản đang đăng nhập.
+- **Đổi email đăng nhập** (Tài khoản → Email đăng nhập) cần mật khẩu hiện tại và mã 6 chữ số gửi tới email mới; email chỉ đổi sau khi xác nhận mã, các phiên khác bị đăng xuất. Tài khoản đăng nhập bằng Google đã liên kết được bỏ trống mật khẩu trong 10 phút sau khi đăng nhập Google; quá thời gian đó, giao diện hiện nút **Đăng nhập lại bằng Google**. Phiên đăng nhập bằng mật khẩu luôn cần mật khẩu, kể cả khi tài khoản đã liên kết Google.
 - Cần bật SMTP trong cấu hình quản trị SaaS hoặc qua `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`. Khi chưa có SMTP, màn hình báo chức năng chưa được cấu hình. Phản hồi yêu cầu mã không tiết lộ email đã có tài khoản hay chưa; khi SMTP gửi lỗi, người dùng có thể yêu cầu lại sau thời gian chờ.
 
 ## Quản lý gia hạn dịch vụ và giấy phép

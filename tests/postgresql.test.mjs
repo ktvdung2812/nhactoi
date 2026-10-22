@@ -5,14 +5,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { TABLE_COLUMNS } from '../server/database-tables.mjs';
+import { TABLE_COLUMNS, V17_TABLE_COLUMNS } from '../server/database-tables.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { openDatabase } from './database-helpers.mjs';
 import { openDatabase as connect, migrateDatabase, withTransaction, bindSql, SCHEMA_VERSION } from '../server/db.mjs';
 import { openDatabase as openLegacy } from '../server/legacy-sqlite.mjs';
 import { seedDemo } from '../server/seed.mjs';
 import { migrateSqlite } from '../scripts/migrate-sqlite.mjs';
-import { exportSnapshot, importSnapshot } from '../server/database-snapshot.mjs';
+import { exportSnapshot, importSnapshot, upgradeSnapshot } from '../server/database-snapshot.mjs';
 
 const digest = path => createHash('sha256').update(readFileSync(path)).digest('hex');
 
@@ -95,4 +95,37 @@ test('PostgreSQL simultaneous startups apply the baseline and create the initial
     assert.equal(db.prepare(`SELECT count(*) n FROM "${schema}".users WHERE is_platform_admin=1`).get().n, 1);
     assert.equal(db.prepare(`SELECT count(*) n FROM "${schema}".admin_audit_logs WHERE action='admin.bootstrap'`).get().n, 1);
   } finally { db.exec(`DROP SCHEMA "${schema}" CASCADE`); db.close(); }
+});
+
+test('a schema 17 backup restores into schema 18 with every session marked as a password sign-in', () => {
+  const source = openDatabase();
+  seedDemo({ db: source, includeDemoAccount: true });
+  const now = new Date().toISOString(), later = new Date(Date.now() + 86400000).toISOString();
+  const { user_id, workspace_id } = source.prepare('SELECT user_id, workspace_id FROM workspace_members LIMIT 1').get();
+  source.prepare("INSERT INTO sessions(id, token_hash, user_id, workspace_id, expires_at, created_at, kind, auth_method) VALUES (?, ?, ?, ?, ?, ?, 'web', 'google')")
+    .run('ses_google_v17', 'hash-google-v17', user_id, workspace_id, later, now);
+  source.prepare("INSERT INTO sessions(id, token_hash, user_id, workspace_id, expires_at, created_at, kind, auth_method) VALUES (?, ?, ?, ?, ?, ?, 'mobile', 'dev')")
+    .run('ses_dev_v17', 'hash-dev-v17', user_id, workspace_id, later, now);
+  const current = exportSnapshot(source);
+  assert.equal(current.schemaVersion, 18);
+  assert.deepEqual(current.tables.sessions.columns, TABLE_COLUMNS.sessions);
+  const sessions = V17_TABLE_COLUMNS.sessions;
+  assert.equal(sessions.includes('auth_method'), false);
+  // An application at schema 17 had no auth_method column to export.
+  const v17 = { ...current, schemaVersion: 17, tables: { ...current.tables,
+    sessions: { columns: [...sessions], rows: current.tables.sessions.rows.map(row => row.slice(0, sessions.length)) } } };
+  const upgraded = upgradeSnapshot(v17);
+  assert.equal(upgraded.schemaVersion, 18);
+  assert.deepEqual(upgraded.tables.sessions.columns, TABLE_COLUMNS.sessions);
+
+  const target = openDatabase();
+  try {
+    importSnapshot(target, v17);
+    const restored = target.prepare('SELECT id, auth_method FROM sessions ORDER BY id').all();
+    assert.equal(restored.length, current.tables.sessions.rows.length);
+    assert.ok(restored.length >= 2);
+    assert.ok(restored.every(row => row.auth_method === 'password'), JSON.stringify(restored));
+    assert.deepEqual(exportSnapshot(target).tables.sessions.rows.map(row => row.slice(0, sessions.length)),
+      v17.tables.sessions.rows);
+  } finally { target.close(); source.close(); }
 });
