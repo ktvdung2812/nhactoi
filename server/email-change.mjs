@@ -1,5 +1,6 @@
-import { createHmac, randomInt } from "node:crypto";
+import { createHmac, randomBytes, randomInt } from "node:crypto";
 import { createId, safeEqualText, verifyPassword } from "./auth.mjs";
+import { claimAttempt, releaseAttempt } from "./password-reset.mjs";
 import { invalidateSessions } from "./restore-safety.mjs";
 
 // Changing the login email needs the current password (or a Google sign-in
@@ -15,6 +16,7 @@ export function registerEmailChangeRoutes(app, {
   const googleFreshMs = 10 * 60_000;
   const maxAttempts = 5;
   const maxPasswordGuesses = 5;
+  const maxCodesPerAddress = 5;
   const invalid = "Mã xác nhận không hợp lệ hoặc đã hết hạn. Vui lòng yêu cầu mã mới.";
   const from = () => config.smtp?.from || "no-reply@nhactoi.local";
   // The label keeps these digests distinct from password reset codes.
@@ -36,20 +38,23 @@ export function registerEmailChangeRoutes(app, {
     }
   });
 
+  // Cancelling keeps the row (marked consumed) so the resend cooldown still
+  // counts it; otherwise cancel-and-resend would mail codes without pause.
   app.delete("/api/me/email-change", requireAuth, postgresOnly, (req, res, next) => {
     try {
-      db.prepare("DELETE FROM email_change_requests WHERE user_id = ? AND consumed_at IS NULL").run(req.auth.userId);
+      db.prepare("UPDATE email_change_requests SET consumed_at = ? WHERE user_id = ? AND consumed_at IS NULL")
+        .run(nowMs(), req.auth.userId);
       return res.json({ ok: true });
     } catch (error) {
       return next(error);
     }
   });
 
-  // The 60-second resend cooldown is per account and starts only once a code
-  // was sent, so a mistyped password does not lock the address for a minute.
-  app.post("/api/me/email-change", requireAuth, postgresOnly, limit("email-change", {
-    ipLimit: 20, windowMs: ttl, emailLimits: [{ limit: 5, windowMs: 60 * 60_000 }],
-  }), (req, res, next) => {
+  // Checks run in this order: body, IP limit, proof of identity (password or
+  // fresh Google session), per-address limit, 60-second per-account cooldown.
+  // Address limits and the cooldown apply only after the proof, so failed
+  // passwords can neither lock somebody else's address nor start a cooldown.
+  app.post("/api/me/email-change", requireAuth, postgresOnly, limit("email-change", { ipLimit: 20, windowMs: ttl }), (req, res, next) => {
     try {
       if (typeof req.body?.email !== "string") throw new HttpError(400, "Email mới không hợp lệ.");
       const email = emailValue(req.body.email);
@@ -71,30 +76,40 @@ export function registerEmailChangeRoutes(app, {
           throw new HttpError(403, "Hãy đăng nhập lại bằng Google rồi thử lại.", undefined, { code: "reauth_required" });
       } else {
         // Wrong passwords are counted per account, so a stolen session cannot
-        // keep guessing by rotating the new address or the IP. The limiter
-        // above has already deleted expired buckets.
-        const guessKey = `email-change:password:${user.id}`;
-        const guesses = db.prepare("SELECT count, expires_at FROM auth_request_limits WHERE bucket = ?").get(guessKey);
-        if (guesses && Number(guesses.count) >= maxPasswordGuesses) {
-          res.set("Retry-After", String(Math.ceil((Number(guesses.expires_at) - nowMs()) / 1000)));
+        // keep guessing by rotating the new address or the IP. Each guess is
+        // claimed before scrypt runs, so parallel requests cannot outrun the
+        // counter; the right password clears it, like a successful login.
+        const bucket = `email-change:password:${user.id}`;
+        const guess = claimAttempt(db, { bucket, limit: maxPasswordGuesses, windowMs: ttl, now: nowMs() });
+        if (!guess.claimed) {
+          res.set("Retry-After", String(guess.retryAfterSeconds));
           throw new HttpError(429, "Bạn đã nhập sai mật khẩu quá nhiều lần. Vui lòng thử lại sau 15 phút.");
         }
-        if (!verifyPassword(password, user.password_hash)) {
-          db.prepare(`INSERT INTO auth_request_limits(bucket, expires_at, count) VALUES (?, ?, 1)
-            ON CONFLICT(bucket) DO UPDATE SET count = auth_request_limits.count + 1`).run(guessKey, nowMs() + ttl);
-          throw new HttpError(403, "Mật khẩu hiện tại không đúng.");
-        }
+        if (!verifyPassword(password, user.password_hash)) throw new HttpError(403, "Mật khẩu hiện tại không đúng.");
+        releaseAttempt(db, { bucket });
       }
-      if (db.prepare("SELECT 1 FROM users WHERE email = ? AND id <> ?").get(email, user.id))
-        throw new HttpError(409, "email is already registered");
+      // An address that belongs to another account gets a notice instead of
+      // a code, and the caller sees exactly the normal response. The request
+      // row is a decoy that no code can confirm, so the pending state, the
+      // cooldown and cancelling behave as usual and reveal nothing.
+      const taken = Boolean(db.prepare("SELECT 1 FROM users WHERE email = ? AND id <> ?").get(email, user.id));
       const now = nowMs();
       const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
       const id = createId("emailchg_");
-      const codeHash = digest(user.id, email, code);
+      const codeHash = taken ? randomBytes(32).toString("hex") : digest(user.id, email, code);
+      const target = `email-change:target:${createHmac("sha256", settingsKey).update(email).digest("hex")}`;
       withTransaction(db, () => {
+        // Serializes this account's requests, including the cooldown read.
+        db.prepare("SELECT id FROM users WHERE id = ? FOR UPDATE").get(user.id);
         db.prepare("DELETE FROM email_change_requests WHERE expires_at <= ?").run(now);
-        const previous = db.prepare("SELECT created_at FROM email_change_requests WHERE user_id = ? AND consumed_at IS NULL FOR UPDATE").get(user.id);
-        if (previous && Number(previous.created_at) > now - resendMs) {
+        const sent = claimAttempt(db, { bucket: target, limit: maxCodesPerAddress, windowMs: 60 * 60_000, now });
+        if (!sent.claimed) {
+          res.set("Retry-After", String(sent.retryAfterSeconds));
+          throw new HttpError(429, "Bạn đã thử quá nhiều lần. Vui lòng chờ rồi thử lại.");
+        }
+        // Every request counts, including cancelled and confirmed ones.
+        const previous = db.prepare("SELECT max(created_at) AS created_at FROM email_change_requests WHERE user_id = ?").get(user.id);
+        if (previous?.created_at != null && Number(previous.created_at) > now - resendMs) {
           res.set("Retry-After", String(Math.ceil((Number(previous.created_at) + resendMs - now) / 1000)));
           throw new HttpError(429, "Bạn đã thử quá nhiều lần. Vui lòng chờ rồi thử lại.");
         }
@@ -106,7 +121,12 @@ export function registerEmailChangeRoutes(app, {
           .run(id, user.id, user.email, email, codeHash, now + ttl, now);
       });
       // Delivery failures never log addresses, codes or transport credentials.
-      Promise.resolve().then(() => mailer.sendMail({
+      Promise.resolve().then(() => mailer.sendMail(taken ? {
+        from: from(),
+        to: email,
+        subject: "Địa chỉ email của bạn vừa được dùng trên Nhắc tôi",
+        text: "Có người dùng địa chỉ này làm email mới cho một tài khoản Nhắc tôi khác. Địa chỉ đã gắn với tài khoản của bạn nên không thay đổi gì. Nếu không phải bạn, hãy bỏ qua.",
+      } : {
         from: from(),
         to: email,
         subject: "Mã xác nhận đổi email Nhắc tôi",
