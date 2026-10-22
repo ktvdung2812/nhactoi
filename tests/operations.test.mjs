@@ -62,3 +62,25 @@ test('backup retention keeps the newest complete backups only when an admin asks
   const audit=s.db.prepare("SELECT before_json,after_json FROM admin_audit_logs WHERE action='backup.schedule' ORDER BY created_at,id").all();
   assert.equal(JSON.parse(audit[0].after_json).keep,7);
 });
+
+test('a backup folder with a broken manifest is skipped, never pruned and never breaks the backup list',async t=>{
+  let now=Date.parse('2026-10-22T02:00:00Z');
+  const s=await boot(t,{clock:()=>new Date(now)}),admin=await user(s,'broken-manifest@test.local');
+  s.db.prepare('UPDATE users SET is_platform_admin=1 WHERE id=?').run(admin.user.id);
+  const {mkdirSync,writeFileSync,readdirSync}=await import('node:fs');
+  const {listBackups,pruneBackups,backupRoot}=await import('../server/backups.mjs');
+  const dbPath=s.dir+'/test.sqlite',root=backupRoot(dbPath);
+  const broken={'backup-broken':'{}','backup-bad-date':JSON.stringify({createdAt:'not a date',files:[]}),'backup-no-files':JSON.stringify({createdAt:'2026-10-22T00:00:00Z'}),'backup-no-date':JSON.stringify({files:[]}),'backup-number-date':JSON.stringify({createdAt:1,files:[]}),'backup-not-json':'{','backup-null':'null'};
+  for(const [id,manifest] of Object.entries(broken)){mkdirSync(root+'/'+id,{recursive:true});writeFileSync(root+'/'+id+'/manifest.json',manifest);}
+  const warn=t.mock.method(console,'warn',()=>{});
+  const backup=async()=>{now+=60_000;const r=await call(s,'/admin/backups',{method:'POST',cookie:admin.cookie,body:{reason:'Kiểm thử manifest hỏng'}});assert.equal(r.status,201,JSON.stringify(r.body));return r.body.backup.id};
+  const first=await backup(),second=await backup();
+  const listed=await call(s,'/admin/backups',{cookie:admin.cookie});
+  assert.equal(listed.status,200,JSON.stringify(listed.body));
+  assert.deepEqual(listed.body.backups.map(b=>b.id),[second,first]);
+  assert.deepEqual(listBackups(dbPath).map(b=>b.id),[second,first]);
+  assert.deepEqual(pruneBackups(dbPath,1),[first]);
+  for(const id of Object.keys(broken))assert.ok(readdirSync(root).includes(id),`${id} is kept`);
+  const warned=warn.mock.calls.map(call=>call.arguments.join(' ')).filter(text=>text.includes('backup manifest unreadable'));
+  assert.deepEqual(warned.sort(),Object.keys(broken).map(id=>'[nhactoi] backup manifest unreadable '+id).sort(),'one warning per folder per process');
+});

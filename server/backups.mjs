@@ -92,7 +92,9 @@ export function inspectBackup(dbPath,id,settingsKey){
  return {dir,manifest:m,snapshot};
 }
 // Complete backups, newest first. Pending or unreadable folders are never listed, so never pruned.
-export function listBackups(dbPath){const root=backupRoot(dbPath);return existsSync(root)?readdirSync(root).filter(name=>/^backup-[a-zA-Z0-9-]+$/.test(name)).map(id=>{try{const m=JSON.parse(readFileSync(join(root,id,'manifest.json'),'utf8'));return {id,createdAt:m.createdAt,fileCount:m.files.length,remoteFiles:m.remoteFiles}}catch{return null}}).filter(Boolean).sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||b.id.localeCompare(a.id)):[]}
+const warnedManifests=new Set();
+function backupSummary(root,id){try{const m=JSON.parse(readFileSync(join(root,id,'manifest.json'),'utf8'));if(typeof m?.createdAt==='string'&&Number.isFinite(Date.parse(m.createdAt))&&Array.isArray(m.files))return {id,createdAt:m.createdAt,fileCount:m.files.length,remoteFiles:m.remoteFiles}}catch{}if(!warnedManifests.has(id)){warnedManifests.add(id);console.warn('[nhactoi] backup manifest unreadable',id)}return null}
+export function listBackups(dbPath){const root=backupRoot(dbPath);return existsSync(root)?readdirSync(root).filter(name=>/^backup-[a-zA-Z0-9-]+$/.test(name)).map(id=>backupSummary(root,id)).filter(Boolean).sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||b.id.localeCompare(a.id)):[]}
 export const BACKUP_KEEP_OPTIONS=[0,7,14,30,60];
 // Keep the newest `keep` complete backups; 0 keeps every backup.
 export function pruneBackups(dbPath,keep){if(!keep)return [];const root=backupRoot(dbPath),removed=listBackups(dbPath).slice(keep).map(b=>b.id);for(const id of removed)rmSync(join(root,id),{recursive:true,force:true});return removed}
