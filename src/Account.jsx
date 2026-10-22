@@ -457,7 +457,7 @@ export function AssistantSettings({ api, user, workspaceId }) {
         <label className="check"><input type="checkbox" checked={draft.enabled} onChange={event => setDraft(value => ({ ...value, enabled: event.target.checked }))} />Bật trợ lý trong bình luận</label>
         <div className="form-grid"><label className="field"><span>Tên trợ lý</span><input value={draft.name} maxLength={60} required onChange={event => setDraft(value => ({ ...value, name: event.target.value }))} /></label><label className="field"><span>Tên gọi sau @</span><input value={draft.handle} maxLength={32} required autoCapitalize="none" spellCheck={false} onChange={event => setDraft(value => ({ ...value, handle: event.target.value }))} /><small>2–32 chữ Latin, số hoặc dấu gạch dưới; bắt đầu bằng chữ. Ví dụ: vyvy → @vyvy</small></label></div>
       </fieldset>
-      <p className="account-help">{config.ready ? `Mô hình: ${config.model} · ${config.provider}` : "Nhà cung cấp AI chưa sẵn sàng. Quản trị viên cần kiểm tra cấu hình AI hiện có."}</p>
+      <p className="account-help">{config.ready ? (config.model ? `Mô hình: ${config.model} · ${config.provider}` : "Nhà cung cấp AI đã sẵn sàng.") : "Nhà cung cấp AI chưa sẵn sàng. Quản trị viên cần kiểm tra cấu hình AI hiện có."}</p>
       <p className="account-help">Ảnh: {config.capabilities?.images ? "Có hỗ trợ" : "Chưa hỗ trợ"} · PDF: {config.capabilities?.pdf ? "Có hỗ trợ" : "Chưa hỗ trợ"}.</p>
       {!canManage && <p className="account-help">Chủ sở hữu hoặc quản trị viên có thể thay đổi cấu hình này.</p>}
       {notice && <p className="td-notice" role="status">{notice}</p>}

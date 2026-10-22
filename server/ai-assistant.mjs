@@ -135,7 +135,8 @@ export function registerAiAssistantRoutes(app, { db, clock, config, requireAuth,
   app.get("/api/ai/config", requireAuth, async (req, res) => {
     const s = settings();
     const assistant = app.locals.publicAssistant(req.auth);
-    res.json({ enabled: s.enabled, ready: ready(s), provider: s.provider, model: s.model,
+    // Provider and model name are only shown to people who manage the assistant.
+    res.json({ enabled: s.enabled, ready: ready(s), ...(assistant.canManage ? { provider: s.provider, model: s.model } : {}),
       assistant, canManageAssistant: assistant.canManage, capabilities: await capabilities(s) });
   });
   app.get("/api/ai/conversations", requireAuth, (req, res) => {

@@ -155,7 +155,7 @@ function AssistantSettings() {
       <Field label="Tên trợ lý" value={draft.name} editable={!disabled} maxLength={60} onChangeText={name => setDraft({ ...draft, name })} />
       <Field label="Tên gọi sau @" value={draft.handle} editable={!disabled} maxLength={32} autoCapitalize="none" autoCorrect={false} onChangeText={handle => setDraft({ ...draft, handle })} />
       <Text style={s.muted}>Tên gọi gồm 2–32 chữ Latin, số hoặc dấu gạch dưới; bắt đầu bằng chữ.</Text>
-      <Text style={s.muted}>{value?.ready ? `Mô hình: ${value.model} · ${value.provider}` : "Nhà cung cấp AI chưa sẵn sàng. Liên hệ quản trị viên để kiểm tra cấu hình AI."}</Text>
+      <Text style={s.muted}>{value?.ready ? (value.model ? `Mô hình: ${value.model} · ${value.provider}` : "Nhà cung cấp AI đã sẵn sàng.") : "Nhà cung cấp AI chưa sẵn sàng. Liên hệ quản trị viên để kiểm tra cấu hình AI."}</Text>
       <Text style={s.muted}>Ảnh: {value?.capabilities?.images ? "Có hỗ trợ" : "Chưa hỗ trợ"} · PDF: {value?.capabilities?.pdf ? "Có hỗ trợ" : "Chưa hỗ trợ"}.</Text>
       {canManage ? <Button label={busy ? "Đang lưu…" : "Lưu trợ lý"} disabled={disabled || !draft.name.trim() || !draft.handle.trim()} onPress={() => void save()} /> : <Text style={s.muted}>Chủ sở hữu hoặc quản trị viên có thể thay đổi cấu hình này.</Text>}
     </>}

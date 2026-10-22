@@ -62,8 +62,8 @@ export type Attachment = {
 };
 export type AssistantConfig = {
   ready: boolean;
-  provider: string;
-  model: string;
+  provider?: string;
+  model?: string;
   assistant: { name: string; handle: string; enabled: boolean; ready?: boolean; canManage?: boolean };
   canManageAssistant?: boolean;
   capabilities?: { images: boolean; pdf: boolean };

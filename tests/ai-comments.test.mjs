@@ -376,3 +376,19 @@ test('only links from the task description and the caller\'s own comments are fe
   assert.deepEqual(latest.sources.filter(source => source.status === 'skipped').map(source => source.detail),
     Array(4).fill('Vượt giới hạn 10 liên kết trong văn bản.'));
 });
+
+test('/ai/config shows provider and model only to people who manage the assistant', async t => {
+  const s = await setup(t);
+  const member = await user(s, 'config-member@example.test'); addMember(s, s.owner, member);
+  const guest = await user(s, 'config-guest@example.test'); addMember(s, s.owner, guest);
+  s.db.prepare("UPDATE workspace_members SET member_type='guest' WHERE workspace_id=? AND user_id=?").run(s.owner.workspace.id, guest.user.id);
+  const owner = (await call(s, '/ai/config', { cookie: s.owner.cookie })).body;
+  assert.equal(owner.canManageAssistant, true);
+  assert.equal(owner.provider, 'openrouter'); assert.equal(owner.model, 'test-model');
+  for (const actor of [member, guest]) {
+    const body = (await call(s, '/ai/config', { cookie: actor.cookie })).body;
+    assert.equal(body.canManageAssistant, false);
+    assert.equal(body.ready, true); assert.equal(body.assistant.handle, 'vyvy');
+    assert.ok(!('provider' in body) && !('model' in body), JSON.stringify(body));
+  }
+});
