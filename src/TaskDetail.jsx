@@ -22,10 +22,28 @@ const safeUrl = value => { try { const url = new URL(value); return ["http:", "h
 const sourceHref = source => source.kind === "task" && source.taskId ? `/tasks/${encodeURIComponent(source.taskId)}` : /^\/api\/tasks\/[^/?#]+\/attachments\/[^/?#]+\/download$/.test(source.url || "") ? source.url : safeUrl(source.url);
 const taskReferences = sources => (sources || []).filter(source => source.kind === "task" && source.taskId).map(source => ({ id: source.taskId, title: source.title || source.taskId }));
 const sourceStatus = { read: "Đã đọc", partial: "Đọc một phần", failed: "Chưa đọc được", unread: "Chưa đọc", unsupported: "Chưa hỗ trợ", summarized: "Đã đọc và tóm tắt" };
-function AiEvidence({ sources = [], actions = [], onOpenTask }) {
+const actionStatus = { proposed: "Chờ xác nhận", completed: "Hoàn tất", failed: "Chưa thực hiện", stale: "Đã lỗi thời", dismissed: "Đã bỏ qua" };
+const argLabels = { title: "Tiêu đề", description: "Mô tả", status: "Trạng thái", priority: "Ưu tiên", dueAt: "Hạn", startAt: "Bắt đầu", assigneeId: "Phụ trách", assigneeIds: "Người phối hợp", completed: "Hoàn thành" };
+// Summarize what a proposal would change so the caller can judge it before confirming.
+function proposalArgs(args, members) {
+  const person = id => members.find(member => member.id === id)?.name || id;
+  return Object.entries(args || {}).filter(([key]) => argLabels[key]).map(([key, value]) => {
+    const shown = value === null || value === "" ? "Bỏ trống"
+      : key === "status" ? statuses[value] || value : key === "priority" ? priorities[value] || value
+      : key === "dueAt" || key === "startAt" ? (/^\d{4}-\d{2}-\d{2}$/.test(value) ? value.split("-").reverse().join("/") : date(value))
+      : key === "assigneeId" ? person(value) : key === "assigneeIds" ? value.map(person).join(", ") || "Không ai"
+      : key === "completed" ? (value ? "Có" : "Chưa") : String(value);
+    return `${argLabels[key]}: ${shown}`;
+  }).join(" · ");
+}
+function AiEvidence({ sources = [], actions = [], onOpenTask, run, members = [], onAct, busy = false }) {
   return <>
     {sources.length > 0 && <details className="td-ai-sources"><summary>Nguồn tham chiếu ({sources.length})</summary><ul>{sources.map((source, index) => <li key={source.id || index}>{sourceHref(source) ? <a href={sourceHref(source)} target={source.kind === "task" ? undefined : "_blank"} rel="noopener noreferrer" download={source.kind === "file" || undefined} onClick={source.kind === "task" && source.taskId && onOpenTask ? event => { event.preventDefault(); onOpenTask({ id: source.taskId, title: source.title }); } : undefined}>{source.title || source.url}</a> : <span>{source.title || source.id || "Ngữ cảnh công việc"}</span>}<small>{sourceStatus[source.status] || source.status}{(source.detail || source.note || source.error) ? ` · ${source.detail || source.note || source.error}` : ""}</small></li>)}</ul></details>}
-    {actions.length > 0 && <ul className="td-ai-actions" aria-label="Kết quả thao tác">{actions.map((action, index) => <li key={action.id || index}>{action.summary || action.name}{action.status ? ` · ${{ completed: "Hoàn tất", failed: "Chưa thực hiện" }[action.status] || action.status}` : ""}{action.error ? ` · ${action.error}` : ""}</li>)}</ul>}
+    {actions.length > 0 && <ul className="td-ai-actions" aria-label="Đề xuất và kết quả thao tác">{actions.map((action, index) => { const details = proposalArgs(action.args, members); return <li key={action.id || index}>
+      {action.status && <span className={`td-ai-chip is-${action.status}`}>{actionStatus[action.status] || action.status}</span>}
+      <span className="td-ai-action-text"><strong>{action.summary || action.name}</strong>{details && <small>{details}</small>}{action.error && <small>{action.error}</small>}</span>
+      {action.status === "proposed" && run?.canApply && onAct && <span className="td-ai-action-buttons"><button type="button" className="button" disabled={busy} onClick={() => onAct(run, action, "apply")}><CheckCheck size={14} />Thực hiện</button><button type="button" className="button secondary" disabled={busy} onClick={() => onAct(run, action, "dismiss")}>Bỏ qua</button></span>}
+    </li>; })}</ul>}
   </>;
 }
 
@@ -109,6 +127,23 @@ export default function TaskDetail({ taskId, api: request, me, members = [], cus
       if (alive.current && result.run) setAiRuns(current => current.map(value => value.id === run.id ? result.run : value));
     } catch (err) { if (alive.current) setAiError(err.message); }
     finally { pending.current = false; if (alive.current) setBusy(false); }
+  }
+  // Proposals change data only when the caller confirms them here.
+  async function actOnProposal(run, action, verb) {
+    if (pending.current) return;
+    pending.current = true; setBusy(true); setError(""); setNotice("");
+    try {
+      const result = await api(`${base}/ai-runs/${encodeURIComponent(run.id)}/actions/${encodeURIComponent(action.id)}/${verb}`, { method: "POST" });
+      if (!alive.current) return;
+      if (result.run) setAiRuns(current => current.map(value => value.id === run.id ? result.run : value));
+      setNotice(verb === "apply" ? "Đã thực hiện đề xuất của trợ lý." : "Đã bỏ qua đề xuất.");
+      if (verb === "apply") { setReload(value => value + 1); await onChanged?.(); }
+    } catch (err) {
+      if (!alive.current) return;
+      setError(err.message);
+      // Show the server's verdict (stale, failed or already handled).
+      if ([400, 403, 409].includes(err.status)) await api(`${base}/ai-runs`).then(result => { if (alive.current) setAiRuns(result.runs || []); }).catch(() => {});
+    } finally { pending.current = false; if (alive.current) setBusy(false); }
   }
   async function mutate(path, method, body, success, after, changedTask = false) {
     if (pending.current || !writable) return;
@@ -362,7 +397,7 @@ export default function TaskDetail({ taskId, api: request, me, members = [], cus
                     {mentionMatches.length ? mentionMatches.map((member, index) => <li key={member.id} role="presentation"><button type="button" role="option" id={`${mentionListId}-${member.id}`} aria-selected={index === activeMention} className={index === activeMention ? "is-active" : ""} ref={index === activeMention ? activeMentionRef : undefined} onMouseEnter={() => setMentionIndex(index)} onMouseDown={event => { event.preventDefault(); pickMention(member); }}><span className="td-avatar" aria-hidden="true">{member.assistant ? <Bot size={17} /> : initials(member.name)}</span><span><strong>{member.name}</strong>{member.email && <small>{member.email}</small>}</span></button></li>) : <li className="td-mention-empty" role="presentation">Không có thành viên phù hợp</li>}
                   </ul>}
                 </div>
-                {assistant && <small className="td-comment-hint">Gọi @{assistant.handle} để đọc ngữ cảnh và thực hiện yêu cầu. Phản hồi được chia sẻ trong công việc này.</small>}
+                {assistant && <small className="td-comment-hint">Gọi @{assistant.handle} để đọc ngữ cảnh và đề xuất thay đổi; dữ liệu chỉ đổi khi bạn bấm Thực hiện. Phản hồi được chia sẻ trong công việc này.</small>}
                 {commentFiles.length > 0 && <ul className="td-comment-pending">{commentFiles.map(item => <li key={item.key}><FileText size={16} /><div><span>{item.file.name}</span><small>{fileSize(item.file.size)}{item.uploaded ? " · Đã tải lên" : " · Chờ gửi"}</small></div><button type="button" aria-label={`Bỏ ${item.file.name} khỏi bình luận`} disabled={commentDisabled} onClick={() => { setCommentFiles(current => current.filter(value => value.key !== item.key)); setCommentError(""); }}><X size={15} /></button></li>)}</ul>}
                 {commentFiles.some(item => item.uploaded) && <small className="td-comment-hint">Tệp đã tải lên được giữ trong đính kèm của task. Bạn có thể thử gửi lại bình luận.</small>}
                 {data.collaboration && mentionIds.length > 0 && <div className="td-mentions">{mentionIds.map(id => <button type="button" key={id} disabled={commentDisabled} onClick={() => setMentionIds(ids => ids.filter(v => v !== id))}>@{data.collaboration.members.find(m => m.id === id)?.name} ×</button>)}</div>}
@@ -374,9 +409,9 @@ export default function TaskDetail({ taskId, api: request, me, members = [], cus
               </form>}
               {!comments.length && <p className="td-empty">Chưa có trao đổi nào. Cùng cập nhật để công việc luôn rõ ràng.</p>}
               {aiError && <p className="td-comment-error" role="alert">Chưa cập nhật được trạng thái trợ lý: {aiError}</p>}
-              {aiRuns.length > 0 && <ul className="td-ai-runs" aria-label="Yêu cầu trợ lý" aria-live="polite">{aiRuns.map(run => <li key={run.id}><a href={`#comment-${run.commentId}`}>{data.aiConfig?.assistant?.name || "Trợ lý AI"}</a><span>{({ queued: "Đang chờ", reading: "Đang đọc ngữ cảnh", executing: "Đang thực hiện", completed: "Hoàn tất", failed: "Có lỗi", cancelled: "Đã dừng" })[run.status] || run.status}</span>{run.error && <small>{run.error}</small>}{run.status !== "completed" && <AiEvidence sources={run.sources} actions={run.actions} onOpenTask={onOpenTask} />}{run.canRetry && <button className="button secondary" type="button" disabled={commentDisabled} onClick={() => retryAi(run)}>Thử lại</button>}</li>)}</ul>}
+              {aiRuns.length > 0 && <ul className="td-ai-runs" aria-label="Yêu cầu trợ lý" aria-live="polite">{aiRuns.map(run => <li key={run.id}><a href={`#comment-${run.commentId}`}>{data.aiConfig?.assistant?.name || "Trợ lý AI"}</a><span>{({ queued: "Đang chờ", reading: "Đang đọc ngữ cảnh", executing: "Đang thực hiện", completed: "Hoàn tất", failed: "Có lỗi", cancelled: "Đã dừng" })[run.status] || run.status}</span>{run.error && <small>{run.error}</small>}{run.status !== "completed" && <AiEvidence sources={run.sources} actions={run.actions} onOpenTask={onOpenTask} run={run} members={members} onAct={actOnProposal} busy={busy} />}{run.canRetry && <button className="button secondary" type="button" disabled={commentDisabled} onClick={() => retryAi(run)}>Thử lại</button>}</li>)}</ul>}
               <div className="td-comments">{comments.map(item => <article key={item.id} id={`comment-${item.id}`} className={item.authorType === "assistant" ? "td-ai-comment" : undefined}><span className="td-avatar">{item.authorType === "assistant" ? <Bot size={18} /> : initials(item.authorName)}</span><div><strong>{item.authorName || "Thành viên"}</strong>{item.authorType === "assistant" && <span className="td-ai-badge">AI</span>}<time dateTime={item.createdAt}>{date(item.createdAt)}</time>{item.replyToCommentId && <a className="td-ai-reply" href={`#comment-${item.replyToCommentId}`}>Trả lời bình luận gốc</a>}{item.body && (item.authorType === "assistant" ? <AssistantMarkdown content={item.body} references={taskReferences(item.sources)} onOpenTask={onOpenTask} selectedTaskId={taskId} /> : <p>{item.body}</p>)}
-                <AiEvidence sources={item.sources} actions={item.actions} onOpenTask={onOpenTask} />{item.attachments?.length > 0 && <ul className="td-comment-attachments">{item.attachments.map(file => <li key={file.id}><a href={`/api${base}/attachments/${encodeURIComponent(file.id)}/download`} download={file.originalName || file.title}><FileText size={16} /><span>{file.originalName || file.title}<small>{fileSize(file.sizeBytes || 0)}</small></span><Download size={14} /></a></li>)}</ul>}<CommentActions item={item} meta={data.collaboration?.comments.find(c => c.id === item.id)} api={api} base={base} disabled={commentDisabled} onChanged={() => setReload(v => v + 1)} /></div></article>)}</div>
+                {(() => { const run = item.aiRunId && aiRuns.find(value => value.id === item.aiRunId); return <AiEvidence sources={item.sources} actions={run?.actions?.length ? run.actions : item.actions} onOpenTask={onOpenTask} run={run} members={members} onAct={actOnProposal} busy={busy} />; })()}{item.attachments?.length > 0 && <ul className="td-comment-attachments">{item.attachments.map(file => <li key={file.id}><a href={`/api${base}/attachments/${encodeURIComponent(file.id)}/download`} download={file.originalName || file.title}><FileText size={16} /><span>{file.originalName || file.title}<small>{fileSize(file.sizeBytes || 0)}</small></span><Download size={14} /></a></li>)}</ul>}<CommentActions item={item} meta={data.collaboration?.comments.find(c => c.id === item.id)} api={api} base={base} disabled={commentDisabled} onChanged={() => setReload(v => v + 1)} /></div></article>)}</div>
             </section>
             <section className="td-panel"><div className="td-section-heading"><h2><Activity size={18} />Lịch sử công việc</h2></div>
               {!activity.length && <p className="td-empty">Các thao tác mới sẽ được ghi lại tại đây.</p>}

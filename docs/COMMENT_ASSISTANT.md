@@ -12,7 +12,8 @@ Bình luận được lưu ngay. Worker tiếp tục khi người gọi đóng m
 
 - Đọc thông tin công việc, toàn bộ bình luận/lịch sử hoạt động, checklist, người phụ trách/phối hợp, nhãn, trường tùy chỉnh, liên kết, tệp và URL; tra cứu thêm công việc trong cùng dự án khi cần.
 - Không đưa hội thoại AI riêng hoặc dữ liệu CRM vào ngữ cảnh bình luận chung. Phản hồi dẫn xuất được ẩn khi công việc nguồn chuyển dự án hoặc người xem mất quyền.
-- Có thể tạo công việc; sửa tiêu đề, mô tả, trạng thái, ưu tiên, hạn, phân công; tạo/sửa/đánh dấu checklist. Nghiệp vụ dùng chung với API, giữ revision, lịch lặp, thông báo và sự kiện.
+- Có thể **đề xuất** tạo công việc; sửa tiêu đề, mô tả, trạng thái, ưu tiên, hạn, phân công; tạo/sửa/đánh dấu checklist. Trợ lý không tự ghi dữ liệu: mỗi đề xuất hiện trong phản hồi với trạng thái **Chờ xác nhận**, và chỉ người gọi mới thấy nút **Thực hiện** / **Bỏ qua**. Khi bấm Thực hiện, thao tác chạy bằng quyền hiện tại của người gọi qua nghiệp vụ dùng chung với API, giữ revision, lịch lặp, thông báo và sự kiện.
+- Đề xuất lỗi thời (công việc đã đổi sau khi trợ lý đọc, đã chuyển dự án/xóa, hoặc quá 24 giờ) bị từ chối với trạng thái **Đã lỗi thời**; hãy gửi yêu cầu mới. Thao tác cần ID của đối tượng chưa tạo (ví dụ thêm mục vào checklist mới) phải gửi yêu cầu tiếp theo sau khi xác nhận.
 - Người chỉ có quyền bình luận được hỏi/nhận đề xuất; công cụ sửa dữ liệu vẫn kiểm tra quyền chỉnh sửa hiện tại. Tài khoản, thuê bao, quyền dự án, trạng thái công việc và cấu hình AI được kiểm tra lại trước thao tác và trước khi đăng kết quả.
 - Mặc định thao tác công việc đang trao đổi. Mô hình được hướng dẫn hỏi lại khi đối tượng hoặc ngày giờ chưa rõ, dùng múi giờ `Asia/Ho_Chi_Minh`. Xóa dữ liệu và đổi quyền phải thực hiện tại màn hình hiện có.
 - Tài liệu, website và lịch sử là dữ liệu tham khảo, không phải chỉ dẫn có quyền thực hiện thao tác.
@@ -44,12 +45,16 @@ Các endpoint dùng cơ chế xác thực hiện có; quyền được kiểm tr
 | `PUT /api/ai/workspace-settings` | Owner/admin gửi `{ name, handle, enabled }` |
 | `POST /api/tasks/:id/comments` | Nhận `operationId` hoặc `Idempotency-Key`; trả `{ comment, aiRun? }` |
 | `GET /api/tasks/:id/detail` | Bình luận có `authorType`, `replyToCommentId`, `aiRunId`, `sources`, `actions` |
-| `GET /api/tasks/:id/ai-runs` | Trả `{ runs }` gồm trạng thái, lỗi, nguồn, thao tác và `canRetry` |
+| `GET /api/tasks/:id/ai-runs` | Trả `{ runs }` gồm trạng thái, lỗi, nguồn, thao tác, `canRetry` và `canApply` |
 | `POST /api/tasks/:id/ai-runs/:runId/retry` | Người gọi thử lại lượt lỗi sau khi kiểm tra quyền và ngữ cảnh |
+| `POST /api/tasks/:id/ai-runs/:runId/actions/:actionId/apply` | Người gọi thực hiện một đề xuất của lượt `completed`/`failed`; trả `{ run, action, taskRevision }`. 409 khi đã xử lý hoặc lỗi thời, 403 khi không còn quyền sửa |
+| `POST /api/tasks/:id/ai-runs/:runId/actions/:actionId/dismiss` | Người gọi bỏ qua đề xuất; trả `{ run, action }` |
+
+Mỗi thao tác trong `actions` có `id`, `name`, `taskId`, `status` (`proposed`, `completed`, `failed`, `stale`, `dismissed`), `summary`, `args`, `proposedAt`, và khi đã xử lý thì `resolvedAt`, `error` hoặc `result`. Thao tác cũ (trước khi có bước xác nhận) không có `operation` nên không thực hiện lại được.
 
 `operationId` gồm 8–160 ký tự hợp lệ và phải được giữ nguyên khi gửi lại cùng yêu cầu sau lỗi mạng. Dùng lại khóa với nội dung khác bị từ chối. Nếu gửi cả khóa trong body và header, hai giá trị phải khớp.
 
-Migration PostgreSQL **015** thêm `workspace_ai_settings`, `ai_comment_runs` và metadata bình luận AI. Bình luận và lượt xử lý được lưu trong cùng transaction; việc gọi nhà cung cấp diễn ra sau commit. Worker lưu lời gọi công cụ, tiến độ và kết quả thao tác, dùng mutation receipts để khôi phục mà không thực hiện trùng thao tác đã lưu.
+Migration PostgreSQL **015** thêm `workspace_ai_settings`, `ai_comment_runs` và metadata bình luận AI. Bình luận và lượt xử lý được lưu trong cùng transaction; việc gọi nhà cung cấp diễn ra sau commit. Worker lưu lời gọi công cụ, tiến độ và đề xuất. Khi người gọi xác nhận, thao tác dùng `operationId` là ID đề xuất nên có mutation receipt và sự kiện nghiệp vụ mang `causation_id` của lượt xử lý.
 
 Trạng thái gồm `queued`, `reading`, `executing`, `completed`, `failed`, `cancelled`. Sửa/xóa bình luận gọi dừng phần chưa thực hiện, không hoàn tác những thay đổi đã lưu. Xung đột revision hoặc thay đổi quyền/ngữ cảnh yêu cầu bình luận mới; không tự ghi đè dữ liệu.
 
@@ -58,11 +63,11 @@ Trạng thái gồm `queued`, `reading`, `executing`, `completed`, `failed`, `ca
 1. Sao lưu theo [hướng dẫn PostgreSQL](POSTGRESQL.md), cài dependencies và chạy `npm run db:migrate` để áp dụng migration 015.
 2. Build và khởi động lại backend theo [hướng dẫn triển khai](DEPLOYMENT.md). Background worker phải được bật; `DISABLE_BACKGROUND_WORKER=true` sẽ ngừng xử lý hàng đợi.
 3. Phát hành web/mobile sau backend tương thích. Kiểm tra cấu hình AI và khả năng đọc ảnh/PDF của mô hình đã chọn.
-4. Thử một yêu cầu đọc và một thao tác trên công việc thử nghiệm bằng mô hình thực tế trước khi mở rộng sử dụng.
+4. Thử một yêu cầu đọc và một đề xuất (xác nhận rồi kiểm tra kết quả) trên công việc thử nghiệm bằng mô hình thực tế trước khi mở rộng sử dụng.
 
 Sau crash, lease hết hạn được nhận lại trong tối đa 15 phút cộng chu kỳ worker. Shutdown bình thường giải phóng lease ngay. Sao lưu/khôi phục giữ cấu hình, tiến độ, kết quả và liên kết run/reply; cơ chế tạm dừng gửi sau restore vẫn áp dụng.
 
-Theo dõi theo ID trong `ai_comment_runs`, `actions_json` và log `assistant run completed/failed`. Log chỉ chứa ID, thời gian, mã lỗi và số thao tác hoàn tất; không chứa khóa API hoặc nguyên văn tài liệu. Khi lỗi sau một phần thao tác, kiểm tra danh sách kết quả đã lưu trước khi gửi yêu cầu mới.
+Theo dõi theo ID trong `ai_comment_runs`, `actions_json` và log `assistant run completed/failed`. Log chỉ chứa ID, thời gian, mã lỗi và số đề xuất đang chờ; không chứa khóa API hoặc nguyên văn tài liệu.
 
 ## Kết quả kiểm thử ngày 18–19/10/2026
 

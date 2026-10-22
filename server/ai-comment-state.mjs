@@ -15,6 +15,7 @@ export function aiRunJson(row, auth) {
     requestedBy: row.requested_by, replyCommentId: row.reply_comment_id,
     canRetry: row.status === 'failed' && Boolean(row.comment_id) && row.attempts < 5
       && !jsonValue(row.state_json, {}).requiresNewRequest && auth?.userId === row.requested_by,
+    canApply: auth?.userId === row.requested_by && ['completed', 'failed'].includes(row.status),
     sources: jsonValue(row.sources_json, []), actions: jsonValue(row.actions_json, []),
     createdAt: row.created_at, updatedAt: row.updated_at };
 }

@@ -70,7 +70,7 @@ function AiEvidence({ sources = [], actions = [], token, onError }: { sources?: 
       <Text style={s.muted}>{source.title || source.url || "Ngữ cảnh công việc"} · {({ read: "Đã đọc", partial: "Đọc một phần", failed: "Chưa đọc được", unread: "Chưa đọc", unsupported: "Chưa hỗ trợ", summarized: "Đã đọc và tóm tắt" } as Record<string, string>)[source.status] || source.status}{(source.detail || source.note || source.error) ? ` · ${source.detail || source.note || source.error}` : ""}</Text>
       {(source.kind === "task" && source.taskId || (filePath(source) ? !!token : /^https?:\/\//i.test(source.url || ""))) && <Button label={`Mở nguồn ${source.title || source.url}`} secondary onPress={() => void openSource(source)} />}
     </View>)}</View>}
-    {actions.length > 0 && <View style={{ gap: 5 }}><Text style={s.label}>Kết quả thao tác</Text>{actions.map((action, index) => <Text key={action.id || index} style={s.muted}>{action.summary || action.name}{action.status ? ` · ${{ completed: "Hoàn tất", failed: "Chưa thực hiện" }[action.status] || action.status}` : ""}{action.error ? ` · ${action.error}` : ""}</Text>)}</View>}
+    {actions.length > 0 && <View style={{ gap: 5 }}><Text style={s.label}>Kết quả thao tác</Text>{actions.map((action, index) => <Text key={action.id || index} style={s.muted}>{action.summary || action.name}{action.status ? ` · ${({ proposed: "Chờ xác nhận trên web", completed: "Hoàn tất", failed: "Chưa thực hiện", stale: "Đã lỗi thời", dismissed: "Đã bỏ qua" } as Record<string, string>)[action.status] || action.status}` : ""}{action.error ? ` · ${action.error}` : ""}</Text>)}</View>}
   </>;
 }
 export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
@@ -673,7 +673,7 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
               maxLength={5000}
             />
             {suggestedAssistant && <Button label={`@${suggestedAssistant.handle} · ${suggestedAssistant.name} · Trợ lý AI`} secondary onPress={pickAssistant} />}
-            {assistant?.enabled && <Text style={s.muted}>Gọi @{assistant.handle} để đọc ngữ cảnh và thực hiện yêu cầu trong quyền của bạn.</Text>}
+            {assistant?.enabled && <Text style={s.muted}>Gọi @{assistant.handle} để đọc ngữ cảnh và đề xuất thay đổi; xác nhận đề xuất trên web để dữ liệu được cập nhật.</Text>}
             {saveDraft&&<Row><Button label="Lưu nháp bình luận" secondary onPress={()=>void saveDraft(`comment:${id}`,{body:comment,mentionIds}).then(()=>setLocalMessage('Đã lưu nháp mã hóa; bình luận chưa gửi.')).catch(e=>setError(errorMessage(e)))}/><Button label="Khôi phục bình luận" secondary onPress={()=>void readDraft(`comment:${id}`).then(d=>{if(d){setComment(String(d.body||''));setMentionIds((d.mentionIds||[]) as string[]);}}).catch(e=>setError(errorMessage(e)))}/></Row>}
             {!online&&<Text>Bình luận ngoại tuyến chỉ lưu nháp, không tự gửi khi có mạng.</Text>}
             <Select

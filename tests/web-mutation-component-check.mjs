@@ -205,6 +205,31 @@ test('web AI replies render markdown, source limits and original-comment links',
  assert.ok(document.querySelector('.td-ai-sources a').href.endsWith('/tasks/other-task/attachments/file-1/download'));
 });
 
+test('web AI proposals wait for the caller to confirm and only the caller sees the buttons',async t=>{
+ const reads=detailApi(async()=>({})),posts=[];
+ const proposal={id:'run-1:0:0',name:'update_task',status:'proposed',summary:'Cập nhật công việc',args:{priority:'high',assigneeId:'u'}};
+ let run={id:'run-1',commentId:'original',status:'completed',canApply:true,actions:[proposal],sources:[]};
+ const api=async(path,options)=>{
+  if(options&&path.includes('/actions/')){posts.push(path);run={...run,actions:[{...proposal,status:'completed',summary:'Đã cập nhật công việc'}]};return {run,action:run.actions[0],taskRevision:'r2'};}
+  if(path.endsWith('/ai-runs'))return {runs:[run]};
+  if(path.endsWith('/collaboration'))return {members:[],comments:[]};
+  const value=await reads(path,options);
+  return path.endsWith('/detail')?{...value,comments:[{id:'ai-reply',aiRunId:'run-1',body:'Có 1 đề xuất.',authorName:'Vyvy',authorType:'assistant',createdAt:'2026-10-18T01:00:00Z',attachments:[],sources:[],actions:[proposal]}]}:value;
+ };
+ const ui=await mount(t,TaskDetail,{api,taskId:task.id,me,members:[{id:'u',name:'Test'}],onBack:()=>{},onChanged:async()=>{}});
+ assert.equal(document.querySelector('.td-ai-chip').textContent,'Chờ xác nhận');
+ assert.ok(ui.text().includes('Ưu tiên: Cao · Phụ trách: Test'));
+ await ui.click('Thực hiện');
+ assert.deepEqual(posts,['/tasks/task-private/ai-runs/run-1/actions/run-1%3A0%3A0/apply']);
+ assert.equal(document.querySelector('.td-ai-chip').textContent,'Hoàn tất');
+ assert.ok(![...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='Thực hiện'));
+ run={...run,canApply:false,actions:[proposal]};
+ const other=await mount(t,TaskDetail,{api,taskId:task.id,me,onBack:()=>{}});
+ assert.equal(document.querySelector('.td-ai-chip').textContent,'Chờ xác nhận');
+ assert.ok(![...document.querySelectorAll('button')].some(b=>['Thực hiện','Bỏ qua'].includes(b.textContent.trim())));
+ assert.ok(other);
+});
+
 test('web AI sources and markdown open known tasks and preserve independent deletion permission',async t=>{
  const reads=detailApi(async()=>({})),opened=[];
  const api=async(path,options)=>{
