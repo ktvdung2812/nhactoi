@@ -210,7 +210,7 @@ test("suspension blocks tenant writes, invitation acceptance, and reminders whil
     body: { email: "invitee@example.test", role: "member" },
   });
   assert.equal(invitation.response.status, 201);
-  const token = new URL(invitation.json.inviteUrl).searchParams.get("invite");
+  const token = new URLSearchParams(new URL(invitation.json.inviteUrl).hash.slice(1)).get("invite");
 
   const suspended = await request(
     server.base,

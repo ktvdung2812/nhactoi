@@ -214,7 +214,7 @@ test("members see only their own visible task trash, never customer or finance t
     body: { email: "trash-member@example.test", role: "member" },
   });
   assert.equal(invite.response.status, 201);
-  const token = new URL(invite.json.inviteUrl).searchParams.get("invite");
+  const token = new URLSearchParams(new URL(invite.json.inviteUrl).hash.slice(1)).get("invite");
   const member = await request(server.base, "/api/invitations/accept", {
     method: "POST",
     body: { token, name: "Thành viên", password: "password123" },
@@ -282,7 +282,7 @@ test("trash blocks restoring open tasks with a secondary assignee who left the t
   const member = await request(server.base, "/api/invitations/accept", {
     method: "POST",
     body: {
-      token: new URL(invite.json.inviteUrl).searchParams.get("invite"),
+      token: new URLSearchParams(new URL(invite.json.inviteUrl).hash.slice(1)).get("invite"),
       name: "Thành viên phụ",
       password: "password123",
     },
@@ -461,7 +461,7 @@ test("trash keeps tenants and batches isolated, checks archived or removed teams
   const member = await request(server.base, "/api/invitations/accept", {
     method: "POST",
     body: {
-      token: new URL(invite.json.inviteUrl).searchParams.get("invite"),
+      token: new URLSearchParams(new URL(invite.json.inviteUrl).hash.slice(1)).get("invite"),
       name: "Thành viên đội",
       password: "password123",
     },

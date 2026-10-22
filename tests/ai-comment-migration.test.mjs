@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDatabase } from './database-helpers.mjs';
@@ -92,10 +93,11 @@ test('assistant settings, durable progress and cyclic comment replies survive sn
   assert.throws(() => importSnapshot(target, corrupted, { replace: true }), /foreign key/i);
   assert.deepEqual(exportSnapshot(target), original, 'invalid AI references roll back the complete restore');
   assert.throws(() => target.prepare(`INSERT INTO task_comments(id,task_id,body,created_at,author_type,ai_run_id) VALUES ('duplicate-reply',?,'Duplicate',?,'assistant','run')`).run(task.id, at), /unique/i);
-  const backup = await createBackup({ db, dbPath: join(directory, 'storage') });
+  const settingsKey = randomBytes(32);
+  const backup = await createBackup({ db, dbPath: join(directory, 'storage'), settingsKey });
   db.prepare("UPDATE workspace_ai_settings SET name='Changed',enabled=1").run();
   db.prepare("UPDATE ai_comment_runs SET state_json='{}',actions_json='[]',status='failed'").run();
-  await restoreBackup({ db, dataDir: directory, backupId: backup.id });
+  await restoreBackup({ db, dataDir: directory, backupId: backup.id, settingsKey });
   const restored = exportSnapshot(db);
   for (const table of ['workspace_ai_settings', 'ai_comment_runs', 'task_comments']) assert.deepEqual(restored.tables[table], original.tables[table], table);
   assert.equal(outboundSendersPaused(db), true, 'restoring progress cannot silently restart external work');

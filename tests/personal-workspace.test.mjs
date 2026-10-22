@@ -11,7 +11,7 @@ const personal = (s, email) => register(s, email, { accountType: 'personal' });
 async function invitedMember(s, owner, email) {
   const invite = await call(s, '/invitations', { method: 'POST', cookie: owner.cookie, body: { email } });
   assert.equal(invite.status, 201, JSON.stringify(invite.body));
-  const token = new URL(invite.body.inviteUrl).searchParams.get('invite');
+  const token = new URLSearchParams(new URL(invite.body.inviteUrl).hash.slice(1)).get('invite');
   const accepted = await call(s, '/invitations/accept', { method: 'POST', body: { token, name: 'Invited', password: 'Password123!' } });
   assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
   return accepted;
@@ -100,12 +100,22 @@ test('invited members and team owners can create exactly one personal workspace 
   assert.equal(ownerPersonal.status, 201, JSON.stringify(ownerPersonal.body));
 });
 
+test('guests cannot create a personal workspace', async t => {
+  const s = await boot(t);
+  const owner = await user(s, 'guest-host@example.test');
+  const accepted = await invitedMember(s, owner, 'guest-personal@example.test');
+  s.db.prepare("UPDATE workspace_members SET member_type='guest' WHERE user_id=?").run(accepted.body.user.id);
+  const denied = await call(s, '/workspaces/personal', { method: 'POST', cookie: accepted.cookie });
+  assert.equal(denied.status, 403, JSON.stringify(denied.body));
+  assert.equal(s.db.prepare('SELECT count(*) n FROM workspaces WHERE personal_owner_id=?').get(accepted.body.user.id).n, 0);
+});
+
 test('invitations created before a workspace became personal cannot be accepted', async t => {
   const s = await boot(t);
   const solo = await personal(s, 'guarded@example.test');
   const owner = await user(s, 'inviter@example.test');
   const invite = await call(s, '/invitations', { method: 'POST', cookie: owner.cookie, body: { email: 'target@example.test' } });
-  const token = new URL(invite.body.inviteUrl).searchParams.get('invite');
+  const token = new URLSearchParams(new URL(invite.body.inviteUrl).hash.slice(1)).get('invite');
   // Simulate a corrupted row pointing at a personal workspace (bypasses the insert trigger).
   s.db.exec('ALTER TABLE invitations DISABLE TRIGGER invitations_personal_none');
   s.db.prepare('UPDATE invitations SET workspace_id=? WHERE workspace_id=?').run(solo.body.workspace.id, owner.workspace.id);

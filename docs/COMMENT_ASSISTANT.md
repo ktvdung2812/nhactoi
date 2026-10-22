@@ -26,7 +26,7 @@ Bình luận được lưu ngay. Worker tiếp tục khi người gọi đóng m
 | DOCX | `mammoth`, trích xuất văn bản, không truy cập tệp ngoài |
 | XLSX | `exceljs`, đọc dữ liệu và kết quả công thức đã lưu, không thực thi công thức/macro |
 | CSV, TXT, Markdown | Đọc như dữ liệu văn bản |
-| Website công khai | Kiểm tra IP công khai, ghim DNS, kiểm tra lại từng redirect, chuyển HTML thành văn bản bằng `html-to-text` |
+| Website công khai (chỉ HTTPS) | Kiểm tra IP công khai, ghim DNS, kiểm tra lại từng redirect, chuyển HTML thành văn bản bằng `html-to-text` |
 
 Tệp dùng kho nội bộ/S3/Drive hiện có, kiểm tra quyền trước khi chuyển nội dung tới AI. Website không nhận cookie hoặc khóa ứng dụng; chỉ tải URL được dẫn, không thu thập toàn website. Trang cần đăng nhập/JavaScript hoặc nguồn không trích xuất được nội dung được báo chưa đọc được. Khả năng ảnh/PDF chưa xác nhận được coi là chưa hỗ trợ.
 

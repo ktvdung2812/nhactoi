@@ -282,7 +282,7 @@ test("task detail applies team visibility, archive read-only, and tenant ownersh
     cookie: owner.cookie,
     body: { email: member.json.user.email, role: "member" },
   });
-  const token = new URL(invite.json.inviteUrl).searchParams.get("invite");
+  const token = new URLSearchParams(new URL(invite.json.inviteUrl).hash.slice(1)).get("invite");
   const accepted = await request(server.base, "/api/invitations/accept", {
     method: "POST",
     body: { token },

@@ -49,11 +49,11 @@ function zip(files) {
 test("AI source URLs deduplicate fragments; public resolution blocks private/mixed DNS, credentials and unexpected ports", async () => {
   assert.deepEqual(sourceUrls(["[tài liệu](https://example.com/a#part). https://example.com/a", "http://example.com/b!"]), ["https://example.com/a", "http://example.com/b"]);
   assert.deepEqual(sourceUrls(["[wiki](https://example.com/Article_(Topic))"]), ["https://example.com/Article_(Topic)"]);
-  for (const url of ["http://127.0.0.1", "https://[::1]", "https://user:password@example.com", "https://example.com:444", "https://internal.local", "file:///etc/passwd"])
+  for (const url of ["http://127.0.0.1", "http://example.com/page", "https://[::1]", "https://user:password@example.com", "https://example.com:444", "https://internal.local", "file:///etc/passwd"])
     await assert.rejects(resolveAiSourceUrl(url, publicDns), undefined, url);
   await assert.rejects(resolveAiSourceUrl("https://example.com", async () => [{ address: "8.8.8.8", family: 4 }, { address: "10.0.0.1", family: 4 }]));
-  const resolved = await resolveAiSourceUrl("http://example.com/page#fragment", publicDns);
-  assert.equal(resolved.url.href, "http://example.com/page");
+  const resolved = await resolveAiSourceUrl("https://example.com/page#fragment", publicDns);
+  assert.equal(resolved.url.href, "https://example.com/page");
 });
 
 test("AI URL reader pins validated DNS, sends no credentials, revalidates redirects and bounds response bytes", async () => {
@@ -72,6 +72,11 @@ test("AI URL reader pins validated DNS, sends no credentials, revalidates redire
     { status: 302, headers: { location: "http://169.254.169.254/credentials" } },
   ], denied) }));
   assert.equal(denied.length, 1);
+  const downgraded = [];
+  await assert.rejects(fetchPublicSource("https://example.com/a", { lookupImpl: publicDns, requestImpl: requestStub([
+    { status: 301, headers: { location: "http://example.com/a" } }, { body: "tampered" },
+  ], downgraded) }), /HTTPS/);
+  assert.equal(downgraded.length, 1, "a redirect to plain HTTP is not followed");
   await assert.rejects(fetchPublicSource("https://example.com/a", { lookupImpl: publicDns, maxBytes: 4, requestImpl: requestStub([{ body: "long body" }], []) }));
 });
 

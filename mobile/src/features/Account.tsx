@@ -61,7 +61,7 @@ export function Account() {
         <Field label="Liên kết mời" value={invitation} onChangeText={setInvitation} autoCapitalize="none"/>
         <Button label="Chấp nhận lời mời" disabled={!online||busy||!invitation.trim()} onPress={()=>void (async()=>{
           setBusy(true);setError('');
-          try { let token=invitation.trim();if(token.includes('://'))token=new URL(token).searchParams.get('invite')||'';
+          try { let token=invitation.trim();if(token.includes('://')){const link=new URL(token);token=new URLSearchParams(link.hash.slice(1)).get('invite')||link.searchParams.get('invite')||'';}
             if(!token)throw new Error('Liên kết mời không hợp lệ.');
             const result=await api<{workspace:{id:string}}>('/invitations/accept',{method:'POST',body:JSON.stringify({token})});
             await switchWorkspace(result.workspace.id);setInvitation('');

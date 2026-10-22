@@ -94,7 +94,7 @@ test('independent API processes reserve the last seat once and serialize accept,
   ]);
   assert.deepEqual(invitations.map(r => r.status).sort(), [201, 409]);
   assert.equal(workspaceSeatCount(s.db, owner.workspace.id, clock().toISOString()), 3);
-  const token = new URL(invitations.find(r => r.status === 201).body.inviteUrl).searchParams.get('invite');
+  const token = new URLSearchParams(new URL(invitations.find(r => r.status === 201).body.inviteUrl).hash.slice(1)).get('invite');
   const pending = s.db.prepare('SELECT id,email FROM invitations WHERE workspace_id=?').get(owner.workspace.id);
   const race = await overlap(() => [
     request(first, '/invitations/accept', {}, 'POST', { token, name: 'Invited member', password: 'Password123!' }),

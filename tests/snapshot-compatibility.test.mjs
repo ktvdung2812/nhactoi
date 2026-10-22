@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { openDatabase } from './database-helpers.mjs';
 import { migrateDatabase } from '../server/db.mjs';
 import { V2_TABLE_COLUMNS } from '../server/database-tables.mjs';
@@ -114,14 +114,17 @@ test('old schema backup manifests retain checksum validation and restore through
     db.prepare(`INSERT INTO task_attachments(id,task_id,title,url,created_at,kind,original_name,mime_type,size_bytes,storage_root,storage_key)
       VALUES ('old-file',?,'Tệp cũ','/old-file','2026-09-01','file','cũ.txt','text/plain',?,?,'upload.bin')`).run(task.id, file.length, directory);
     const storagePath = join(directory, 'storage');
-    const backup = await createBackup({ db, dbPath: storagePath });
+    const backup = await createBackup({ db, dbPath: storagePath, settingsKey: randomBytes(32) });
     const dir = join(backupRoot(storagePath), backup.id);
     const databasePath = join(dir, 'database.json');
-    const old = versionOne(JSON.parse(readFileSync(databasePath, 'utf8')));
+    const old = versionOne(exportSnapshot(db));
     writeFileSync(databasePath, JSON.stringify(old));
     assert.throws(() => inspectBackup(storagePath, backup.id), /toàn vẹn/, 'schema upgrades do not bypass the file checksum');
     const manifestPath = join(dir, 'manifest.json');
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    // Simulate a plaintext version 2 backup written before encryption.
+    manifest.version = 2;
+    delete manifest.databaseEncrypted;
     manifest.databaseSha256 = createHash('sha256').update(readFileSync(databasePath)).digest('hex');
     writeFileSync(manifestPath, JSON.stringify(manifest));
     assert.equal(inspectBackup(storagePath, backup.id).manifest.id, backup.id);

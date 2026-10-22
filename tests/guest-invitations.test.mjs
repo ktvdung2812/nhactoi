@@ -16,7 +16,7 @@ test('guest invitation reserves one seat and acceptance grants only the bound pr
  const {s,owner,api,projectId}=await fixture(t);
  const r=await api('/invitations','POST',{email:'new-guest@example.test',memberType:'guest',projectId,projectRole:'commenter'});assert.equal(r.status,201,JSON.stringify(r.body));
  assert.equal(workspaceSeatCount(s.db,owner.workspace.id,clock().toISOString()),2);
- const token=new URL(r.body.inviteUrl).searchParams.get('invite');
+ const token=new URLSearchParams(new URL(r.body.inviteUrl).hash.slice(1)).get('invite');
  const accepted=await api('/invitations/accept','POST',{token,name:'Guest',password:'Password123!'},undefined);assert.equal(accepted.status,200,JSON.stringify(accepted.body));
  assert.equal(accepted.body.user.memberType,'guest');
  const mobile=await api('/mobile/auth/login','POST',{email:'new-guest@example.test',password:'Password123!'});assert.equal(mobile.status,200);assert.equal(mobile.body.user.memberType,'guest');assert.equal(workspaceSeatCount(s.db,owner.workspace.id,clock().toISOString()),2);
@@ -31,7 +31,7 @@ test('guest invitation reserves one seat and acceptance grants only the bound pr
 test('guest acceptance revalidates plan, project and inviter without creating account or consuming twice',async t=>{
  const {s,owner,api,projectId}=await fixture(t);
  const r=await api('/invitations','POST',{email:'blocked-guest@example.test',memberType:'guest',projectId,projectRole:'editor'});assert.equal(r.status,201);
- const token=new URL(r.body.inviteUrl).searchParams.get('invite');
+ const token=new URLSearchParams(new URL(r.body.inviteUrl).hash.slice(1)).get('invite');
  s.db.prepare("UPDATE subscriptions SET plan='team' WHERE workspace_id=?").run(owner.workspace.id);
  assert.equal((await api('/invitations/accept','POST',{token,name:'Blocked',password:'Password123!'})).status,403);
  assert.equal(s.db.prepare("SELECT count(*) n FROM users WHERE email='blocked-guest@example.test'").get().n,0);
@@ -107,7 +107,7 @@ test('TC-W1-T05-D expiry during accept/invite contention releases one reserved s
  const plans=(await api('/billing')).body.plans.map(plan=>({...plan,memberLimit:plan.id==='business'?2:plan.memberLimit}));
  s.db.prepare("INSERT INTO app_settings(key,value,encrypted,updated_at) VALUES('plans',?,0,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify(plans),clock().toISOString());
  const expired=await api('/invitations','POST',{email:'expires-at-barrier@example.test',memberType:'guest',projectId,projectRole:'viewer'});assert.equal(expired.status,201);
- const token=new URL(expired.body.inviteUrl).searchParams.get('invite');
+ const token=new URLSearchParams(new URL(expired.body.inviteUrl).hash.slice(1)).get('invite');
  const oldId=s.db.prepare('SELECT id FROM invitations WHERE workspace_id=?').get(owner.workspace.id).id;
  const clockFile=join(s.dir,'seat-clock.txt');writeFileSync(clockFile,clock().toISOString());
  const overlap=await seatRace(t,s,owner,{clockFile}),before=businessSideEffects(s.db);

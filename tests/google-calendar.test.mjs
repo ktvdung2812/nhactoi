@@ -292,7 +292,7 @@ test('TC-X11 schema13 restore preserves encrypted Calendar state, webhook attemp
  const before=snapshot(s.db),secrets=s.db.prepare('SELECT key,value FROM app_settings WHERE encrypted=1 ORDER BY key').all();
  assert.ok(secrets.length>=3);assert.ok(!JSON.stringify(secrets).includes('FAKE_ACCESS_CANARY'));
  assert.deepEqual(s.db.prepare('SELECT state FROM webhook_deliveries ORDER BY state').all().map(r=>r.state),['delivered','pending','retry']);
- const backup=await createBackup({db:s.db,dbPath:join(s.dir,'storage'),clock:()=>new Date('2026-10-16T03:00:00Z')}),target=openDatabase();
+ const backup=await createBackup({db:s.db,dbPath:join(s.dir,'storage'),clock:()=>new Date('2026-10-16T03:00:00Z'),settingsKey:s.app.locals.config._settingsKey}),target=openDatabase();
  await restoreBackup({db:target,dataDir:s.dir,backupId:backup.id});assert.equal(outboundSendersPaused(target),true);assert.deepEqual(snapshot(target),before);
  assert.deepEqual(target.prepare('SELECT key,value FROM app_settings WHERE encrypted=1 ORDER BY key').all(),secrets);
  const restored=await boot(t,{...options,db:target,dbPath:join(s.dir,'storage'),clock:()=>new Date('2026-10-16T03:00:00Z'),googleCalendarTransport:provider});

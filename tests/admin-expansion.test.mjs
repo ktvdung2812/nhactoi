@@ -350,7 +350,7 @@ test("admin profile edits cannot take over another SaaS admin and revoke changed
 });
 
 test("admin settings persist encrypted secrets, preserve quotes, and guard seats", async (t) => {
-  const settingsKey = "admin-expansion-test-key";
+  const settingsKey = "ad".repeat(32);
   const server = await boot({
     env: {
       NHACTOI_SETTINGS_KEY: settingsKey,

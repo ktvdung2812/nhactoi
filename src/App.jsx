@@ -139,6 +139,11 @@ const navSections = [
     items: ["templates", "automations", "public-integrations", "google-calendar", "zalo-oa", "transfer", "tickets", "trash"],
   },
 ];
+// Invite links carry the token in the fragment; emails sent before that
+// change used ?invite= and stay valid for their 7-day lifetime.
+function inviteTokenFromLocation() {
+  return new URLSearchParams(location.hash.slice(1)).get("invite") || new URLSearchParams(location.search).get("invite");
+}
 function migrateLegacyHashRoute() {
   if (!["/", "/index.html"].includes(location.pathname)) return null;
   return legacyHashTarget(location.hash, location.search);
@@ -1132,7 +1137,7 @@ export default function App() {
         onRetry={loadSession}
       />
     );
-  const inviteToken = new URLSearchParams(location.search).get("invite");
+  const inviteToken = inviteTokenFromLocation();
   if (!me) return <Auth onLogin={refresh} onReset={() => setMe(null)} />;
   if (inviteToken)
     return (
@@ -2816,7 +2821,7 @@ function authModeForPath(pathname, token) {
 function Auth({ onLogin, onReset }) {
   const router = useRouter();
   const pathname = usePathname();
-  const token = new URLSearchParams(location.search).get("invite");
+  const token = inviteTokenFromLocation();
   const pushId = new URLSearchParams(location.search).get("notification");
   const afterLoginPath = pushId && /^[a-zA-Z0-9_-]{1,200}$/.test(pushId)
     ? `/dashboard?notification=${encodeURIComponent(pushId)}` : '/dashboard';

@@ -85,9 +85,13 @@ khi chạy ứng dụng hoặc `db:migrate`, vì bootstrap sẽ tạo dữ liệ
 
 ## Sao lưu và khôi phục
 
-Sao lưu trong trang quản trị dùng manifest v2, `database.json` và bản sao bytes
-của mọi tệp đính kèm. Database được đọc từ một snapshot `REPEATABLE READ`.
-Khôi phục cần dừng ứng dụng, đặt đúng `DATABASE_URL`/`NHACTOI_DATA_DIR`, rồi:
+Sao lưu trong trang quản trị dùng manifest v3, `database.json` được mã hóa
+AES-256-GCM bằng khóa mã hóa gốc (`NHACTOI_SETTINGS_KEY` hoặc tệp
+`.nhactoi-settings.key`) và bản sao bytes của mọi tệp đính kèm. Database được
+đọc từ một snapshot `REPEATABLE READ`. Bản sao manifest v2 cũ (không mã hóa)
+vẫn khôi phục được. Khôi phục cần dừng ứng dụng, đặt đúng
+`DATABASE_URL`/`NHACTOI_DATA_DIR` và cung cấp khóa gốc (biến môi trường hoặc
+tệp khóa trong `NHACTOI_DATA_DIR`; công cụ không bao giờ tạo khóa mới), rồi:
 
 ```sh
 npm run db:restore -- backup-ID --offline-confirm-restore

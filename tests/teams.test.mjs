@@ -65,7 +65,7 @@ async function joinWorkspace(owner, member, email, role = "member") {
     body: { email, role },
   });
   assert.equal(invitation.status, 201, JSON.stringify(invitation.body));
-  const token = new URL(invitation.body.inviteUrl).searchParams.get("invite");
+  const token = new URLSearchParams(new URL(invitation.body.inviteUrl).hash.slice(1)).get("invite");
   const joined = await member.request("/api/invitations/accept", {
     method: "POST",
     body: { token },

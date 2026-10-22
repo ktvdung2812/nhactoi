@@ -1,5 +1,5 @@
 // Offline-only recovery. Never invoke from an HTTP request or running server.
-import { copyFileSync, mkdirSync, chmodSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, chmodSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
@@ -7,11 +7,13 @@ import { inspectBackup } from '../server/backups.mjs';
 import { openDatabase } from '../server/db.mjs';
 import { importSnapshot, exportSnapshot } from '../server/database-snapshot.mjs';
 import { pauseRestoredSenders } from '../server/restore-safety.mjs';
+import { existingSettingsKey } from '../server/index.mjs';
 
-export async function restoreBackup({ db, dataDir, backupId }) {
+// Encrypted (version 3) backups need the original settings key: from the
+// environment or the key file in dataDir. A missing key is never generated.
+export async function restoreBackup({ db, dataDir, backupId, settingsKey = existingSettingsKey({ dataDir }) }) {
   const storagePath = join(resolve(dataDir), 'storage');
-  const { dir, manifest } = inspectBackup(storagePath, backupId);
-  const snapshot = JSON.parse(readFileSync(join(dir, 'database.json'), 'utf8'));
+  const { dir, manifest, snapshot } = inspectBackup(storagePath, backupId, settingsKey);
   // Preserve the previous database and leave all of its file paths untouched.
   // Recovery must work even when the current upload bytes/remote store are lost.
   const rollbackDir = join(resolve(dataDir), 'restore-backups');

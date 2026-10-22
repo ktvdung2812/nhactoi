@@ -18,6 +18,7 @@ import { registerReminderRoutes, processWorkflowReminders, legacyReminderAllowed
 import { registerAppearanceRoutes } from "./appearance.mjs";
 import { DEMO_EMAILS, seedDemo } from "./seed.mjs";
 import { registerEmailChangeRoutes } from "./email-change.mjs";
+import { decryptSetting, encryptSetting } from "./settings-crypto.mjs";
 import { registerPersonalTaskRoutes } from "./personal-tasks.mjs";
 import { registerAiAssistantRoutes } from "./ai-assistant.mjs";
 import {registerTaskExtrasRoutes,extraAssigneeIds,reconcileTaskAssignees,copyRecurringExtras,taskScopeLinkConflict} from "./task-extras.mjs";
@@ -46,8 +47,6 @@ import {
 import express from "express";
 import nodemailer from "nodemailer";
 import {
-  createCipheriv,
-  createDecipheriv,
   createHmac,
   createHash,
   randomBytes,
@@ -68,7 +67,7 @@ import {
   hashPassword,
   hashToken,
   safeEqualText,
-  verifyPassword,
+  verifyPasswordOrDummy,
 } from "./auth.mjs";
 import { registerTicketRoutes } from "./tickets.mjs";
 import {
@@ -269,15 +268,16 @@ function settingKeyFromEnv(env) {
   return "";
 }
 
+// Only accept real 32-byte keys; a hashed passphrase would be guessable.
 function deriveSettingsKey(value) {
   const text = String(value || "").trim();
   if (!text) return null;
   if (/^[a-f0-9]{64}$/i.test(text)) return Buffer.from(text, "hex");
-  try {
-    const decoded = Buffer.from(text, "base64");
+  if (/^[A-Za-z0-9+/_-]{43}={0,1}$/.test(text)) {
+    const decoded = Buffer.from(text.replaceAll("-", "+").replaceAll("_", "/"), "base64");
     if (decoded.length === SETTINGS_KEY_BYTES) return decoded;
-  } catch {}
-  return createHash("sha256").update(text, "utf8").digest();
+  }
+  throw new Error("NHACTOI_SETTINGS_KEY phải là 32 byte ngẫu nhiên (hex 64 ký tự hoặc base64). Tạo bằng: openssl rand -hex 32");
 }
 
 function settingsKeyFileFromEnv(env, dbPath) {
@@ -312,35 +312,15 @@ function loadSettingsKey({ env, dbPath, explicitKey, db } = {}) {
   return value;
 }
 
-function encryptSetting(value, key) {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", key, iv);
-  const encrypted = Buffer.concat([
-    cipher.update(String(value), "utf8"),
-    cipher.final(),
-  ]);
-  return [
-    "v1",
-    iv.toString("base64url"),
-    cipher.getAuthTag().toString("base64url"),
-    encrypted.toString("base64url"),
-  ].join(":");
-}
-
-function decryptSetting(value, key) {
-  const [version, ivText, tagText, encryptedText] = String(value).split(":");
-  if (version !== "v1" || !ivText || !tagText || !encryptedText)
-    throw new Error("settings encryption value is invalid");
-  const decipher = createDecipheriv(
-    "aes-256-gcm",
-    key,
-    Buffer.from(ivText, "base64url"),
-  );
-  decipher.setAuthTag(Buffer.from(tagText, "base64url"));
-  return Buffer.concat([
-    decipher.update(Buffer.from(encryptedText, "base64url")),
-    decipher.final(),
-  ]).toString("utf8");
+// Restoring a backup must use the original key and never create a new one.
+export function existingSettingsKey({ env = process.env, dataDir }) {
+  const envKey = deriveSettingsKey(settingKeyFromEnv(env));
+  if (envKey) return envKey;
+  const keyPath = settingsKeyFileFromEnv(env, join(resolve(dataDir), "storage"));
+  if (!keyPath || !existsSync(/* turbopackIgnore: true */ keyPath)) return null;
+  const value = readFileSync(/* turbopackIgnore: true */ keyPath);
+  if (value.length !== SETTINGS_KEY_BYTES) throw new Error("settings encryption key file is invalid");
+  return value;
 }
 
 function loadStoredSettings(db, key) {
@@ -2843,7 +2823,7 @@ function createApp(options = {}) {
     canAccessTeamTask, writeAdminAudit,
   });
 
-  registerBackupRoutes(app,{db,dbPath,clock,requirePlatformAdmin,withTransaction,writeAdminAudit,HttpError});
+  registerBackupRoutes(app,{db,dbPath,clock,settingsKey,requirePlatformAdmin,withTransaction,writeAdminAudit,HttpError});
   registerGoogleRoutes(app,{db,config,clock,requirePlatformAdmin,requireAuth,HttpError,withTransaction,writeStoredSetting,loadStoredSettings,settingsKey,writeAdminAudit,createSession,setSessionCookie});
   registerGoogleCalendar(app,{db,config,clock,requireAuth,requirePlatformAdmin,ensureWritable,HttpError,writeStoredSetting,loadStoredSettings,settingsKey,recordTaskActivity,writeAdminAudit,transport:options.googleCalendarTransport});
   registerZaloOa(app,{db,config,clock,requireAuth,ensureWritable,HttpError,writeStoredSetting,loadStoredSettings,settingsKey,transport:options.zaloOaTransport,liveSendEnabled:(options.env?.ZALO_OA_LIVE_SEND_ENABLED??process.env.ZALO_OA_LIVE_SEND_ENABLED)==='true',fetchImpl:options.zaloOaFetch});
@@ -3010,7 +2990,7 @@ function createApp(options = {}) {
         const user = db
           .prepare("SELECT * FROM users WHERE email = ?")
           .get(email);
-        if (!user || !verifyPassword(password, user.password_hash)) {
+        if (!verifyPasswordOrDummy(password, user?.password_hash)) {
           req.noteAuthFailure?.();
           return fail(res, 401, "email or password is incorrect");
         }
@@ -3987,6 +3967,8 @@ function createApp(options = {}) {
     try {
       if (db.dialect !== "postgres")
         throw new HttpError(400, "Không gian cá nhân cần PostgreSQL.");
+      if (req.auth.memberType === "guest")
+        throw new HttpError(403, "Khách không thể tạo không gian cá nhân");
       return enterWorkspace(req, res, () => {
         if (personalWorkspaceId(db, req.auth.userId))
           throw new HttpError(409, "Bạn đã có không gian cá nhân");
@@ -4675,7 +4657,8 @@ function createApp(options = {}) {
         return {
           // The SPA reads the query parameter while preserving the token in a
           // normal browser URL that can be pasted into a new session.
-          inviteUrl: `${config.publicAppUrl}/?invite=${encodeURIComponent(rawToken)}`,
+          // The fragment never reaches server logs, proxies or Referer headers.
+          inviteUrl: `${config.publicAppUrl}/#invite=${encodeURIComponent(rawToken)}`,
           expiresAt: expires,
         };
         });

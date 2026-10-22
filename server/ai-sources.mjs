@@ -2,7 +2,6 @@ import { constants as fsConstants } from "node:fs";
 import { open } from "node:fs/promises";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import http from "node:http";
 import https from "node:https";
 import { createHash } from "node:crypto";
 import { extname } from "node:path";
@@ -51,8 +50,9 @@ export function sourceUrls(texts = []) {
 export async function resolveAiSourceUrl(value, lookupImpl = lookup, signal) {
   const url = new URL(value);
   url.hash = "";
-  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.href.length > 2048 || url.port)
-    throw problem("Chỉ đọc URL HTTP/HTTPS công khai ở cổng mặc định, không kèm thông tin đăng nhập.");
+  // Plain HTTP content can be altered in transit before it reaches the model.
+  if (url.protocol !== "https:" || url.username || url.password || url.href.length > 2048 || url.port)
+    throw problem("Chỉ đọc URL HTTPS công khai ở cổng mặc định, không kèm thông tin đăng nhập.");
   const hostname = url.hostname.replace(/^\[|\]$/g, "");
   if (hostname === "localhost" || hostname.endsWith(".localhost") || hostname.endsWith(".local"))
     throw problem("Không đọc địa chỉ mạng nội bộ.");
@@ -71,7 +71,7 @@ export async function fetchPublicSource(value, { signal, lookupImpl, requestImpl
     const { url, records } = await resolveAiSourceUrl(destination, lookupImpl, boundedSignal);
     const selected = records[0];
     const result = await new Promise((resolve, reject) => {
-      const request = requestImpl || (url.protocol === "https:" ? https.request : http.request);
+      const request = requestImpl || https.request;
       const req = request(url, {
         method: "GET", agent: false, signal: boundedSignal,
         headers: { Accept: "text/html, text/plain, text/markdown, text/csv, application/pdf, image/*, application/vnd.openxmlformats-officedocument.wordprocessingml.document, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Accept-Encoding": "identity", "User-Agent": "NhacToi-Vyvy/1.0" },

@@ -14,14 +14,14 @@ Khi phát triển, thay đổi module backend cần khởi động lại Next đ
 
 ## Sao lưu và khôi phục
 
-Admin SaaS → Cấu hình → Sao lưu hệ thống cho phép tạo bản sao ngay và đặt lịch 6/12/24 giờ hoặc hằng tuần. Lịch chạy khi dịch vụ Node đang hoạt động. Bản sao manifest v2 gồm dữ liệu PostgreSQL dạng JSON từ transaction `REPEATABLE READ`, các tệp đính kèm trên máy chủ và kho ngoài và SHA-256 kiểm tra toàn vẹn. Bản sao đang chạy dùng thư mục `.pending`; nếu lỗi, dữ liệu tạm được dọn và không được liệt kê là bản sao hoàn chỉnh. Chưa tự xóa bản sao cũ; cần theo dõi dung lượng đĩa.
+Admin SaaS → Cấu hình → Sao lưu hệ thống cho phép tạo bản sao ngay và đặt lịch 6/12/24 giờ hoặc hằng tuần. Lịch chạy khi dịch vụ Node đang hoạt động. Bản sao manifest v3 gồm dữ liệu PostgreSQL dạng JSON từ transaction `REPEATABLE READ`, mã hóa bằng khóa mã hóa gốc, các tệp đính kèm trên máy chủ và kho ngoài và SHA-256 kiểm tra toàn vẹn. Bản sao đang chạy dùng thư mục `.pending`; nếu lỗi, dữ liệu tạm được dọn và không được liệt kê là bản sao hoàn chỉnh. Chưa tự xóa bản sao cũ; cần theo dõi dung lượng đĩa.
 
 Giữ riêng khóa mã hóa cấu hình của máy chủ. Tệp S3/Drive cũng được tải vào bản sao. Nếu kho không truy cập được, bản sao bị đánh dấu chưa hoàn tất. Khi khôi phục, mọi tệp được chép vào thư mục riêng mới trên máy chủ.
 
 Khôi phục được thực hiện ngoại tuyến để tránh ghi đè dữ liệu đang sử dụng:
 
 1. Dừng dịch vụ Nhắc tôi trong EnvKit, đảm bảo không còn tiến trình ứng dụng/worker ghi DB. Giữ PostgreSQL hoạt động.
-2. Đặt `DATABASE_URL`, `NHACTOI_DATA_DIR` đúng môi trường rồi chạy `npm run db:restore -- backup-ID --offline-confirm-restore`.
+2. Đặt `DATABASE_URL`, `NHACTOI_DATA_DIR` đúng môi trường, bảo đảm có khóa mã hóa gốc (`NHACTOI_SETTINGS_KEY` hoặc tệp `.nhactoi-settings.key` trong thư mục dữ liệu) rồi chạy `npm run db:restore -- backup-ID --offline-confirm-restore`. Thiếu hoặc sai khóa thì không đọc được bản sao.
 3. Công cụ xác minh DB/tệp, lưu snapshot database hiện tại vào `restore-backups/` và giữ nguyên các tệp cũ, chép tệp vào kho riêng mới rồi thay dữ liệu trong một transaction. Lỗi nhập sẽ rollback; thành công sẽ vô hiệu phiên cũ và lịch sao lưu.
 4. Khởi động lại trong EnvKit, đăng nhập và kiểm tra dữ liệu. Đặt lại lịch sao lưu phù hợp.
 

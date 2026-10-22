@@ -129,7 +129,10 @@ test("finance permissions and dashboard visibility", async (t) => {
     body: { email: "member@example.test", role: "member" },
   });
   assert.equal(invite.response.status, 201);
-  const token = new URL(invite.json.inviteUrl).searchParams.get("invite");
+  // The token travels in the fragment, never in the query string.
+  assert.match(invite.json.inviteUrl, /^https?:\/\/[^?#]+\/#invite=[^&?]+$/);
+  assert.equal(new URL(invite.json.inviteUrl).search, "");
+  const token = new URLSearchParams(new URL(invite.json.inviteUrl).hash.slice(1)).get("invite");
   const member = await request(server.base, "/api/invitations/accept", {
     method: "POST",
     body: { token, name: "Thành viên", password: "password123" },

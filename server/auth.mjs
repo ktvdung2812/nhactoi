@@ -57,6 +57,15 @@ export function verifyPassword(password, encoded) {
   }
 }
 
+let dummyPasswordHash;
+// Unknown emails still pay for one scrypt run, so login response time does
+// not reveal whether an account exists.
+export function verifyPasswordOrDummy(password, encoded) {
+  if (encoded) return verifyPassword(password, encoded);
+  verifyPassword(password, (dummyPasswordHash ||= hashPassword(createToken())));
+  return false;
+}
+
 export function safeEqualText(left, right) {
   const a = Buffer.from(String(left ?? ""));
   const b = Buffer.from(String(right ?? ""));

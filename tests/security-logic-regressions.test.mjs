@@ -84,3 +84,15 @@ test('trash restore validates unfinished checklist assignees and remains atomic'
   const historical = s.db.prepare('SELECT id FROM trash_items WHERE entity_id=?').get(task.id);
   await request('/trash/restore', 'POST', { ids: [historical.id] });
 });
+
+test('settings encryption keys must be 32 random bytes, never a passphrase', async () => {
+  const { createApp } = await import('./database-helpers.mjs');
+  const { randomBytes } = await import('node:crypto');
+  for (const key of ['short-passphrase', 'a'.repeat(63), 'zz'.repeat(32), randomBytes(16).toString('base64'), randomBytes(48).toString('base64')])
+    assert.throws(() => createApp({ env: { NODE_ENV: 'test', NHACTOI_SETTINGS_KEY: key } }), /32 byte ngẫu nhiên/, key);
+  for (const key of ['ab'.repeat(32), randomBytes(32).toString('base64'), randomBytes(32).toString('base64url')]) {
+    const app = createApp({ env: { NODE_ENV: 'test', NHACTOI_SETTINGS_KEY: key } });
+    assert.equal(app.locals.config._settingsKey.length, 32);
+    app.locals.close();
+  }
+});

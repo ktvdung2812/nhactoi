@@ -52,7 +52,7 @@ test('restore holds all delivery channels and remote cleanup across restart unti
     .run('remote-cleanup', 'remote:' + profile.body.id, 'original-object', now, now);
   const queues = db => Object.fromEntries(['notification_outbox', 'notification_outbox_deliveries', 'reminder_email_outbox', 'web_push_deliveries', 'task_file_cleanup'].map(table => [table, db.prepare(`SELECT * FROM ${table}`).all()]));
   const expected = queues(source.db);
-  const backup = await createBackup({ db: source.db, dbPath: source.dir + '/storage', clock });
+  const backup = await createBackup({ db: source.db, dbPath: source.dir + '/storage', clock, settingsKey: source.app.locals.config._settingsKey });
   const restored = openDatabase();
   t.after(() => restored.close());
   await restoreBackup({ db: restored, dataDir: source.dir, backupId: backup.id });
@@ -81,7 +81,7 @@ test('restore holds all delivery channels and remote cleanup across restart unti
   assert.throws(() => createApp({ db: restored, dataDir: missingKeyDir, clock, env }), /Thiếu khóa mã hóa gốc/);
   assert.equal(existsSync(join(missingKeyDir, '.nhactoi-settings.key')), false, 'a replacement key must never be generated over encrypted restored data');
   assert.equal(outboundSendersPaused(restored), true);
-  assert.throws(() => resumeRestoredSenders({ ...args, env: { ...env, NHACTOI_SETTINGS_KEY: 'wrong-key' } }), /khóa mã hóa gốc/);
+  assert.throws(() => resumeRestoredSenders({ ...args, env: { ...env, NHACTOI_SETTINGS_KEY: 'ee'.repeat(32) } }), /khóa mã hóa gốc/);
   assert.throws(() => resumeRestoredSenders({ ...args, backupId: 'wrong-backup' }), /không khớp/);
   assert.equal(outboundSendersPaused(restored), true);
   assert.deepEqual(queues(restored), expected);

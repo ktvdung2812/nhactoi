@@ -210,7 +210,7 @@ test("existing invitee signs in as self, switches workspace, and sees only its s
     role: "member",
   });
   assert.equal(invitation.status, 201);
-  const token = new URL(invitation.body.inviteUrl).searchParams.get("invite");
+  const token = new URLSearchParams(new URL(invitation.body.inviteUrl).hash.slice(1)).get("invite");
   assert.equal(
     (
       await anonymous("/api/invitations/accept", {

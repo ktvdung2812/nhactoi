@@ -7,7 +7,7 @@ import {
   createId,
   createToken,
   hashToken,
-  verifyPassword,
+  verifyPasswordOrDummy,
 } from "./auth.mjs";
 import { canAccessTeamTask } from "./teams.mjs";
 
@@ -685,7 +685,7 @@ export function registerMobileRoutes(app, {
           return res.status(401).json({ error: "email or password is incorrect" });
         }
         const user = db.prepare("SELECT * FROM users WHERE email=?").get(email);
-        if (!user || !verifyPassword(password, user.password_hash)) {
+        if (!verifyPasswordOrDummy(password, user?.password_hash)) {
           req.noteAuthFailure?.();
           return res.status(401).json({ error: "email or password is incorrect" });
         }

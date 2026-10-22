@@ -85,7 +85,7 @@ test('TC-X11 actual OA backup/restore retains encrypted credentials, delivery hi
   assert.equal(before.zalo_oa_callbacks.length, 2);
   assert.equal(sends.length, 3);
   assert.equal(validations.length, 3);
-  const backup = await createBackup({db: source.db, dbPath: join(source.dir, 'storage'), clock});
+  const backup = await createBackup({db: source.db, dbPath: join(source.dir, 'storage'), clock, settingsKey: source.app.locals.config._settingsKey});
   const target = openDatabase();
   await restoreBackup({db: target, dataDir: source.dir, backupId: backup.id});
   assert.equal(outboundSendersPaused(target), true);
@@ -128,7 +128,7 @@ test('TC-X11 actual OA backup/restore retains encrypted credentials, delivery hi
   t.after(() => rmSync(missingKeyDir, {recursive: true, force: true}));
   assert.throws(() => createApp({db: target, dataDir: missingKeyDir, clock, env: {NODE_ENV: 'test'}, zaloOaTransport: transport}), /Thiếu khóa mã hóa gốc/);
   assert.equal(existsSync(join(missingKeyDir, '.nhactoi-settings.key')), false);
-  assert.throws(() => createApp({db: target, dataDir: source.dir, clock, env: {NODE_ENV: 'test', NHACTOI_SETTINGS_KEY: 'wrong-restore-key'}, zaloOaTransport: transport}), /Không giải mã được cấu hình/);
+  assert.throws(() => createApp({db: target, dataDir: source.dir, clock, env: {NODE_ENV: 'test', NHACTOI_SETTINGS_KEY: 'ee'.repeat(32)}, zaloOaTransport: transport}), /Không giải mã được cấu hình/);
   assert.equal(outboundSendersPaused(target), true);
   assert.deepEqual(snapshot(target), before);
   assert.equal(sends.length, 3); assert.equal(validations.length, 3);

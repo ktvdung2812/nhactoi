@@ -26,6 +26,7 @@ async function attachmentBackup(t) {
     db: server.db,
     dbPath: join(server.dir, "test.sqlite"),
     clock: () => new Date("2026-09-22T00:00:00.000Z"),
+    settingsKey: server.app.locals.config._settingsKey,
   });
   return { server, backup, snapshot: join(server.dir, "snapshots", backup.id) };
 }
@@ -61,7 +62,7 @@ test("backup inspection rejects incomplete and inconsistent attachment manifests
     edit(manifest);
     writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
     assert.throws(
-      () => inspectBackup(join(root, "restored.sqlite"), backup.id),
+      () => inspectBackup(join(root, "restored.sqlite"), backup.id, server.app.locals.config._settingsKey),
       /bản sao|manifest|tệp|dung lượng|hash|metadata|đường dẫn|kho/u,
       label,
     );
@@ -101,7 +102,7 @@ test("team roster removal blocks incomplete primary and secondary assignees atom
       body: { email: member.user.email },
     });
     assert.equal(invitation.status, 201, JSON.stringify(invitation.body));
-    const token = new URL(invitation.body.inviteUrl).searchParams.get("invite");
+    const token = new URLSearchParams(new URL(invitation.body.inviteUrl).hash.slice(1)).get("invite");
     const accepted = await call(server, "/invitations/accept", {
       method: "POST",
       cookie: member.cookie,

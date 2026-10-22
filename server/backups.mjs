@@ -6,6 +6,7 @@ import {dirname,join,resolve,isAbsolute} from 'node:path';
 import { exportSnapshot, validateSnapshot, snapshotRows } from './database-snapshot.mjs';
 import {createHash,randomUUID} from 'node:crypto';
 import {safeStoragePath} from './task-files.mjs';
+import {decryptSetting,encryptSetting} from './settings-crypto.mjs';
 const sha=file=>createHash('sha256').update(readFileSync(file)).digest('hex');
 export const backupRoot=dbPath=>join(dirname(resolve(dbPath)),'snapshots');
 function ensureDir(path){mkdirSync(path,{recursive:true,mode:0o700});if(lstatSync(path).isSymbolicLink())throw new Error('Thư mục sao lưu không được là liên kết');chmodSync(path,0o700)}
@@ -42,32 +43,39 @@ function assertManifestStorageMetadata(entry,row){
   throw new Error('Siêu dữ liệu nơi lưu tệp không khớp cơ sở dữ liệu');
 }
 
-function snapshotFileRows(path){
- const snapshot=validateSnapshot(JSON.parse(readFileSync(path,'utf8')));
- return snapshotRows(snapshot,'task_attachments').filter(row=>row.kind==='file').sort((a,b)=>a.id.localeCompare(b.id));
+function fileRows(snapshot){
+ return snapshotRows(validateSnapshot(snapshot),'task_attachments').filter(row=>row.kind==='file').sort((a,b)=>a.id.localeCompare(b.id));
+}
+// Version 3 encrypts database.json (password hashes, tokens, customer data)
+// with the settings key; version 2 backups stay readable as plaintext.
+export function readBackupSnapshot(databasePath,manifest,settingsKey){
+ const text=readFileSync(databasePath,'utf8');
+ if(manifest.version===2)return JSON.parse(text);
+ if(!Buffer.isBuffer(settingsKey)||settingsKey.length!==32)throw new Error('Cần khóa mã hóa gốc để đọc bản sao');
+ try{return JSON.parse(decryptSetting(text,settingsKey))}catch{throw new Error('Không giải mã được bản sao bằng khóa mã hóa hiện tại')}
 }
 
-export async function createBackup({db,dbPath,clock=()=>new Date()}){
- if(dbPath===':memory:')throw new Error('Sao lưu cần cơ sở dữ liệu trên đĩa');const root=backupRoot(dbPath);ensureDir(root);const id=`backup-${new Date(clock()).toISOString().replace(/[:.]/g,'-')}-${randomUUID()}`,stage=join(root,id+'.pending'),target=join(root,id);ensureDir(stage);try{ensureDir(join(stage,'files'));const path=join(stage,'database.json');
- writeFileSync(path,JSON.stringify(exportSnapshot(db)),{mode:0o600});chmodSync(path,0o600);const files=snapshotFileRows(path);
+export async function createBackup({db,dbPath,clock=()=>new Date(),settingsKey}){
+ if(dbPath===':memory:')throw new Error('Sao lưu cần cơ sở dữ liệu trên đĩa');if(!Buffer.isBuffer(settingsKey)||settingsKey.length!==32)throw new Error('Sao lưu cần khóa mã hóa gốc');const root=backupRoot(dbPath);ensureDir(root);const id=`backup-${new Date(clock()).toISOString().replace(/[:.]/g,'-')}-${randomUUID()}`,stage=join(root,id+'.pending'),target=join(root,id);ensureDir(stage);try{ensureDir(join(stage,'files'));const path=join(stage,'database.json');
+ const snapshot=exportSnapshot(db);writeFileSync(path,encryptSetting(JSON.stringify(snapshot),settingsKey),{mode:0o600});chmodSync(path,0o600);const files=fileRows(snapshot);
  const entries=[];for(const row of files){const name=`${row.id.replace(/[^a-zA-Z0-9_-]/g,'_')}.bin`,targetFile=join(stage,'files',name);
  assertStorageMetadata(row);
  if(row.storage_root?.startsWith('remote:')){const store=getRemoteStore(db);if(!store)throw new Error('Cần cấu hình kho ngoài để sao lưu đầy đủ tệp');await pipeline(await store.get(row.storage_root,row.storage_key),createWriteStream(targetFile,{flags:'wx',mode:0o600}));}
  else {const source=safeStoragePath(row,Error);const stat=lstatSync(source);if(!stat.isFile()||stat.isSymbolicLink())throw new Error('Tệp sao lưu không hợp lệ');copyFileSync(source,targetFile);chmodSync(targetFile,0o600);}
  const size=lstatSync(targetFile).size;if(size!==row.size_bytes)throw new Error('Tệp sao lưu sai dung lượng');entries.push({id:row.id,file:'files/'+name,sha256:sha(targetFile),size,storageRoot:row.storage_root,storageKey:row.storage_key,storageType:storageKind(row.storage_root)})}
 
- const manifest={version:2,id,createdAt:new Date(clock()).toISOString(),databaseSha256:sha(path),files:entries,remoteFiles:files.filter(f=>f.storage_root?.startsWith("remote:")).length};writeFileSync(join(stage,'manifest.json'),JSON.stringify(manifest,null,2),{mode:0o600});renameSync(stage,target);return {id,createdAt:manifest.createdAt,fileCount:entries.length,remoteFiles:manifest.remoteFiles};}catch(error){rmSync(stage,{recursive:true,force:true});throw error}
+ const manifest={version:3,databaseEncrypted:true,id,createdAt:new Date(clock()).toISOString(),databaseSha256:sha(path),files:entries,remoteFiles:files.filter(f=>f.storage_root?.startsWith("remote:")).length};writeFileSync(join(stage,'manifest.json'),JSON.stringify(manifest,null,2),{mode:0o600});renameSync(stage,target);return {id,createdAt:manifest.createdAt,fileCount:entries.length,remoteFiles:manifest.remoteFiles};}catch(error){rmSync(stage,{recursive:true,force:true});throw error}
 }
-export function inspectBackup(dbPath,id){
+export function inspectBackup(dbPath,id,settingsKey){
  if(!/^backup-[a-zA-Z0-9-]+$/.test(id))throw new Error('Mã sao lưu không hợp lệ');
  const dir=join(backupRoot(dbPath),id);
  const dirStat=lstatSync(dir);if(!dirStat.isDirectory()||dirStat.isSymbolicLink())throw new Error('Đường dẫn sao lưu không hợp lệ');
  const manifestPath=join(dir,'manifest.json');const manifestStat=lstatSync(manifestPath);if(!manifestStat.isFile()||manifestStat.isSymbolicLink())throw new Error('Manifest sao lưu không hợp lệ');
  const databasePath=join(dir,'database.json');const databaseStat=lstatSync(databasePath);if(!databaseStat.isFile()||databaseStat.isSymbolicLink())throw new Error('Cơ sở dữ liệu trong bản sao không hợp lệ');
  const m=JSON.parse(readFileSync(manifestPath,'utf8'));
- if(!m||typeof m!=='object'||Array.isArray(m)||m.version!==2||m.id!==id||!Array.isArray(m.files)||!Number.isSafeInteger(m.remoteFiles)||m.remoteFiles<0||sha(databasePath)!==m.databaseSha256)throw new Error('Bản sao không toàn vẹn');
+ if(!m||typeof m!=='object'||Array.isArray(m)||!(m.version===2||(m.version===3&&m.databaseEncrypted===true))||m.id!==id||!Array.isArray(m.files)||!Number.isSafeInteger(m.remoteFiles)||m.remoteFiles<0||sha(databasePath)!==m.databaseSha256)throw new Error('Bản sao không toàn vẹn');
  const filesDir=join(dir,'files');const filesDirStat=lstatSync(filesDir);if(!filesDirStat.isDirectory()||filesDirStat.isSymbolicLink())throw new Error('Thư mục tệp trong bản sao không hợp lệ');
- const rows=snapshotFileRows(databasePath);const rowsById=new Map(rows.map(row=>[row.id,row]));
+ const snapshot=readBackupSnapshot(databasePath,m,settingsKey);const rows=fileRows(snapshot);const rowsById=new Map(rows.map(row=>[row.id,row]));
  if(rowsById.size!==rows.length||m.files.length!==rows.length||m.remoteFiles!==rows.filter(row=>storageKind(row.storage_root)==='remote').length)throw new Error('Manifest không đầy đủ hoặc có tệp dư');
  const seenIds=new Set();const seenPaths=new Set();
  for(const row of rows)assertStorageMetadata(row);
@@ -81,12 +89,12 @@ export function inspectBackup(dbPath,id){
   seenIds.add(entry.id);seenPaths.add(entry.file);
  }
  const actualFiles=readdirSync(filesDir);if(actualFiles.length!==seenPaths.size||actualFiles.some(name=>!seenPaths.has(`files/${name}`)))throw new Error('Thư mục tệp trong bản sao không khớp manifest');
- return {dir,manifest:m};
+ return {dir,manifest:m,snapshot};
 }
-export function registerBackupRoutes(app,{db,dbPath,clock,requirePlatformAdmin,withTransaction,writeAdminAudit,HttpError}){
+export function registerBackupRoutes(app,{db,dbPath,clock,settingsKey,requirePlatformAdmin,withTransaction,writeAdminAudit,HttpError}){
  const setting=()=>{try{return JSON.parse(db.prepare("SELECT value FROM app_settings WHERE key='backupSchedule'").get()?.value||'{}')}catch{return {}}};
  const save=value=>db.prepare("INSERT INTO app_settings(key,value,encrypted,updated_at) VALUES ('backupSchedule',?,0,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").run(JSON.stringify(value),new Date(clock()).toISOString());
- let backingUp=false;async function run(){if(backingUp)throw new HttpError(409,"Một lần sao lưu đang chạy");backingUp=true;try{const backup=await createBackup({db,dbPath,clock});save({...setting(),lastRun:backup.createdAt,lastAttempt:null,lastError:null});return backup}catch(error){save({...setting(),lastAttempt:new Date(clock()).toISOString(),lastError:'Sao lưu thất bại. Kiểm tra dung lượng đĩa và quyền đọc kho tệp.'});throw error}finally{backingUp=false}}
+ let backingUp=false;async function run(){if(backingUp)throw new HttpError(409,"Một lần sao lưu đang chạy");backingUp=true;try{const backup=await createBackup({db,dbPath,clock,settingsKey});save({...setting(),lastRun:backup.createdAt,lastAttempt:null,lastError:null});return backup}catch(error){save({...setting(),lastAttempt:new Date(clock()).toISOString(),lastError:'Sao lưu thất bại. Kiểm tra dung lượng đĩa và quyền đọc kho tệp.'});throw error}finally{backingUp=false}}
  app.locals.processBackups=async()=>{const s=setting(),at=new Date(clock()).getTime();if(!s.enabled||backingUp)return;const last=Date.parse(s.lastAttempt||s.lastRun||0);if(Number.isFinite(last)&&at-last<(s.intervalHours||24)*3600000)return;await run()};
  app.get('/api/admin/backups',requirePlatformAdmin,(req,res,next)=>{try{const root=backupRoot(dbPath),backups=existsSync(root)?readdirSync(root).filter(name=>/^backup-[a-zA-Z0-9-]+$/.test(name)).map(id=>{try{const m=JSON.parse(readFileSync(join(root,id,'manifest.json'),'utf8'));return {id,createdAt:m.createdAt,fileCount:m.files.length,remoteFiles:m.remoteFiles}}catch{return null}}).filter(Boolean).sort((a,b)=>b.createdAt.localeCompare(a.createdAt)):[];res.json({backups,schedule:setting(),path:root})}catch(e){next(e)}});
  app.post('/api/admin/backups',requirePlatformAdmin,async(req,res,next)=>{try{const reason=String(req.body?.reason||'').trim();if(reason.length<3||reason.length>500)throw new HttpError(400,'Cần lý do sao lưu');const backup=await run();withTransaction(db,()=>writeAdminAudit(db,{actorUserId:req.auth.userId,action:'backup.create',targetType:'platform',targetId:backup.id,reason,before:null,after:{id:backup.id},createdAt:new Date(clock()).toISOString()}));res.status(201).json({backup})}catch(e){next(e)}});

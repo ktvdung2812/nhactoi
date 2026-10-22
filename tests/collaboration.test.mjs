@@ -49,7 +49,7 @@ test('guests see mention names but never member emails',async t=>{
  s.db.prepare("UPDATE subscriptions SET plan='business' WHERE workspace_id=?").run(owner.workspace.id);
  const project=await call(s,'/projects',{method:'POST',cookie:owner.cookie,body:{name:'Chia sẻ',accessMode:'private'}});assert.equal(project.status,201,JSON.stringify(project.body));
  const invite=await call(s,'/invitations',{method:'POST',cookie:owner.cookie,body:{email:'guest-mail@example.test',memberType:'guest',projectId:project.body.project.id,projectRole:'commenter'}});assert.equal(invite.status,201,JSON.stringify(invite.body));
- const url=new URL(invite.body.inviteUrl),token=url.searchParams.get('invite')||new URLSearchParams(url.hash.slice(1)).get('invite');
+ const token=new URLSearchParams(new URL(invite.body.inviteUrl).hash.slice(1)).get('invite');
  const guest=await call(s,'/invitations/accept',{method:'POST',body:{token,name:'Khách',password:'Password123!'}});assert.equal(guest.status,200,JSON.stringify(guest.body));
  const card=await call(s,'/tasks',{method:'POST',cookie:owner.cookie,body:{title:'Việc chia sẻ',dueAt:'2030-01-01T10:00:00Z',projectId:project.body.project.id}});assert.equal(card.status,201,JSON.stringify(card.body));
  const path=`/tasks/${card.body.task.id}/collaboration`;
