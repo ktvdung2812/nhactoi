@@ -191,6 +191,23 @@ test("email change codes lock after five guesses, throttle resends and expire af
   assert.equal((await confirmChange(s, actor, cancelled)).status, 400);
 });
 
+test("email change locks password guessing per account, whatever address is requested", async (t) => {
+  const s = await setup(t);
+  const actor = await user(s, "guesses@example.test");
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const guess = await requestChange(s, actor, { email: `guess-${attempt}@example.test`, password: `Wrong${attempt}Password!` });
+    assert.equal(guess.status, 403, JSON.stringify(guess.body));
+  }
+  const locked = await requestChange(s, actor, { email: "guess-right@example.test", password: "Password123!" });
+  assert.equal(locked.status, 429, "the right password is refused once the account is locked");
+  assert.equal(s.mails.length, 0);
+  const other = await user(s, "guesses-other@example.test");
+  assert.equal((await requestChange(s, other, { email: "other-new@example.test", password: "Password123!" })).status, 200,
+    "the lock belongs to one account only");
+  s.advance(15 * 60_000 + 1);
+  assert.equal((await requestChange(s, actor, { email: "guess-right@example.test", password: "Password123!" })).status, 200);
+});
+
 test("Google-linked accounts may skip the password; profile edits preserve the Google link", async (t) => {
   const s = await setup(t);
   const actor = await user(s, "account-google@example.test");

@@ -282,6 +282,17 @@ export function EmailChange({ api, user, onSaved }) {
     });
   }
 
+  // After a reload the password is no longer in memory, so resending goes
+  // back to the first step with the pending address filled in.
+  function resend() {
+    if (password) return sendCode(pending.email);
+    setEmail(pending.email);
+    setPending(null);
+    setCode("");
+    setError("");
+    setNotice(`Nhập mật khẩu hiện tại để gửi lại mã tới ${pending.email}.`);
+  }
+
   function confirm(event) {
     event.preventDefault();
     return run(async () => {
@@ -345,7 +356,7 @@ export function EmailChange({ api, user, onSaved }) {
           {notice && <p className="td-notice" role="status"><CheckCircle2 size={16} /> {notice}</p>}
           <div className="modal-actions">
             <button type="button" className="button secondary" onClick={cancel} disabled={busy}>Hủy đổi email</button>
-            <button type="button" className="button secondary" onClick={() => sendCode(pending.email)} disabled={busy || cooldown > 0}>
+            <button type="button" className="button secondary" onClick={resend} disabled={busy || cooldown > 0}>
               {cooldown > 0 ? `Gửi lại mã sau ${cooldown}s` : "Gửi lại mã"}
             </button>
             <button type="submit" className="button" disabled={busy}>

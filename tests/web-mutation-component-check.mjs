@@ -12,7 +12,7 @@ const React=require('react'),{act}=React,{JSDOM}=require('../mobile/node_modules
 const PersonalTasks=require('../src/PersonalTasks.jsx').default,WeekCalendar=require('../src/WeekCalendar.jsx').default;
 const TaskExtras=require('../src/TaskExtras.jsx').default,TaskDetail=require('../src/TaskDetail.jsx').default;
 const WorkflowBoard=require('../src/WorkflowBoard.jsx').default,ProjectAdvanced=require('../src/ProjectAdvanced.jsx').default;
-const {AssistantSettings}=require('../src/Account.jsx');
+const {AssistantSettings,EmailChange}=require('../src/Account.jsx');
 const me={user:{id:'u',role:'owner',name:'Test'},workspace:{id:'w'},subscription:{status:'active',currentPeriodEnd:'2099-01-01',capabilities:['public_api']}};
 const card={id:'task-private',title:'CANARY_TASK',status:'todo',dueAt:null,plannedDate:null,planRevision:'p1'};
 const error=status=>Object.assign(new Error(`Denied ${status}`),{status});
@@ -266,4 +266,17 @@ test('members see assistant settings without editable controls',async t=>{
  assert.equal(document.querySelector('fieldset').disabled,true);
  assert.equal([...document.querySelectorAll('button')].some(button=>button.textContent==='Lưu trợ lý'),false);
  assert.ok(ui.text().includes('Chủ sở hữu hoặc quản trị viên'));
+});
+
+test('resending an email-change code after a reload asks for the password again',async t=>{
+ const writes=[];const api=async(path,options)=>{if(options){writes.push([path,JSON.parse(options.body)]);return {email:'moi@example.test',expiresAt:'2099-01-01T00:00:00Z',retryAfterSeconds:60};}return {pending:{email:'moi@example.test',expiresAt:'2099-01-01T00:00:00Z'}};};
+ const ui=await mount(t,EmailChange,{api,user:{id:'u',email:'cu@example.test'},onSaved:()=>{}});
+ await ui.click('Gửi lại mã');
+ assert.deepEqual(writes,[],'no request is sent without the password');
+ assert.equal(document.querySelector('input[name="email"]').value,'moi@example.test');
+ assert.ok(ui.text().includes('Nhập mật khẩu hiện tại để gửi lại mã tới moi@example.test.'));
+ await ui.typeInput('input[name="password"]','Password123!');
+ await ui.submit(document.querySelector('form'));
+ assert.deepEqual(writes,[['/me/email-change',{email:'moi@example.test',password:'Password123!'}]]);
+ assert.ok(ui.text().includes('Đã gửi mã xác nhận tới moi@example.test.'));
 });

@@ -277,7 +277,11 @@ function deriveSettingsKey(value) {
     const decoded = Buffer.from(text.replaceAll("-", "+").replaceAll("_", "/"), "base64");
     if (decoded.length === SETTINGS_KEY_BYTES) return decoded;
   }
-  throw new Error("NHACTOI_SETTINGS_KEY phải là 32 byte ngẫu nhiên (hex 64 ký tự hoặc base64). Tạo bằng: openssl rand -hex 32");
+  // Earlier releases hashed a passphrase with SHA-256; that digest in hex is
+  // the same key, so existing encrypted settings and backups stay readable.
+  throw new Error("NHACTOI_SETTINGS_KEY phải là 32 byte ngẫu nhiên (hex 64 ký tự hoặc base64). "
+    + "Nếu đang dùng chuỗi mật khẩu, thay bằng SHA-256 hex của chính chuỗi đó (printf %s '<chuỗi>' | shasum -a 256) "
+    + "để vẫn giải mã được cấu hình đã lưu. Chỉ tạo khóa mới (openssl rand -hex 32) cho máy chủ chưa có dữ liệu mã hóa.");
 }
 
 function settingsKeyFileFromEnv(env, dbPath) {

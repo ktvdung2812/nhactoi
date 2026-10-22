@@ -14,7 +14,7 @@ Khi phát triển, thay đổi module backend cần khởi động lại Next đ
 
 ## Sao lưu và khôi phục
 
-Admin SaaS → Cấu hình → Sao lưu hệ thống cho phép tạo bản sao ngay và đặt lịch 6/12/24 giờ hoặc hằng tuần. Lịch chạy khi dịch vụ Node đang hoạt động. Bản sao manifest v3 gồm dữ liệu PostgreSQL dạng JSON từ transaction `REPEATABLE READ`, mã hóa bằng khóa mã hóa gốc, các tệp đính kèm trên máy chủ và kho ngoài và SHA-256 kiểm tra toàn vẹn. Bản sao đang chạy dùng thư mục `.pending`; nếu lỗi, dữ liệu tạm được dọn và không được liệt kê là bản sao hoàn chỉnh. Chưa tự xóa bản sao cũ; cần theo dõi dung lượng đĩa.
+Admin SaaS → Cấu hình → Sao lưu hệ thống cho phép tạo bản sao ngay và đặt lịch 6/12/24 giờ hoặc hằng tuần. Lịch chạy khi dịch vụ Node đang hoạt động. Bản sao manifest v3 gồm dữ liệu PostgreSQL dạng JSON từ transaction `REPEATABLE READ`, mã hóa bằng khóa mã hóa gốc, các tệp đính kèm trên máy chủ và kho ngoài và SHA-256 kiểm tra toàn vẹn. Bản sao đang chạy dùng thư mục `.pending`; nếu lỗi, dữ liệu tạm được dọn và không được liệt kê là bản sao hoàn chỉnh. Mục **Giữ lại** chọn tất cả (mặc định) hoặc 7/14/30/60 bản gần nhất; khi có giới hạn, bản hoàn chỉnh cũ hơn bị xóa sau mỗi lần sao lưu thành công, thư mục `.pending` không bị đụng tới. Chép bản sao cần giữ lâu ra nơi khác trước khi bật giới hạn và vẫn theo dõi dung lượng đĩa.
 
 Giữ riêng khóa mã hóa cấu hình của máy chủ. Tệp S3/Drive cũng được tải vào bản sao. Nếu kho không truy cập được, bản sao bị đánh dấu chưa hoàn tất. Khi khôi phục, mọi tệp được chép vào thư mục riêng mới trên máy chủ.
 

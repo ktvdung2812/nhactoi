@@ -13,6 +13,7 @@ export function registerEmailChangeRoutes(app, {
   const ttl = 15 * 60_000;
   const resendMs = 60_000;
   const maxAttempts = 5;
+  const maxPasswordGuesses = 5;
   const invalid = "Mã xác nhận không hợp lệ hoặc đã hết hạn. Vui lòng yêu cầu mã mới.";
   const from = () => config.smtp?.from || "no-reply@nhactoi.local";
   // The label keeps these digests distinct from password reset codes.
@@ -62,8 +63,21 @@ export function registerEmailChangeRoutes(app, {
       if (password === undefined) {
         if (!db.prepare("SELECT 1 FROM google_identities WHERE user_id = ?").get(user.id))
           throw new HttpError(403, "Vui lòng nhập mật khẩu hiện tại.");
-      } else if (!verifyPassword(password, user.password_hash)) {
-        throw new HttpError(403, "Mật khẩu hiện tại không đúng.");
+      } else {
+        // Wrong passwords are counted per account, so a stolen session cannot
+        // keep guessing by rotating the new address or the IP. The limiter
+        // above has already deleted expired buckets.
+        const guessKey = `email-change:password:${user.id}`;
+        const guesses = db.prepare("SELECT count, expires_at FROM auth_request_limits WHERE bucket = ?").get(guessKey);
+        if (guesses && Number(guesses.count) >= maxPasswordGuesses) {
+          res.set("Retry-After", String(Math.ceil((Number(guesses.expires_at) - nowMs()) / 1000)));
+          throw new HttpError(429, "Bạn đã nhập sai mật khẩu quá nhiều lần. Vui lòng thử lại sau 15 phút.");
+        }
+        if (!verifyPassword(password, user.password_hash)) {
+          db.prepare(`INSERT INTO auth_request_limits(bucket, expires_at, count) VALUES (?, ?, 1)
+            ON CONFLICT(bucket) DO UPDATE SET count = auth_request_limits.count + 1`).run(guessKey, nowMs() + ttl);
+          throw new HttpError(403, "Mật khẩu hiện tại không đúng.");
+        }
       }
       if (db.prepare("SELECT 1 FROM users WHERE email = ? AND id <> ?").get(email, user.id))
         throw new HttpError(409, "email is already registered");

@@ -60,6 +60,14 @@ vào Git và không gửi secret trong log deploy. Cấu hình đã lưu trong D
 ưu tiên biến môi trường. Giữ nguyên `NHACTOI_SETTINGS_KEY` hoặc file key của
 production khi sao lưu/khôi phục.
 
+`NHACTOI_SETTINGS_KEY` phải là 32 byte: 64 ký tự hex hoặc base64. Bản cũ chấp
+nhận chuỗi mật khẩu bất kỳ và băm SHA-256; bản hiện tại từ chối khởi động với
+giá trị đó. Trước khi deploy, nếu production đang dùng chuỗi mật khẩu, thay giá
+trị bằng `printf %s '<chuỗi cũ>' | shasum -a 256` (lấy 64 ký tự hex đầu). Đây
+chính là khóa cũ nên cấu hình mã hóa và bản sao lưu vẫn đọc được. Không tạo khóa
+ngẫu nhiên mới cho máy chủ đã có dữ liệu: cấu hình và bản sao cũ sẽ không giải
+mã được nữa.
+
 ## Git Manager và release an toàn
 
 Git Manager dùng script `NhacToi_production`. Webhook của GitHub gửi sự kiện

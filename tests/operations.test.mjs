@@ -36,3 +36,29 @@ test('offline restore verifies hashes and restores local attachments into a priv
 });
 
 test("remote backup captures bytes and failed migration verification queues uploaded orphan",async t=>{let failGet=false;const objects=new Map();const adapter=()=>({test:async()=>{},put:async(buffer,key)=>{objects.set(key,Buffer.from(buffer));return key},get:async key=>{if(failGet)throw new Error('simulated network failure');return Readable.from([objects.get(key)])},delete:async key=>objects.delete(key)});const s=await boot(t,{remoteStorageAdapter:adapter}),owner=await user(s,'remote-backup@test.local');s.db.prepare('UPDATE users SET is_platform_admin=1 WHERE id=?').run(owner.user.id);const card=await task(s,owner);const uploaded=await fetch(s.base+`/api/tasks/${card.id}/files`,{method:'POST',headers:{cookie:owner.cookie,'content-type':'application/octet-stream','x-file-name':'local.txt'},body:'preserve local'});assert.equal(uploaded.status,201);const id=(await uploaded.json()).attachment.id;const p=await call(s,'/admin/remote-storage',{method:'POST',cookie:owner.cookie,body:{type:'s3',name:'Test',region:'auto',bucket:'test',accessKeyId:'key',secretAccessKey:'secret',reason:'Test storage'}});await call(s,'/admin/remote-storage/active',{method:'PUT',cookie:owner.cookie,body:{id:p.body.id,reason:'Test remote'}});failGet=true;assert.equal((await call(s,'/admin/remote-storage/migrate',{method:'POST',cookie:owner.cookie,body:{reason:'Test migration fail'}})).status,502);assert.ok(!s.db.prepare('SELECT storage_root FROM task_attachments WHERE id=?').get(id).storage_root.startsWith('remote:'));assert.equal(s.db.prepare("SELECT count(*) n FROM task_file_cleanup WHERE storage_root LIKE 'remote:%'").get().n,1);await s.app.locals.processRemoteCleanup();assert.equal(objects.size,0);failGet=false;assert.equal((await call(s,'/admin/remote-storage/migrate',{method:'POST',cookie:owner.cookie,body:{reason:'Test migration success'}})).status,200);const backup=await call(s,'/admin/backups',{method:'POST',cookie:owner.cookie,body:{reason:'Test remote snapshot'}});assert.equal(backup.status,201,JSON.stringify(backup.body));const snap=inspectBackup(s.dir+'/test.sqlite',backup.body.backup.id,s.app.locals.config._settingsKey);assert.equal(snap.manifest.remoteFiles,1);assert.equal(snap.manifest.files.length,1);const {readFileSync}=await import('node:fs');assert.equal(readFileSync(snap.dir+'/'+snap.manifest.files[0].file,'utf8'),'preserve local');});
+test('backup retention keeps the newest complete backups only when an admin asks for it',async t=>{
+  let now=Date.parse('2026-10-22T01:00:00Z');
+  const s=await boot(t,{clock:()=>new Date(now)}),admin=await user(s,'retention@test.local');
+  s.db.prepare('UPDATE users SET is_platform_admin=1 WHERE id=?').run(admin.user.id);
+  const backup=async()=>{now+=60_000;const r=await call(s,'/admin/backups',{method:'POST',cookie:admin.cookie,body:{reason:'Kiểm thử giữ bản sao'}});assert.equal(r.status,201,JSON.stringify(r.body));return r.body.backup.id};
+  const listed=async()=>(await call(s,'/admin/backups',{cookie:admin.cookie})).body;
+  const {mkdirSync,readdirSync}=await import('node:fs');
+  const ids=[await backup(),await backup(),await backup()];
+  assert.equal((await listed()).backups.length,3,'without a limit every backup is kept');
+  assert.equal((await call(s,'/admin/backups/schedule',{method:'PUT',cookie:admin.cookie,body:{enabled:false,intervalHours:24,keep:5,reason:'Giá trị lạ'}})).status,400);
+  assert.equal((await call(s,'/admin/backups/schedule',{method:'PUT',cookie:admin.cookie,body:{enabled:false,intervalHours:24,keep:7,reason:'Giữ 7 bản'}})).status,200);
+  assert.equal((await listed()).schedule.keep,7);
+  // Saving the schedule without keep (older clients) leaves the limit alone.
+  assert.equal((await call(s,'/admin/backups/schedule',{method:'PUT',cookie:admin.cookie,body:{enabled:true,intervalHours:24,reason:'Bật lịch'}})).status,200);
+  assert.equal((await listed()).schedule.keep,7);
+  const {pruneBackups,backupRoot}=await import('../server/backups.mjs');
+  const root=backupRoot(s.dir+'/test.sqlite');
+  mkdirSync(root+'/backup-unfinished.pending');
+  for(let i=0;i<5;i++)ids.push(await backup());
+  const kept=(await listed()).backups.map(b=>b.id);
+  assert.deepEqual(kept,ids.slice(-7).reverse(),'the seven newest backups remain, newest first');
+  assert.ok(readdirSync(root).includes('backup-unfinished.pending'),'a pending folder is never pruned');
+  assert.deepEqual(pruneBackups(s.dir+'/test.sqlite',0),[],'0 keeps everything');
+  const audit=s.db.prepare("SELECT before_json,after_json FROM admin_audit_logs WHERE action='backup.schedule' ORDER BY created_at,id").all();
+  assert.equal(JSON.parse(audit[0].after_json).keep,7);
+});

@@ -192,9 +192,19 @@ test(
     assert.equal(deepLink.headers.get("x-frame-options"), "DENY");
     assert.equal(deepLink.headers.get("x-content-type-options"), "nosniff");
     assert.match(deepLink.headers.get("strict-transport-security") || "", /max-age=31536000/);
-    assert.match(deepLink.headers.get("content-security-policy") || "", /frame-ancestors 'none'/);
+    const pageCsp = deepLink.headers.get("content-security-policy") || "";
+    assert.match(pageCsp, /frame-ancestors 'none'/);
+    assert.doesNotMatch(pageCsp, /unsafe-inline|unsafe-eval/);
+    const nonce = pageCsp.match(/script-src 'self' 'nonce-([A-Za-z0-9+/=]+)' 'strict-dynamic'/)?.[1];
+    assert.ok(nonce, `page CSP restricts scripts to a nonce: ${pageCsp}`);
     assert.equal(deepLink.headers.get("x-powered-by"), null);
-    assert.match(await deepLink.text(), /Đang mở không gian làm việc/);
+    const deepLinkHtml = await deepLink.text();
+    assert.match(deepLinkHtml, /Đang mở không gian làm việc/);
+    const scripts = deepLinkHtml.match(/<script\b[^>]*>/g) || [];
+    assert.ok(scripts.length > 1);
+    assert.deepEqual(scripts.filter((tag) => !tag.includes(`nonce="${nonce}"`)), [], "every script, including the theme script, carries the nonce");
+    const again = (await request(base, "/tasks/direct-deep-link")).headers.get("content-security-policy") || "";
+    assert.notEqual(again.match(/'nonce-([^']+)'/)?.[1], nonce, "each page request gets a fresh nonce");
 
     for (const path of ["/login", "/register", "/forgot-password", "/reset-password", "/inbox", "/today", "/upcoming", "/week",
       "/projects", "/services", "/automations", "/templates", "/google-calendar", "/zalo-oa", "/public-integrations"]) {
@@ -275,6 +285,7 @@ test(
     assert.equal(me.status, 200);
     assert.equal(me.headers.get("x-powered-by"), null);
     assert.equal(me.headers.get("x-frame-options"), "DENY");
+    assert.equal(me.headers.get("content-security-policy"), "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'");
     assert.equal(meResult.body?.user?.id, registrationResult.body?.user?.id);
 
     // Newly registered integrations must survive the Next -> Express boundary.

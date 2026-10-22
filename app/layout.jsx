@@ -7,6 +7,7 @@ import "../src/styles.css";
 // after the application stylesheet from src/main.jsx.
 import "../src/design-system.css";
 import "../src/feature-kit.css";
+import { headers } from "next/headers";
 import ClientApp from "./client-app.jsx";
 
 export const metadata = {
@@ -45,11 +46,13 @@ const themeInitScript = `
 })();
 `;
 
-export default function RootLayout({ children }) {
+export default async function RootLayout({ children }) {
+  // proxy.js allows only scripts carrying this request's nonce.
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
     <html lang="vi" suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+        <script nonce={nonce} suppressHydrationWarning dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
       <body>
         <ClientApp>{children}</ClientApp>
