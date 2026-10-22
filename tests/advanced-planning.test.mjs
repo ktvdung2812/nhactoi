@@ -85,9 +85,13 @@ test('time blocks preserve reminders and user isolation, validate boundaries and
   assert.equal((await plan({ plannedDate: null })).status, 200);
   mine = (await call(s, '/personal-tasks', { cookie })).body.tasks[0];
   assert.equal(mine.plannedDate, null); assert.equal(mine.plannedTime, null);
-  const team = await call(s, '/teams', { cookie, method: 'POST', body: { name: 'Lưu trữ', color: 'blue', members: [{ userId: owner.user.id, role: 'lead' }] } });
+  // The retained collaborator must also have access to the destination project.
+  // Otherwise the move correctly fails before this test reaches archived planning.
+  const team = await call(s, '/teams', { cookie, method: 'POST', body: { name: 'Lưu trữ', color: 'blue', members: [{ userId: owner.user.id, role: 'lead' }, { userId: member.user.id, role: 'member' }] } });
   assert.equal(team.status, 201, JSON.stringify(team.body));
-  await call(s, `/tasks/${card.id}`, { cookie, method: 'PATCH', body: { teamId: team.body.team.id, assigneeId: owner.user.id } });
+  const move = await call(s, `/tasks/${card.id}`, { cookie, method: 'PATCH', body: { teamId: team.body.team.id, assigneeId: owner.user.id } });
+  assert.equal(move.status, 200, JSON.stringify(move.body));
+  assert.equal(s.db.prepare('SELECT team_id FROM tasks WHERE id=?').get(card.id).team_id, team.body.team.id);
   s.db.prepare('UPDATE teams SET archived_at=? WHERE id=?').run(new Date().toISOString(), team.body.team.id);
   assert.equal((await plan({ plannedDate })).status, 409);
 });

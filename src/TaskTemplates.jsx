@@ -1,3 +1,5 @@
+import TaskPicker from "./TaskPicker.jsx";
+import { useTaskMutation } from "./useTaskMutation.js";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Archive, Check, FilePlus2, Filter, LoaderCircle, ListChecks, Plus, Sparkles, Trash2, X } from "lucide-react";
 import ActionMenu from "./ActionMenu.jsx";
@@ -21,7 +23,7 @@ function isoDateTime(value) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-const EMPTY_FORM = { name: "", kind: "task", checklistId: "", teamId: "", dueAt: "", taskId: "" };
+const EMPTY_FORM = { name: "", kind: "task", checklistId: "", teamId: "", dueAt: "", taskId: "", expectedRevision: null };
 
 function templateKindLabel(kind) {
   return kind === "checklist" ? "Mẫu checklist" : "Mẫu công việc";
@@ -32,13 +34,12 @@ function ErrorBox({ children }) {
 }
 
 export default function TaskTemplates({
-  api,
+  api: request,
   task = null,
   taskId = null,
   teams = [],
   checklists = [],
   sourceTaskId = null,
-  tasks = [],
   onOpen,
   onCreated,
   onChanged,
@@ -52,6 +53,7 @@ export default function TaskTemplates({
   const [busy, setBusy] = useState("");
   const [filter, setFilter] = useState("all");
   const [dialog, setDialog] = useState(null);
+  const api = useTaskMutation(request, dialog);
   const [form, setForm] = useState(EMPTY_FORM);
   const [formError, setFormError] = useState("");
   const [removeId, setRemoveId] = useState("");
@@ -64,7 +66,6 @@ export default function TaskTemplates({
 
   const activeTeams = useMemo(() => teams.filter(team => !team.archivedAt), [teams]);
   const visibleTemplates = useMemo(() => templates.filter(template => filter === "all" || template.kind === filter), [templates, filter]);
-  const taskOptions = useMemo(() => tasks.filter(item => item && item.id), [tasks]);
 
   useEffect(() => {
     alive.current = true;
@@ -116,15 +117,27 @@ export default function TaskTemplates({
   }
 
   function openCreate() {
+    if (readOnly) return;
     setForm({ ...EMPTY_FORM, checklistId: checklists[0]?.id || "", taskId: currentTaskId });
     setFormError("");
     setDialog({ kind: "create" });
   }
 
-  function openApply(template) {
-    setForm({ ...EMPTY_FORM, kind: template.kind, teamId: task?.teamId || "", dueAt: localDateTime(task?.dueAt), taskId: currentTaskId });
-    setFormError("");
-    setDialog({ kind: "apply", template });
+  async function openApply(template) {
+    if (readOnly || busy) return;
+    setBusy("prepare");
+    try {
+      // Capture the target when the dialog opens, never immediately before a
+      // stale submit. The picker supplies the same snapshot for other tasks.
+      const target = template.kind === "checklist" && currentTaskId
+        ? task?.id === currentTaskId && task.revision != null ? task : (await api(`/tasks/${encodeURIComponent(currentTaskId)}`)).task
+        : task;
+      if (!alive.current) return;
+      setForm({ ...EMPTY_FORM, kind: template.kind, teamId: target?.teamId || "", dueAt: localDateTime(target?.dueAt), taskId: currentTaskId, expectedRevision: target?.revision ?? null });
+      setFormError("");
+      setDialog({ kind: "apply", template });
+    } catch (error) { if (alive.current) setError(error.message); }
+    finally { if (alive.current) setBusy(""); }
   }
 
   function closeDialog() {
@@ -148,7 +161,8 @@ export default function TaskTemplates({
     if (!dialog?.template) return;
     if (dialog.template.kind === "checklist") {
       if (!form.taskId) { setFormError("Hãy chọn công việc nhận checklist."); return; }
-      const result = await mutate(`apply:${dialog.template.id}`, `/task-templates/${encodeURIComponent(dialog.template.id)}/apply`, "POST", { taskId: form.taskId }, "Đã áp dụng checklist vào công việc.");
+      if (form.expectedRevision == null) { setFormError("Chọn lại công việc để tải phiên bản hiện tại trước khi áp dụng."); return; }
+      const result = await mutate(`apply:${dialog.template.id}`, `/task-templates/${encodeURIComponent(dialog.template.id)}/apply`, "POST", { taskId: form.taskId, expectedRevision: form.expectedRevision }, "Đã áp dụng checklist vào công việc.");
       if (result) closeDialog();
       return;
     }
@@ -196,7 +210,7 @@ export default function TaskTemplates({
                   {template.kind === "checklist" ? <ListChecks size={14} /> : <FilePlus2 size={14} />}
                   {templateKindLabel(template.kind)}
                 </span>
-                {template.canDelete && <ActionMenu label={`Thao tác ${template.name}`} items={[{ label: "Xoá mẫu", icon: Trash2, danger: true, onSelect: () => setRemoveId(template.id) }]} disabled={!!busy} />}
+                {template.canDelete && !readOnly && <ActionMenu label={`Thao tác ${template.name}`} items={[{ label: "Xoá mẫu", icon: Trash2, danger: true, onSelect: () => setRemoveId(template.id) }]} disabled={!!busy} />}
               </div>
               <h2>{template.name}</h2>
               <p>{template.teamId ? `Team: ${activeTeams.find(team => String(team.id) === String(template.teamId))?.name || template.teamId}` : "Dùng trong toàn không gian"}</p>
@@ -204,12 +218,12 @@ export default function TaskTemplates({
                 <div className="task-template-delete">
                   <span>Xoá mẫu này?</span>
                   <button type="button" className="task-extras-button secondary" disabled={!!busy} onClick={() => setRemoveId("")}>Huỷ</button>
-                  <button type="button" className="task-extras-button danger" disabled={!!busy} onClick={() => deleteTemplate(template)}>
+                  <button type="button" className="task-extras-button danger" disabled={readOnly || !!busy} onClick={() => deleteTemplate(template)}>
                     {busy === `delete:${template.id}` ? <LoaderCircle className="task-extras-spin" size={14} /> : <Trash2 size={14} />}Xoá
                   </button>
                 </div>
               ) : (
-                <button type="button" className="task-extras-button primary" disabled={!!busy} onClick={() => openApply(template)}>
+                <button type="button" className="task-extras-button primary" disabled={readOnly || !!busy} onClick={() => openApply(template)}>
                   <Sparkles size={15} />{template.kind === "checklist" ? "Áp dụng vào công việc" : "Tạo công việc"}
                 </button>
               )}
@@ -237,7 +251,7 @@ export default function TaskTemplates({
                   <>
                     <label className="task-extras-field"><span>Tên mẫu <b>*</b></span><input data-template-autofocus required maxLength={120} value={form.name} onChange={event => setForm(current => ({ ...current, name: event.target.value }))} placeholder="Ví dụ: Quy trình tiếp nhận khách hàng" /></label>
                     <label className="task-extras-field"><span>Loại mẫu</span><select value={form.kind} onChange={event => setForm(current => ({ ...current, kind: event.target.value }))}><option value="task">Mẫu công việc</option><option value="checklist">Mẫu checklist</option></select></label>
-                    <label className="task-extras-field"><span>Công việc nguồn <b>*</b></span><select required value={form.taskId} disabled={Boolean(currentTaskId)} onChange={event => { setFormError(""); setForm(current => ({ ...current, taskId: event.target.value, checklistId: "" })); }}><option value="">Chọn công việc</option>{currentTaskId && !taskOptions.some(item => item.id === currentTaskId) && <option value={currentTaskId}>{task?.title || "Công việc hiện tại"}</option>}{taskOptions.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>
+                    {currentTaskId ? <label className="task-extras-field">Công việc nguồn<input value={task?.title || currentTaskId} readOnly/></label> : <TaskPicker api={api} label="Công việc nguồn" value={form.taskId} onChange={id=>{setFormError("");setForm(current=>({...current,taskId:id,checklistId:""}));}}/>}
                     {form.kind === "checklist" && <label className="task-extras-field"><span>Checklist nguồn <b>*</b></span><select required value={form.checklistId} onChange={event => setForm(current => ({ ...current, checklistId: event.target.value }))}><option value="">Chọn checklist</option>{sourceChecklists.map(list => <option key={list.id} value={list.id}>{list.title}</option>)}</select></label>}
                   </>
                 ) : dialog.template.kind === "checklist" ? (
@@ -246,7 +260,7 @@ export default function TaskTemplates({
                     {currentTaskId ? (
                       <label className="task-extras-field"><span>Công việc nhận checklist <b>*</b></span><input data-template-autofocus required value={form.taskId} readOnly /></label>
                     ) : (
-                      <label className="task-extras-field"><span>Công việc nhận checklist <b>*</b></span><select data-template-autofocus required value={form.taskId} onChange={event => setForm(current => ({ ...current, taskId: event.target.value }))}><option value="">Chọn công việc</option>{taskOptions.map(item => <option key={item.id} value={item.id}>{item.title || item.name || item.id}</option>)}</select></label>
+                      <TaskPicker api={api} label="Công việc nhận checklist" projectId={dialog.template.projectId} value={form.taskId} onChange={(id,selected)=>setForm(current=>({...current,taskId:id,expectedRevision:selected?.revision??null}))}/>
                     )}
                   </>
                 ) : (
@@ -261,7 +275,7 @@ export default function TaskTemplates({
               </div>
               <footer className="task-extras-modal-foot">
                 <button type="button" className="task-extras-button secondary" onClick={closeDialog} disabled={!!busy}>Huỷ</button>
-                <button type="submit" className="task-extras-button primary" disabled={!!busy || sourceLoading}>{busy ? <LoaderCircle className="task-extras-spin" size={15} /> : <Check size={15} />}{dialog.kind === "create" ? "Lưu mẫu" : dialog.template.kind === "checklist" ? "Áp dụng checklist" : "Tạo công việc"}</button>
+                <button type="submit" className="task-extras-button primary" disabled={readOnly || !!busy || sourceLoading || (dialog.kind === "apply" && dialog.template.kind === "checklist" && form.expectedRevision == null)}>{busy ? <LoaderCircle className="task-extras-spin" size={15} /> : <Check size={15} />}{dialog.kind === "create" ? "Lưu mẫu" : dialog.template.kind === "checklist" ? "Áp dụng checklist" : "Tạo công việc"}</button>
               </footer>
             </form>
           </section>

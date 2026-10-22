@@ -73,7 +73,7 @@ test("password reset sends a secret code, changes password once and revokes web/
   assert.equal((await post(s, "/auth/login", { email: actor.user.email, password: "Password123!" })).status, 401);
   assert.equal((await post(s, "/auth/login", { email: actor.user.email, password: "NewPassword123!" })).status, 200);
   assert.equal((await post(s, "/mobile/auth/login", { email: actor.user.email, password: "NewPassword123!" })).status, 200);
-  assert.equal(s.db.prepare("SELECT user_id FROM google_identities WHERE sub='google-sub'").get().user_id, actor.user.id);
+  assert.equal(s.db.prepare("SELECT user_id FROM google_identities WHERE sub='google-sub'").get(), undefined);
 });
 
 test("unknown and disabled email responses are neutral and resends are throttled", async (t) => {

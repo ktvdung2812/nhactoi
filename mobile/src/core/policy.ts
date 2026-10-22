@@ -1,10 +1,10 @@
 export const OFFLINE_TTL = 24 * 60 * 60 * 1000;
 export function canReadOffline(
-  session: { expiresAt: string; verifiedAt: number },
+  session: { expiresAt: string; verifiedAt: number; lastSeenAt?: number },
   now = Date.now(),
 ) {
   return (
-    now >= session.verifiedAt &&
+    now >= Math.max(session.verifiedAt, session.lastSeenAt || 0) &&
     now - session.verifiedAt < OFFLINE_TTL &&
     now < Date.parse(session.expiresAt)
   );
@@ -22,12 +22,13 @@ export function isWritable(
     subscription: { status: string; currentPeriodEnd: string };
   },
   online: boolean,
+  now = Date.now(),
 ) {
   return (
     online &&
     !session.workspace.suspendedAt &&
     !["expired", "canceled"].includes(session.subscription.status) &&
-    Date.parse(session.subscription.currentPeriodEnd) > Date.now()
+    Date.parse(session.subscription.currentPeriodEnd) > now
   );
 }
 export const statuses = {

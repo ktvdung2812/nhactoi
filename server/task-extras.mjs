@@ -1,3 +1,6 @@
+import { registerTaskMutationCommand } from './task-mutation-pipeline.mjs';
+import { canAccessProject, defaultProjectId, getProjectAccess } from './projects.mjs';
+import { canAccessTask } from './task-access.mjs';
 import { RECURRENCES as RECURRENCE_VALUES } from "../shared/task-recurrence.mjs";
 import { validateRecurrenceOptions, storedRecurrenceOptions } from "./recurrence.mjs";
 import { createId } from "./auth.mjs";
@@ -94,11 +97,11 @@ function taskRow(db, workspaceId, taskId) {
 
 function taskForUser(db, auth, taskId, HttpError, { write = false } = {}) {
   const task = taskRow(db, auth.workspaceId, taskId);
-  if (!task || !canAccessTeamTask(db, auth.workspaceId, auth.userId, task.team_id))
+  if (!task || !canAccessTask(db, auth.workspaceId, auth.userId, task))
     return null;
   if (
     write &&
-    !canAccessTeamTask(db, auth.workspaceId, auth.userId, task.team_id, { write: true })
+    !canAccessTask(db, auth.workspaceId, auth.userId, task, { write: true })
   )
     throw errorOf(HttpError, 409, "team is archived and read-only");
   return task;
@@ -121,6 +124,7 @@ function canWriteScope(db, workspaceId, userId, teamId) {
 }
 
 function visibleTemplate(db, auth, template) {
+  if (db.dialect === 'postgres') return Boolean(template && template.workspace_id === auth.workspaceId && canAccessProject(db, auth.workspaceId, auth.userId, template.project_id));
   return Boolean(
     template &&
       template.workspace_id === auth.workspaceId &&
@@ -129,6 +133,10 @@ function visibleTemplate(db, auth, template) {
 }
 
 function templateCanDelete(db, auth, template) {
+  if (db.dialect === 'postgres') {
+    const a = getProjectAccess(db, auth.workspaceId, auth.userId, template.project_id, { config: db.projectConfig, clock: db.projectClock });
+    return !!a?.canEdit && !a.guest && (template.created_by === auth.userId || a.canManage);
+  }
   return (
     canWriteScope(db, auth.workspaceId, auth.userId, template.team_id) &&
     (template.created_by === auth.userId ||
@@ -265,7 +273,7 @@ function extrasPayload(db, auth, task) {
     assigneeIds: extraAssigneeIds(db, task.id),
     labelIds: labelIds(db, auth.workspaceId, task.id),
     labels: labelRows(db, auth.workspaceId, task.id),
-    members: memberRows(db, auth.workspaceId, task.team_id),
+    members: memberRows(db, auth.workspaceId, task.project_id ? null : task.team_id).filter(member => canAccessTask(db, auth.workspaceId, member.id, task)),
     checklists: checklistRows(db, auth.workspaceId, task.id),
   };
 }
@@ -291,14 +299,10 @@ function validWorkspaceMember(db, workspaceId, userId) {
     .get(workspaceId, userId);
 }
 
-function validateAssigneeIds(db, workspaceId, teamId, ids, HttpError) {
+function validateAssigneeIds(db, workspaceId, teamId, ids, HttpError, projectId) {
   for (const id of ids) {
-    if (!validWorkspaceMember(db, workspaceId, id))
-      throw errorOf(HttpError, 400, "assigneeIds contains a user outside this workspace");
-    if (teamId && !db
-      .prepare("SELECT 1 FROM team_members WHERE team_id = ? AND workspace_id = ? AND user_id = ?")
-      .get(teamId, workspaceId, id))
-      throw errorOf(HttpError, 400, "assigneeIds must belong to the task team");
+    if (!validAssigneeId(db, workspaceId, teamId, id, projectId))
+      throw errorOf(HttpError, 400, "Người được giao không có quyền trong phạm vi công việc");
   }
 }
 
@@ -308,8 +312,9 @@ function isCardMember(db, task, userId) {
   return Boolean(db.prepare("SELECT 1 FROM task_assignees WHERE task_id = ? AND user_id = ?").get(task.id, userId));
 }
 
-function validAssigneeId(db, workspaceId, teamId, id) {
+export function validAssigneeId(db, workspaceId, teamId, id, projectId) {
   if (!id || !validWorkspaceMember(db, workspaceId, id)) return false;
+  if (db.dialect === 'postgres') return Boolean(projectId && canAccessTask(db, workspaceId, id, { workspace_id: workspaceId, project_id: projectId }));
   if (!teamId) return true;
   return Boolean(
     db
@@ -318,14 +323,27 @@ function validAssigneeId(db, workspaceId, teamId, id) {
   );
 }
 
-function validateLabelIds(db, workspaceId, ids, HttpError) {
+export function taskScopeLinkConflict(db, task, projectId = task.project_id, { completedChecklistIsHistory = false } = {}) {
+  if (db.dialect !== 'postgres') return null;
+  if (db.prepare(`SELECT 1 FROM task_label_links ll JOIN task_labels l ON l.id=ll.label_id
+      WHERE ll.task_id=? AND (l.workspace_id<>? OR l.project_id<>?) LIMIT 1`).get(task.id, task.workspace_id, projectId))
+    return 'Cần xử lý nhãn ngoài dự án đích trước khi chuyển hoặc khôi phục';
+  const people = db.prepare(`SELECT user_id FROM task_assignees WHERE task_id=? UNION
+      SELECT a.user_id FROM task_checklist_assignees a JOIN task_checklist_items i ON i.id=a.item_id
+      JOIN task_checklists c ON c.id=i.checklist_id WHERE c.task_id=?${completedChecklistIsHistory ? " AND i.completed=0" : ""}`).all(task.id, task.id);
+  if (people.some(person => !validAssigneeId(db, task.workspace_id, task.team_id, person.user_id, projectId)))
+    return 'Cần xử lý người phối hợp hoặc checklist không có quyền trong dự án đích';
+  return null;
+}
+
+function validateLabelIds(db, workspaceId, ids, HttpError, projectId) {
   if (!ids.length) return;
   const placeholders = ids.map(() => "?").join(",");
   const rows = db
     .prepare(
-      `SELECT id FROM task_labels WHERE workspace_id = ? AND id IN (${placeholders})`,
+      `SELECT id FROM task_labels WHERE workspace_id = ? AND id IN (${placeholders}) ${db.dialect === "postgres" && projectId ? "AND project_id = ?" : ""}`,
     )
-    .all(workspaceId, ...ids);
+    .all(workspaceId, ...ids, ...(db.dialect === "postgres" && projectId ? [projectId] : []));
   if (rows.length !== ids.length)
     throw errorOf(HttpError, 400, "labelIds contains an unknown label");
 }
@@ -352,6 +370,7 @@ function templateJson(row, canDelete) {
     name: row.name,
     kind: row.kind,
     teamId: row.team_id || null,
+    projectId: row.project_id || null,
     canDelete: Boolean(canDelete),
   };
 }
@@ -413,15 +432,16 @@ function sourceTaskForTemplate(db, auth, sourceTaskId, HttpError) {
 
 function insertChecklistTree(db, taskId, payload, actorUserId, now) {
   const created = [];
+  const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
+  const firstPosition = Number(db.prepare("SELECT COALESCE(MAX(position), -1) AS position FROM task_checklists WHERE task_id = ?").get(taskId).position) + 1;
   for (const list of payload.checklists || []) {
     const checklistId = createId("checklist_");
     db.prepare(
       `INSERT INTO task_checklists
        (id, task_id, title, position, created_by, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(checklistId, taskId, list.title, created.length, actorUserId, now, now);
+    ).run(checklistId, taskId, list.title, firstPosition + created.length, actorUserId, now, now);
     const items = [];
-    const task = db.prepare("SELECT id, assignee_id, workspace_id, team_id FROM tasks WHERE id = ?").get(taskId);
     for (const [index, item] of (list.items || []).entries()) {
       const itemId = createId("checkitem_");
       db.prepare(
@@ -431,7 +451,7 @@ function insertChecklistTree(db, taskId, payload, actorUserId, now) {
       ).run(itemId, checklistId, item.title, item.completed ? 1 : 0, index, item.startAt || null, item.dueAt || null, item.remindAt || null, now, now);
       const insertAssignee = db.prepare("INSERT INTO task_checklist_assignees(item_id, user_id) VALUES (?, ?)");
       for (const userId of item.assigneeIds || []) {
-        if (task && validAssigneeId(db, task.workspace_id, task.team_id, userId) && isCardMember(db, task, userId)) insertAssignee.run(itemId, userId);
+        if (task && validAssigneeId(db, task.workspace_id, task.team_id, userId, task.project_id) && isCardMember(db, task, userId)) insertAssignee.run(itemId, userId);
       }
       items.push({ id: itemId, title: item.title, completed: Boolean(item.completed) });
     }
@@ -451,6 +471,7 @@ function copyChecklistTree(db, sourceTaskId, targetTaskId, actorUserId, now) {
     )
     .all(sourceTaskId);
   const created = [];
+  const target = db.prepare("SELECT * FROM tasks WHERE id = ?").get(targetTaskId);
   for (const list of lists) {
     const checklistId = createId("checklist_");
     db.prepare(
@@ -458,7 +479,6 @@ function copyChecklistTree(db, sourceTaskId, targetTaskId, actorUserId, now) {
        (id, task_id, title, position, created_by, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ).run(checklistId, targetTaskId, list.title, created.length, actorUserId, now, now);
-    const target = db.prepare("SELECT id, assignee_id, workspace_id, team_id FROM tasks WHERE id = ?").get(targetTaskId);
     const items = db
       .prepare(
         `SELECT title, completed, position, created_at, id, start_at, due_at, remind_at
@@ -476,7 +496,7 @@ function copyChecklistTree(db, sourceTaskId, targetTaskId, actorUserId, now) {
       const people = db.prepare("SELECT user_id FROM task_checklist_assignees WHERE item_id = ?").all(item.id);
       const insertAssignee = db.prepare("INSERT INTO task_checklist_assignees(item_id, user_id) VALUES (?, ?)");
       for (const person of people) {
-        if (target && validAssigneeId(db, target.workspace_id, target.team_id, person.user_id) && isCardMember(db, target, person.user_id)) insertAssignee.run(itemId, person.user_id);
+        if (target && validAssigneeId(db, target.workspace_id, target.team_id, person.user_id, target.project_id) && isCardMember(db, target, person.user_id)) insertAssignee.run(itemId, person.user_id);
       }
     });
     created.push(checklistId);
@@ -489,6 +509,7 @@ function insertTaskFromData(
   {
     workspaceId,
     teamId,
+    projectId = null,
     title,
     description = "",
     status = "todo",
@@ -515,6 +536,7 @@ function insertTaskFromData(
   const column = resolveTaskColumn(db, {
     workspaceId,
     teamId,
+    projectId,
     status: requestedStatus,
     columnId: columnId || undefined,
     clock,
@@ -523,13 +545,14 @@ function insertTaskFromData(
   const id = createId("task_");
   db.prepare(
     `INSERT INTO tasks
-     (id, workspace_id, title, description, status, priority, due_at, remind_at,
+     (id, workspace_id, ${projectId ? "project_id," : ""} title, description, status, priority, due_at, remind_at,
       assignee_id, customer_id, team_id, column_id, board_position, category,
       recurrence, recurrence_options, recurrence_anchor, created_by, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ${projectId ? "?," : ""} ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     workspaceId,
+    ...(projectId ? [projectId] : []),
     title,
     description,
     column.status,
@@ -561,8 +584,8 @@ function templateTaskTeam(template, requestedTeamId, HttpError) {
     throw errorOf(HttpError, 403, "template is scoped to another team");
 }
 
-function taskDataFromPayload(payload, dueAt, teamId, source, db, auth, HttpError) {
-  const mainAssignee = payload.assigneeId && validAssigneeId(db, auth.workspaceId, teamId, payload.assigneeId)
+function taskDataFromPayload(payload, dueAt, teamId, source, db, auth, HttpError, projectId) {
+  const mainAssignee = payload.assigneeId && validAssigneeId(db, auth.workspaceId, teamId, payload.assigneeId, projectId)
     ? payload.assigneeId
     : payload.assigneeId
       ? null
@@ -570,7 +593,7 @@ function taskDataFromPayload(payload, dueAt, teamId, source, db, auth, HttpError
   if (payload.assigneeId && !mainAssignee)
     throw errorOf(HttpError, 400, "template assignee is no longer active in the target team");
   const extraIds = Array.isArray(payload.assigneeIds) ? payload.assigneeIds : [];
-  validateAssigneeIds(db, auth.workspaceId, teamId, extraIds, HttpError);
+  validateAssigneeIds(db, auth.workspaceId, teamId, extraIds, HttpError, projectId);
   if (mainAssignee) {
     const filtered = extraIds.filter((id) => id !== mainAssignee);
     return {
@@ -664,7 +687,7 @@ export function registerTaskExtrasRoutes(
     const template = templateRow(db, req.auth.workspaceId, req.params.id);
     if (!template || !visibleTemplate(db, req.auth, template))
       throw errorOf(HttpError, 404, "template was not found");
-    if (write && !canWriteScope(db, req.auth.workspaceId, req.auth.userId, template.team_id))
+    if (write && !(db.dialect === "postgres" ? canAccessProject(db, req.auth.workspaceId, req.auth.userId, template.project_id, { action: "write", config: db.projectConfig, clock: db.projectClock }) : canWriteScope(db, req.auth.workspaceId, req.auth.userId, template.team_id)))
       throw errorOf(HttpError, 409, "team is archived and read-only");
     return template;
   }
@@ -678,17 +701,17 @@ export function registerTaskExtrasRoutes(
     }
   });
 
-  app.put("/api/tasks/:id/extras", requireAuth, (req, res, next) => {
-    try {
+  registerTaskMutationCommand(app, "PUT", "/api/tasks/:id/extras", requireAuth, (req) => {
       ensureWritable(req);
       const task = taskOr404(req, { write: true });
       assertKeys(req.body, new Set(["assigneeIds", "labelIds"]), HttpError);
       const assignees = idArray(req.body.assigneeIds, "assigneeIds", HttpError, MAX_ASSIGNEES);
       const labels = idArray(req.body.labelIds, "labelIds", HttpError, MAX_LABELS);
-      validateAssigneeIds(db, req.auth.workspaceId, task.team_id, assignees, HttpError);
+      validateAssigneeIds(db, req.auth.workspaceId, task.team_id, assignees, HttpError, task.project_id);
+      if (assignees.some(id => !canAccessTask(db, req.auth.workspaceId, id, task))) throw errorOf(HttpError, 400, "Người được giao không có quyền với dự án");
       if (task.assignee_id && assignees.includes(task.assignee_id))
         throw errorOf(HttpError, 400, "assigneeIds must exclude the primary assignee");
-      validateLabelIds(db, req.auth.workspaceId, labels, HttpError);
+      validateLabelIds(db, req.auth.workspaceId, labels, HttpError, task.project_id);
       const now = timestamp();
       withTransaction(db, () => {
         setTaskExtras(db, req.auth.workspaceId, task.id, assignees, labels, now);
@@ -700,22 +723,20 @@ export function registerTaskExtrasRoutes(
           createdAt: now,
         });
       });
-      return res.json(extrasPayload(db, req.auth, taskRow(db, req.auth.workspaceId, task.id)));
-    } catch (error) {
-      return next(error);
-    }
+      return extrasPayload(db, req.auth, taskRow(db, req.auth.workspaceId, task.id));
   });
 
   app.get("/api/task-labels", requireAuth, (req, res, next) => {
     try {
       const labels = db
         .prepare(
-          `SELECT id, name, color, created_at, updated_at
+          `SELECT *
            FROM task_labels WHERE workspace_id = ?
            ORDER BY lower(name) ASC, id ASC`,
         )
         .all(req.auth.workspaceId)
-        .map((row) => ({ id: row.id, name: row.name, color: row.color }));
+        .filter(row => db.dialect !== "postgres" || ((!req.query.projectId || row.project_id === req.query.projectId) && canAccessProject(db, req.auth.workspaceId, req.auth.userId, row.project_id)))
+        .map((row) => ({ id: row.id, name: row.name, color: row.color, ...(row.project_id ? { projectId: row.project_id } : {}) }));
       return res.json({ labels });
     } catch (error) {
       return next(error);
@@ -725,9 +746,11 @@ export function registerTaskExtrasRoutes(
   app.post("/api/task-labels", requireAuth, (req, res, next) => {
     try {
       ensureWritable(req);
-      if (!canManageAllTeams(db, req.auth.workspaceId, req.auth.userId))
-        throw errorOf(HttpError, 403, "only workspace admins can manage labels");
-      assertKeys(req.body, new Set(["name", "color"]), HttpError);
+      const projectId = db.dialect === 'postgres' ? req.body?.projectId || defaultProjectId(req.auth.workspaceId) : null;
+      const access = projectId && getProjectAccess(db, req.auth.workspaceId, req.auth.userId, projectId, { config: db.projectConfig, clock: db.projectClock });
+      if (projectId ? !access?.canManage : !canManageAllTeams(db, req.auth.workspaceId, req.auth.userId))
+        throw errorOf(HttpError, 403, "only project managers can manage labels");
+      assertKeys(req.body, new Set(["name", "color", "projectId"]), HttpError);
       const name = stringValue(req.body.name, "name", HttpError, { required: true, max: 80 });
       const color = stringValue(req.body.color, "color", HttpError, { required: true, max: 40 });
       const now = timestamp();
@@ -735,12 +758,12 @@ export function registerTaskExtrasRoutes(
       try {
         withTransaction(db, () => {
           db.prepare(
-            `INSERT INTO task_labels(id, workspace_id, name, color, created_by, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          ).run(id, req.auth.workspaceId, name, color, req.auth.userId, now, now);
+            `INSERT INTO task_labels(id, workspace_id, name, color, created_by, created_at, updated_at ${projectId ? ", project_id" : ""})
+             VALUES (?, ?, ?, ?, ?, ?, ? ${projectId ? ", ?" : ""})`,
+          ).run(id, req.auth.workspaceId, name, color, req.auth.userId, now, now, ...(projectId ? [projectId] : []));
         });
       } catch (error) {
-        if (String(error?.message || "").includes("UNIQUE"))
+        if ((error?.code === "23505" || /unique/i.test(String(error?.message || ""))))
           throw errorOf(HttpError, 409, "a label with that name already exists");
         throw error;
       }
@@ -759,7 +782,7 @@ export function registerTaskExtrasRoutes(
            ORDER BY created_at DESC, id DESC`,
         )
         .all(req.auth.workspaceId)
-        .filter((row) => visibleTemplate(db, req.auth, row))
+        .filter((row) => visibleTemplate(db, req.auth, row) && (!req.query.projectId || row.project_id === req.query.projectId))
         .map((row) => templateJson(row, templateCanDelete(db, req.auth, row)));
       return res.json({ templates: rows });
     } catch (error) {
@@ -839,7 +862,7 @@ export function registerTaskExtrasRoutes(
       const target = taskForUser(db, req.auth, taskId, HttpError, { write: true });
       if (!target) throw errorOf(HttpError, 404, "target task was not found");
       if (template.kind !== "checklist") throw errorOf(HttpError, 400, "only checklist templates can be applied");
-      if (template.team_id && !sameTeam(template.team_id, target.team_id))
+      if (db.dialect === "postgres" ? template.project_id !== target.project_id : template.team_id && !sameTeam(template.team_id, target.team_id))
         throw errorOf(HttpError, 403, "template is scoped to another team");
       const payload = parsePayload(template, HttpError);
       if (!Array.isArray(payload.checklists) || !payload.checklists.length)
@@ -848,6 +871,9 @@ export function registerTaskExtrasRoutes(
         throw errorOf(HttpError, 400, "a task can have at most 50 checklists");
       if (payload.checklists.some((list) => (list.items || []).length > MAX_CHECKLIST_ITEMS))
         throw errorOf(HttpError, 400, "a checklist can have at most 100 items");
+      if (payload.checklists.some(list => (list.items || []).some(item => (item.assigneeIds || []).some(id =>
+        !validAssigneeId(db, target.workspace_id, target.team_id, id, target.project_id) || !isCardMember(db, target, id)))))
+        throw errorOf(HttpError, 409, "Cần cập nhật người được giao trong mẫu hoặc công việc đích trước khi áp dụng checklist");
       const now = timestamp();
       let created;
       withTransaction(db, () => {
@@ -869,23 +895,26 @@ export function registerTaskExtrasRoutes(
   app.post("/api/task-templates/:id/create", requireAuth, (req, res, next) => {
     try {
       ensureWritable(req);
-      assertKeys(req.body, new Set(["dueAt", "teamId"]), HttpError);
+      assertKeys(req.body, new Set(["dueAt", "teamId", "projectId"]), HttpError);
       const template = templateOr404(req, { write: true });
       if (template.kind !== "task") throw errorOf(HttpError, 400, "only task templates can create tasks");
       const dueAt = dueValue(req.body.dueAt, HttpError);
-      const teamId = teamValue(req.body.teamId, HttpError);
-      templateTaskTeam(template, teamId, HttpError);
-      ensureTargetTeam(db, req.auth, teamId, HttpError);
+      const projectId = db.dialect === 'postgres' ? req.body.projectId || template.project_id : null;
+      if (projectId && projectId !== template.project_id) throw errorOf(HttpError, 400, "Template belongs to another project");
+      const teamId = projectId ? template.team_id : teamValue(req.body.teamId, HttpError);
+      if (!projectId) { templateTaskTeam(template, teamId, HttpError); ensureTargetTeam(db, req.auth, teamId, HttpError); }
       const payload = parsePayload(template, HttpError);
-      const data = taskDataFromPayload(payload, dueAt, teamId, template.team_id ? { team_id: template.team_id } : null, db, req.auth, HttpError);
+      const data = taskDataFromPayload(payload, dueAt, teamId, template.team_id ? { team_id: template.team_id } : null, db, req.auth, HttpError, projectId);
       if (data.customerId && !db.prepare("SELECT 1 FROM customers WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL").get(data.customerId, req.auth.workspaceId))
         data.customerId = null;
-      validateLabelIds(db, req.auth.workspaceId, data.labelIds, HttpError);
+      validateLabelIds(db, req.auth.workspaceId, data.labelIds, HttpError, projectId);
+      if (projectId && [data.assigneeId, ...data.extraIds].filter(Boolean).some(id => !canAccessProject(db, req.auth.workspaceId, id, projectId))) throw errorOf(HttpError, 400, "Template assignee no longer has project access");
       const now = timestamp();
       let id;
       withTransaction(db, () => {
         id = insertTaskFromData(db, {
           workspaceId: req.auth.workspaceId,
+          projectId,
           teamId,
           ...data,
           actorUserId: req.auth.userId,
@@ -914,9 +943,12 @@ export function registerTaskExtrasRoutes(
       assertKeys(req.body, new Set(["dueAt"]), HttpError);
       const source = taskOr404(req, { write: true });
       const dueAt = dueValue(req.body.dueAt, HttpError);
-      const extras = extraAssigneeIds(db, source.id).filter((id) => validAssigneeId(db, source.workspace_id, source.team_id, id));
+      const linkConflict = taskScopeLinkConflict(db, source);
+      if (linkConflict) throw errorOf(HttpError, 409, linkConflict);
+      const extras = extraAssigneeIds(db, source.id);
+      if ([source.assignee_id, ...extras].filter(Boolean).some(id => !canAccessTask(db, source.workspace_id, id, source))) throw errorOf(HttpError, 400, "Người được giao không còn quyền trong dự án; hãy cập nhật trước khi sao chép");
       const labels = labelIds(db, source.workspace_id, source.id);
-      const assigneeId = validAssigneeId(db, source.workspace_id, source.team_id, source.assignee_id)
+      const assigneeId = validAssigneeId(db, source.workspace_id, source.team_id, source.assignee_id, source.project_id)
         ? source.assignee_id
         : null;
       const now = timestamp();
@@ -924,6 +956,7 @@ export function registerTaskExtrasRoutes(
       withTransaction(db, () => {
         id = insertTaskFromData(db, {
           workspaceId: source.workspace_id,
+          projectId: source.project_id,
           teamId: source.team_id || null,
           title: source.title,
           description: source.description,
@@ -932,7 +965,7 @@ export function registerTaskExtrasRoutes(
           dueAt,
           remindAt: source.remind_at,
           assigneeId,
-          customerId: source.customer_id,
+          customerId: req.auth.memberType === "guest" ? null : source.customer_id,
           category: source.category,
           recurrence: source.recurrence,
           recurrenceOptions: storedRecurrenceOptions(source),
@@ -944,6 +977,7 @@ export function registerTaskExtrasRoutes(
         });
         insertExtrasAndLabels(db, source.workspace_id, id, extras.filter((userId) => userId !== assigneeId), labels, now);
         copyChecklistTree(db, source.id, id, req.auth.userId, now);
+        copyProjectFields(db, source.id, id);
         recordActivity(recordTaskActivity, db, {
           taskId: id,
           actorUserId: req.auth.userId,
@@ -963,6 +997,8 @@ export function registerTaskExtrasRoutes(
       ensureWritable(req);
       assertKeys(req.body, new Set(), HttpError);
       const task = taskOr404(req, { write: true });
+      const linkConflict = taskScopeLinkConflict(db, task);
+      if (linkConflict) throw errorOf(HttpError, 409, linkConflict);
       const source = checklistById(db, req.auth.workspaceId, task.id, req.params.checklistId);
       if (!source) throw errorOf(HttpError, 404, "checklist was not found");
       const now = timestamp();
@@ -983,7 +1019,7 @@ export function registerTaskExtrasRoutes(
           ).run(itemId, id, item.title, item.completed ? 1 : 0, index, item.start_at || null, item.due_at || null, item.remind_at || null, now, now);
           const insertAssignee = db.prepare("INSERT INTO task_checklist_assignees(item_id, user_id) VALUES (?, ?)");
           for (const person of db.prepare("SELECT user_id FROM task_checklist_assignees WHERE item_id = ?").all(item.id)) {
-            if (isCardMember(db, task, person.user_id)) insertAssignee.run(itemId, person.user_id);
+            if (isCardMember(db, task, person.user_id) && validAssigneeId(db, task.workspace_id, task.team_id, person.user_id, task.project_id)) insertAssignee.run(itemId, person.user_id);
           }
         });
         createdId = id;
@@ -1037,19 +1073,20 @@ export function registerTaskExtrasRoutes(
         : dueValue(req.body.dueAt, HttpError);
       const itemPeople = db.prepare("SELECT user_id FROM task_checklist_assignees WHERE item_id = ? ORDER BY user_id").all(item.id)
         .map((row) => row.user_id)
-        .filter((id) => validAssigneeId(db, source.workspace_id, source.team_id, id));
+        .filter((id) => validAssigneeId(db, source.workspace_id, source.team_id, id, source.project_id));
       const assigneeId = itemPeople.length
         ? itemPeople[0]
-        : validAssigneeId(db, source.workspace_id, source.team_id, source.assignee_id) ? source.assignee_id : null;
+        : validAssigneeId(db, source.workspace_id, source.team_id, source.assignee_id, source.project_id) ? source.assignee_id : null;
       const extras = itemPeople.length
         ? itemPeople.slice(1)
-        : extraAssigneeIds(db, source.id).filter((id) => id !== assigneeId && validAssigneeId(db, source.workspace_id, source.team_id, id));
+        : extraAssigneeIds(db, source.id).filter((id) => id !== assigneeId && validAssigneeId(db, source.workspace_id, source.team_id, id, source.project_id));
       const labels = labelIds(db, source.workspace_id, source.id);
       const now = timestamp();
       let id;
       withTransaction(db, () => {
         id = insertTaskFromData(db, {
           workspaceId: source.workspace_id,
+          projectId: source.project_id,
           teamId: source.team_id || null,
           title: item.title,
           description: "",
@@ -1058,7 +1095,7 @@ export function registerTaskExtrasRoutes(
           dueAt,
           remindAt: item.remind_at && !Number.isNaN(new Date(item.remind_at).getTime()) ? new Date(item.remind_at).toISOString() : null,
           assigneeId,
-          customerId: source.customer_id,
+          customerId: req.auth.memberType === "guest" ? null : source.customer_id,
           category: source.category,
           recurrence: "none",
           actorUserId: req.auth.userId,
@@ -1092,10 +1129,21 @@ export function registerTaskExtrasRoutes(
 
 // Reuse current membership when carrying collaborative metadata into a recurrence.
 export function reconcileTaskAssignees(db,task){
- for(const id of extraAssigneeIds(db,task.id))if(id===task.assignee_id||!validAssigneeId(db,task.workspace_id,task.team_id,id))db.prepare('DELETE FROM task_assignees WHERE task_id=? AND user_id=?').run(task.id,id);
+ for(const id of extraAssigneeIds(db,task.id))if(id===task.assignee_id||!validAssigneeId(db,task.workspace_id,task.team_id,id,task.project_id))db.prepare('DELETE FROM task_assignees WHERE task_id=? AND user_id=?').run(task.id,id);
 }
 export function copyRecurringExtras(db,sourceId,targetId,now){
  const target=db.prepare('SELECT * FROM tasks WHERE id=?').get(targetId);if(!target)return;
- const ids=extraAssigneeIds(db,sourceId).filter(id=>id!==target.assignee_id&&validAssigneeId(db,target.workspace_id,target.team_id,id));
+ const ids=extraAssigneeIds(db,sourceId).filter(id=>id!==target.assignee_id&&validAssigneeId(db,target.workspace_id,target.team_id,id,target.project_id));
  insertExtrasAndLabels(db,target.workspace_id,targetId,ids,labelIds(db,target.workspace_id,sourceId),now);
+ copyProjectFields(db,sourceId,targetId);
+}
+
+function copyProjectFields(db,sourceId,targetId){
+ if(db.dialect!=='postgres')return;
+ const source=db.prepare('SELECT * FROM tasks WHERE id=?').get(sourceId),target=db.prepare('SELECT * FROM tasks WHERE id=?').get(targetId);
+ if(!source||!target||source.workspace_id!==target.workspace_id||source.project_id!==target.project_id)return;
+ db.prepare('INSERT INTO task_field_values(task_id,field_id,workspace_id,project_id,value_json) SELECT ?,field_id,workspace_id,project_id,value_json FROM task_field_values WHERE task_id=? AND workspace_id=? ON CONFLICT(task_id,field_id) DO NOTHING').run(targetId,sourceId,source.workspace_id);
+ if(source.start_at){const shift=source.due_at&&target.due_at?Date.parse(target.due_at)-Date.parse(source.due_at):0;
+  db.prepare('UPDATE tasks SET start_at=? WHERE id=?').run(new Date(Date.parse(source.start_at)+shift).toISOString(),targetId);
+ }
 }

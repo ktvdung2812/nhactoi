@@ -1,3 +1,16 @@
+import { registerZaloOa } from './zalo-oa.mjs';
+import { registerPublicApi, publicApiErrorEnvelope } from './public-api.mjs';
+import { registerWebhooks } from './webhooks.mjs';
+import { registerGoogleCalendar } from './google-calendar.mjs';
+import { canAccessTask, taskAccessSql, guestNotificationAccessSql } from './task-access.mjs';
+import { registerProjectRoutes, resolveTaskProject, defaultProjectId } from './projects.mjs';
+import { registerProjectAdvancedRoutes } from './project-advanced.mjs';
+import { registerImportRoutes } from './imports.mjs';
+import { subscriptionJson } from './subscription-json.mjs';
+import { invalidateSessions } from './restore-safety.mjs';
+import { planningDay } from '../shared/personal-planning.mjs';
+import { ENTITLEMENT_CODES, planEntitlements, currentPlans, hasWorkspaceEntitlement } from './entitlements.mjs';
+import { lockWorkspaceSeats, lockPlanSeatChanges, workspaceSeatCount } from './workspace-seats.mjs';
 import { webPushConfig, registerWebPushRoutes, processWebPush } from "./web-push.mjs";
 import { RECURRENCES as RECURRENCE_VALUES, nextTaskOccurrence } from "../shared/task-recurrence.mjs";
 import { validateRecurrenceOptions, storedRecurrenceOptions } from "./recurrence.mjs";
@@ -6,15 +19,21 @@ import { registerAppearanceRoutes } from "./appearance.mjs";
 import { seedDemo } from "./seed.mjs";
 import { registerPersonalTaskRoutes } from "./personal-tasks.mjs";
 import { registerAiAssistantRoutes } from "./ai-assistant.mjs";
-import {registerTaskExtrasRoutes,extraAssigneeIds,reconcileTaskAssignees,copyRecurringExtras} from "./task-extras.mjs";
+import {registerTaskExtrasRoutes,extraAssigneeIds,reconcileTaskAssignees,copyRecurringExtras,taskScopeLinkConflict} from "./task-extras.mjs";
 import {registerRemoteStorageRoutes} from "./remote-storage.mjs";
 import {registerGoogleRoutes} from "./google-login.mjs";
 import {registerBackupRoutes} from "./backups.mjs";
 import {registerEventRoutes,processEventReminders} from "./calendar-events.mjs";
+import { recordRevision, assertRevision } from "./record-revision.mjs";
+import { registerTaskMutationPipeline, registerTaskMutationCommand } from "./task-mutation-pipeline.mjs";
 import {registerBoardTransferRoutes} from "./board-transfer.mjs";
 import {JSON_BODY_LIMIT_BYTES} from "../shared/board-transfer.mjs";
 import { registerCollaborationRoutes } from "./collaboration.mjs";
 import { registerServiceRoutes, processServiceReminders } from "./services.mjs";
+import { registerOperationsDashboard } from "./operations-dashboard.mjs";
+import { registerWorkCalendarRoutes, nextWorkingOccurrence, getWorkCalendar, delegatedRecipients } from "./work-calendar.mjs";
+import { registerTimeRoutes } from "./work-time.mjs";
+import { registerWorkReports } from "./work-reports.mjs";
 import { registerAutomationRoutes,emitTaskEvent } from "./automations.mjs";
 import { authRequestLimiter, registerPasswordResetRoutes } from "./password-reset.mjs";
 import {
@@ -177,6 +196,7 @@ function configFrom(options = {}) {
     .filter(Boolean);
   return {
     env,
+    importLimits: {maxBytes:Math.min(512*1024,numberEnv(['IMPORT_MAX_FILE_BYTES'],512*1024)),maxRows:Math.min(500,numberEnv(['IMPORT_MAX_ROWS'],500)),maxLists:Math.min(40,numberEnv(['IMPORT_MAX_LISTS'],40)),maxColumns:100},
     port: Number(env.PORT || 3000),
     host: String(env.HOST || "127.0.0.1"),
     nodeEnv: String(env.NODE_ENV || "development"),
@@ -264,10 +284,13 @@ function settingsKeyFileFromEnv(env, dbPath) {
   return null;
 }
 
-function loadSettingsKey({ env, dbPath, explicitKey } = {}) {
+function loadSettingsKey({ env, dbPath, explicitKey, db } = {}) {
   const envKey = deriveSettingsKey(explicitKey || settingKeyFromEnv(env));
   if (envKey) return envKey;
   const keyPath = settingsKeyFileFromEnv(env, dbPath);
+  if ((!keyPath || !existsSync(/* turbopackIgnore: true */ keyPath))
+    && db?.prepare('SELECT 1 FROM app_settings WHERE encrypted=1 LIMIT 1').get())
+    throw new Error('Thiếu khóa mã hóa gốc. Cung cấp NHACTOI_SETTINGS_KEY hoặc khôi phục tệp khóa trước khi khởi động.');
   if (!keyPath) return randomBytes(SETTINGS_KEY_BYTES);
   mkdirSync(dirname(keyPath), { recursive: true });
   if (existsSync(/* turbopackIgnore: true */ keyPath)) {
@@ -321,10 +344,12 @@ function loadStoredSettings(db, key) {
     .all();
   const values = new Map();
   for (const row of rows) {
-    const text = row.encrypted
-      ? decryptSetting(row.value, key)
-      : String(row.value);
-    values.set(row.key, text);
+    try {
+      const text = row.encrypted ? decryptSetting(row.value, key) : String(row.value);
+      values.set(row.key, text);
+    } catch {
+      throw new Error('Không giải mã được cấu hình. Kiểm tra khóa mã hóa gốc và tính toàn vẹn bản sao; sender chưa được khởi động.');
+    }
   }
   return values;
 }
@@ -594,6 +619,7 @@ function userJson(row) {
     name: row.name,
     email: row.email,
     role: row.role,
+    memberType: row.member_type || "member",
     isPlatformAdmin: Boolean(row.is_platform_admin ?? row.isPlatformAdmin),
   };
 }
@@ -607,33 +633,25 @@ function workspaceJson(row) {
   };
 }
 
-function subscriptionJson(row, clock) {
-  if (!row) return null;
-  const expired =
-    row.status !== "canceled" &&
-    new Date(row.current_period_end).getTime() <= currentDate(clock).getTime();
-  return {
-    plan: row.plan,
-    cycle: row.cycle,
-    status: expired ? "expired" : row.status,
-    currentPeriodEnd: row.current_period_end,
-  };
-}
-
-function taskJson(row) {
+function taskJson(row, auth) {
   return {
     id: row.id,
+    revision: recordRevision(row, "task"),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
     title: row.title,
     description: row.description,
     status: row.status,
     priority: row.priority,
     dueAt: row.due_at,
+    startAt: row.start_at ?? null,
     remindAt: row.remind_at,
     assigneeId: row.assignee_id,
-    customerId: row.customer_id,
+    customerId: auth?.memberType === "guest" ? null : row.customer_id,
     category: row.category,
     recurrence: row.recurrence,
     recurrenceOptions: storedRecurrenceOptions(row),
+    projectId: row.project_id ?? null,
     teamId: row.team_id ?? null,
     columnId: row.column_id ?? null,
     boardPosition: Number(row.board_position || 0),
@@ -702,6 +720,13 @@ function memberLimit(config, subscription) {
   return plan.memberLimit;
 }
 
+function assertWorkspacePlanSeats(db, workspaceId, plan, clock) {
+  if (!plan) throw new HttpError(409, "Gói thuê bao không còn khả dụng");
+  const seats = workspaceSeatCount(db, workspaceId, isoNow(clock));
+  if (seats > plan.memberLimit)
+    throw new HttpError(409, `Gói ${plan.name} chỉ cho phép ${plan.memberLimit} thành viên, hiện đã có ${seats} thành viên và lời mời đang chờ. Giảm số ghế rồi xác nhận thanh toán lại.`);
+}
+
 function getSubscription(db, workspaceId) {
   return rowObject(
     db
@@ -768,7 +793,7 @@ function authContext(db, token, clock, expectedKind = null) {
     SELECT s.id AS session_id, s.user_id, s.workspace_id, s.expires_at,
            s.kind AS session_kind,
            u.id, u.name, u.email, u.is_platform_admin, u.disabled_at,
-           wm.role,
+           wm.role, ${db.dialect === "postgres" ? "wm.member_type" : "'member' AS member_type"},
            w.name AS workspace_name, w.industry AS workspace_industry,
            w.suspended_at AS workspace_suspended_at
     FROM sessions s
@@ -783,13 +808,13 @@ function authContext(db, token, clock, expectedKind = null) {
   if (!session) return null;
   if (expectedKind && session.session_kind !== expectedKind) return null;
   if (new Date(session.expires_at).getTime() <= currentDate(clock).getTime()) {
-    db.prepare("DELETE FROM sessions WHERE id = ?").run(session.session_id);
+    invalidateSessions(db, { id: session.session_id });
     return null;
   }
   if (session.disabled_at) {
     // A platform admin may be disabled while a session is still present. The
     // session is invalid immediately rather than waiting for its expiry.
-    db.prepare("DELETE FROM sessions WHERE id = ?").run(session.session_id);
+    invalidateSessions(db, { id: session.session_id });
     return null;
   }
   return {
@@ -798,11 +823,13 @@ function authContext(db, token, clock, expectedKind = null) {
       name: session.name,
       email: session.email,
       role: session.role,
+      member_type: session.member_type,
       is_platform_admin: session.is_platform_admin,
     }),
     userId: session.user_id,
     workspaceId: session.workspace_id,
     role: session.role,
+    memberType: session.member_type || "member",
     workspace: {
       id: session.workspace_id,
       name: session.workspace_name,
@@ -826,13 +853,15 @@ function assertOrigin(req, config) {
 
 function requireAuth(req, res, next) {
   if (!req.auth) return fail(res, 401, "authentication required");
+  if (req.auth.memberType === 'guest' && req.path !== '/api/ai/config' && !/^\/api\/(?:tasks(?:\/|$)|boards(?:\/|$)|projects(?:\/|$)|personal-tasks$|dashboard$|operations-dashboard$|timers(?:\/|$)|time-entries(?:\/|$)|reports\/(?:capacity|portfolio|sla)$|me$|workspaces(?:\/|$)|notifications(?:\/|$)|task-labels$|appearance(?:\/|$)|mobile\/(?:auth(?:\/|$)|notifications(?:\/|$)|devices(?:\/|$))|web-push(?:\/|$))/.test(req.path))
+    return fail(res, 403, "Khách chỉ được truy cập dự án được chia sẻ");
   return next();
 }
 
 function requireRoles(...roles) {
   return (req, res, next) => {
     if (!req.auth) return fail(res, 401, "authentication required");
-    if (!isRole(req.auth, roles))
+    if (req.auth.memberType === "guest" || !isRole(req.auth, roles))
       return fail(res, 403, "you do not have permission for this action");
     return next();
   };
@@ -857,33 +886,30 @@ function requirePlatformAdmin(req, res, next) {
   return next();
 }
 
-function authRateLimiter(failures) {
+function authRateLimiter({ db, clock, settingsKey }) {
   return (req, res, next) => {
-    const key = `${req.ip || req.socket?.remoteAddress || "unknown"}:${String(
-      req.body?.email || "",
-    )
-      .trim()
-      .toLowerCase()}`;
-    const now = Date.now();
-    const record = failures.get(key);
-    if (record && record.resetAt > now && record.count >= 5) {
+    // The preceding shared IP limiter also removes expired buckets. Persist
+    // fixed-size keys so changing emails cannot retain unbounded strings in RAM.
+    const key = `login:failure:${createHmac("sha256", settingsKey).update(JSON.stringify([
+      req.ip || req.socket?.remoteAddress || "unknown",
+      String(req.body?.email || "").trim().toLowerCase(),
+    ])).digest("hex")}`;
+    const now = currentDate(clock).getTime();
+    const record = db.prepare("SELECT count, expires_at FROM auth_request_limits WHERE bucket = ?").get(key);
+    if (record && record.expires_at > now && record.count >= 5) {
+      res.set("Retry-After", String(Math.ceil((record.expires_at - now) / 1000)));
       return fail(
         res,
         429,
         "too many authentication attempts; try again later",
       );
     }
-    if (record && record.resetAt <= now) failures.delete(key);
-    req.authRateKey = key;
     req.noteAuthFailure = () => {
-      const current = failures.get(key);
-      const nextRecord =
-        current && current.resetAt > Date.now()
-          ? { count: current.count + 1, resetAt: current.resetAt }
-          : { count: 1, resetAt: Date.now() + 60_000 };
-      failures.set(key, nextRecord);
+      db.prepare(`INSERT INTO auth_request_limits(bucket, expires_at, count) VALUES (?, ?, 1)
+        ON CONFLICT(bucket) DO UPDATE SET count = auth_request_limits.count + 1`)
+        .run(key, now + 60_000);
     };
-    req.clearAuthFailures = () => failures.delete(key);
+    req.clearAuthFailures = () => db.prepare("DELETE FROM auth_request_limits WHERE bucket = ?").run(key);
     return next();
   };
 }
@@ -944,6 +970,7 @@ function taskRowById(db, taskId, workspaceId) {
 }
 
 function taskRows(db, workspaceId, userId) {
+  const auth = db.dialect === "postgres" ? { memberType: db.prepare("SELECT member_type FROM workspace_members WHERE workspace_id=? AND user_id=?").get(workspaceId,userId)?.member_type } : null;
   const global = canManageAllTeams(db, workspaceId, userId);
   return db
     .prepare(
@@ -952,11 +979,12 @@ function taskRows(db, workspaceId, userId) {
     FROM tasks t
     LEFT JOIN teams tm ON tm.id = t.team_id AND tm.workspace_id = t.workspace_id
     WHERE t.workspace_id = ? AND t.deleted_at IS NULL
+      AND ${db.dialect === "postgres" ? taskAccessSql() : "? IS NOT NULL"}
       AND (
         t.team_id IS NULL
         OR (
           tm.archived_at IS NULL
-          AND (? = 1 OR EXISTS (
+          AND (${db.dialect === "postgres" ? "1" : "0"} = 1 OR ? = 1 OR EXISTS (
             SELECT 1 FROM team_members visible_tm
             WHERE visible_tm.team_id = t.team_id AND visible_tm.workspace_id = ?
               AND visible_tm.user_id = ?
@@ -964,25 +992,39 @@ function taskRows(db, workspaceId, userId) {
         )
       )
     ORDER BY CASE t.status WHEN 'doing' THEN 0 WHEN 'todo' THEN 1 ELSE 2 END,
-             t.due_at ASC, t.created_at DESC, t.id DESC
+             t.due_at ASC, t.created_at DESC, t.id ${db.dialect === "postgres" ? 'COLLATE "C" ' : ''}DESC
   `,
     )
-    .all(workspaceId, global ? 1 : 0, workspaceId, userId)
-    .map(taskJson);
+    .all(workspaceId, userId, global ? 1 : 0, workspaceId, userId)
+    .map(row => taskJson(row, auth));
 }
 
 function taskRowsFiltered(db, workspaceId, userId, query, clock) {
-  const global = canManageAllTeams(db, workspaceId, userId);
-  const where = [
+  const auth = db.dialect === "postgres" ? { memberType: db.prepare("SELECT member_type FROM workspace_members WHERE workspace_id=? AND user_id=?").get(workspaceId,userId)?.member_type } : null;
+  const global = db.dialect !== "postgres" && canManageAllTeams(db, workspaceId, userId);
+  // Evaluate the current project ACL once inside this statement. Keeping it
+  // Keep project authorization inside the statement, separate from the
+  // task projection, so only the requested page loads full task records.
+  const postgres = db.dialect === 'postgres';
+  const where = postgres ? [
+    "t.workspace_id = ?", "t.deleted_at IS NULL",
+    `t.project_id IN (SELECT readable.project_id FROM
+      (SELECT id project_id, workspace_id FROM projects WHERE workspace_id=?) readable
+      WHERE ${taskAccessSql('readable')} OFFSET 0)`,
+    "(t.team_id IS NULL OR t.team_id NOT IN (SELECT id FROM teams WHERE workspace_id=? AND archived_at IS NOT NULL))",
+  ] : [
     "t.workspace_id = ?",
     "t.deleted_at IS NULL",
-    "(t.team_id IS NULL OR (tm.archived_at IS NULL AND (? = 1 OR EXISTS (SELECT 1 FROM team_members visible_tm WHERE visible_tm.team_id = t.team_id AND visible_tm.workspace_id = ? AND visible_tm.user_id = ?))) )",
+    db.dialect === "postgres" ? taskAccessSql() : "? IS NOT NULL",
+    `(t.team_id IS NULL OR (tm.archived_at IS NULL AND (${db.dialect === "postgres" ? "1" : "0"} = 1 OR ? = 1 OR EXISTS (SELECT 1 FROM team_members visible_tm WHERE visible_tm.team_id = t.team_id AND visible_tm.workspace_id = ? AND visible_tm.user_id = ?))) )`,
   ];
-  const params = [workspaceId, global ? 1 : 0, workspaceId, userId];
+  const params = postgres ? [workspaceId, workspaceId, userId, workspaceId] : [workspaceId, userId, global ? 1 : 0, workspaceId, userId];
   if (query.status) {
     where.push("t.status = ?");
     params.push(query.status);
   }
+  if (query.openOnly) where.push("t.status <> 'done'");
+  if (query.customerId) { where.push("t.customer_id = ?"); params.push(query.customerId); }
   if (query.priority) {
     where.push("t.priority = ?");
     params.push(query.priority);
@@ -992,36 +1034,74 @@ function taskRowsFiltered(db, workspaceId, userId, query, clock) {
     where.push("t.team_id = ?");
     params.push(query.teamId);
   }
+  if (query.projectId) {
+    where.push("t.project_id = ?");
+    params.push(query.projectId);
+  }
   if (query.assigneeId) {
-    where.push("t.assignee_id = ?");
-    params.push(query.assigneeId);
+    where.push("(t.assignee_id = ? OR EXISTS (SELECT 1 FROM task_assignees assigned WHERE assigned.task_id = t.id AND assigned.user_id = ?))");
+    params.push(query.assigneeId, query.assigneeId);
   }
   if (query.q) {
-    where.push("(unicode_fold(t.title) LIKE '%' || unicode_fold(?) || '%' OR unicode_fold(t.description) LIKE '%' || unicode_fold(?) || '%')");
-    params.push(query.q, query.q);
+    where.push("(unicode_fold(t.title) LIKE '%' || unicode_fold(?) || '%' OR unicode_fold(t.description) LIKE '%' || unicode_fold(?) || '%' OR unicode_fold(t.category) LIKE '%' || unicode_fold(?) || '%' OR unicode_fold(coalesce(tm.name, '')) LIKE '%' || unicode_fold(?) || '%')");
+    params.push(query.q, query.q, query.q, query.q);
   }
   if (query.due === "overdue") {
     where.push("t.status != 'done' AND t.due_at < ?");
     params.push(isoNow(clock));
   } else if (query.due === "today") {
-    const date = currentDate(clock);
-    const start = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())).toISOString();
+    const start = new Date(`${planningDay(currentDate(clock))}T00:00:00+07:00`).toISOString();
     const end = new Date(Date.parse(start) + 86400000).toISOString();
     where.push("t.due_at >= ? AND t.due_at < ?");
     params.push(start, end);
   }
   const whereSql = where.join(" AND ");
-  const total = Number(db.prepare(`SELECT COUNT(*) AS count FROM tasks t LEFT JOIN teams tm ON tm.id=t.team_id AND tm.workspace_id=t.workspace_id WHERE ${whereSql}`).get(...params).count);
+  const filterFrom = `FROM tasks t${!postgres || query.q ? ' LEFT JOIN teams tm ON tm.id=t.team_id AND tm.workspace_id=t.workspace_id' : ''}`;
+  const total = Number(db.prepare(`SELECT COUNT(*) AS count ${filterFrom} WHERE ${whereSql}`).get(...params).count);
   const offset = (query.page - 1) * query.pageSize;
-  const rows = db.prepare(
+  // Opaque ID ties use byte order, independent of the database's locale.
+  const orderBy = `CASE t.status WHEN 'doing' THEN 0 WHEN 'todo' THEN 1 ELSE 2 END,
+    t.due_at ASC, t.created_at DESC, t.id ${postgres ? 'COLLATE "C" ' : ''}DESC`;
+  // Sort only keys before fetching the requested full records. Sorting wide
+  // task rows spilled to disk on deep pages of the 50k fixture.
+  const sql = db.dialect === 'postgres' ? `WITH page_keys AS MATERIALIZED (
+     SELECT t.id ${filterFrom}
+     WHERE ${whereSql} ORDER BY ${orderBy} LIMIT ? OFFSET ?
+    ) SELECT t.*,tm.name AS team_name,tm.archived_at AS team_archived
+     FROM page_keys p JOIN tasks t ON t.id=p.id
+     LEFT JOIN teams tm ON tm.id=t.team_id AND tm.workspace_id=t.workspace_id
+     ORDER BY ${orderBy}` :
     `SELECT t.*, tm.name AS team_name, tm.archived_at AS team_archived
      FROM tasks t LEFT JOIN teams tm ON tm.id=t.team_id AND tm.workspace_id=t.workspace_id
      WHERE ${whereSql}
-     ORDER BY CASE t.status WHEN 'doing' THEN 0 WHEN 'todo' THEN 1 ELSE 2 END,
-              t.due_at ASC, t.created_at DESC, t.id DESC
-     LIMIT ? OFFSET ?`,
-  ).all(...params, query.pageSize, offset).map(taskJson);
+     ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
+  const rows = db.prepare(sql).all(...params, query.pageSize, offset).map(row => taskJson(row, auth));
   return { rows, total, offset };
+}
+
+// Bootstrap totals are calculated in PostgreSQL, never by loading every task
+// into a browser. The same ACL predicate is applied before all aggregates.
+function dashboardTaskSummary(db, workspaceId, userId, clock, guest = false) {
+  const global = db.dialect !== "postgres" && canManageAllTeams(db, workspaceId, userId);
+  const where = `t.workspace_id=? AND t.deleted_at IS NULL
+    AND ${db.dialect === "postgres" ? taskAccessSql() : "? IS NOT NULL"}
+    AND (t.team_id IS NULL OR (tm.archived_at IS NULL AND (${db.dialect === "postgres" ? "1" : "0"}=1 OR ?=1 OR EXISTS
+      (SELECT 1 FROM team_members x WHERE x.team_id=t.team_id AND x.workspace_id=? AND x.user_id=?))))`;
+  const from = `FROM tasks t LEFT JOIN teams tm ON tm.id=t.team_id AND tm.workspace_id=t.workspace_id WHERE ${where}`;
+  const params = [workspaceId, userId, global ? 1 : 0, workspaceId, userId];
+  const start = new Date(`${planningDay(currentDate(clock))}T00:00:00+07:00`).toISOString();
+  const end = new Date(Date.parse(start) + 86400000).toISOString();
+  const counts = `COUNT(*) total, SUM(CASE WHEN t.status='done' THEN 1 ELSE 0 END) completed,
+    SUM(CASE WHEN t.status<>'done' THEN 1 ELSE 0 END) open`;
+  const total = db.prepare(`SELECT ${counts},
+    SUM(CASE WHEN t.status<>'done' AND t.due_at>=? AND t.due_at<? THEN 1 ELSE 0 END) today,
+    SUM(CASE WHEN t.status<>'done' AND t.due_at<? THEN 1 ELSE 0 END) overdue ${from}`)
+    .get(start, end, isoNow(clock), ...params);
+  const numeric = row => Object.fromEntries(Object.entries(row).map(([key,value]) => [key,key==='id'?value:Number(value || 0)]));
+  return { ...numeric(total),
+    byAssignee: db.prepare(`SELECT t.assignee_id id, ${counts} ${from} AND t.assignee_id IS NOT NULL GROUP BY t.assignee_id`).all(...params).map(numeric),
+    byCustomer: guest ? [] : db.prepare(`SELECT t.customer_id id, ${counts} ${from} AND t.customer_id IS NOT NULL GROUP BY t.customer_id`).all(...params).map(numeric),
+  };
 }
 
 function taskListQuery(req) {
@@ -1040,7 +1120,7 @@ function taskListQuery(req) {
   const pageSize = Number(query.pageSize ?? query.limit ?? 50);
   if (!Number.isSafeInteger(page) || page < 1 || page > 1_000_000) throw new HttpError(400, "page is invalid");
   if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) throw new HttpError(400, "pageSize is invalid");
-  return { hasQuery, status, priority, teamId, assigneeId, q: q.slice(0, 200), due, page, pageSize };
+  return { hasQuery, status, priority, teamId, customerId: req.auth?.memberType === "guest" ? "" : String(query.customerId || ""), openOnly: query.openOnly === "true", projectId: String(query.projectId || ""), assigneeId, q: q.slice(0, 200), due, page, pageSize };
 }
 
 function customerRows(db, workspaceId) {
@@ -1110,6 +1190,8 @@ function notificationRows(db, userId, workspaceId) {
     LEFT JOIN tasks t ON t.id = n.task_id
     LEFT JOIN service_contracts sc ON sc.id = n.service_id AND sc.workspace_id = n.workspace_id
     WHERE n.user_id = ? AND n.workspace_id = ?
+      AND ${db.dialect === "postgres" ? guestNotificationAccessSql() : "1=1"}
+      AND (n.task_id IS NULL OR ${db.dialect === "postgres" ? taskAccessSql("t", "n.user_id") : "1=1"})
       AND (n.service_id IS NULL OR (sc.id IS NOT NULL AND sc.archived_at IS NULL AND (
         sc.team_id IS NULL
         OR EXISTS (SELECT 1 FROM workspace_members wm WHERE wm.workspace_id=n.workspace_id AND wm.user_id=n.user_id AND wm.role IN ('owner','admin'))
@@ -1120,7 +1202,8 @@ function notificationRows(db, userId, workspaceId) {
         OR t.deleted_at IS NULL
       )
       AND (
-        t.id IS NULL
+        ${db.dialect === "postgres" ? "1" : "0"} = 1
+        OR t.id IS NULL
         OR t.team_id IS NULL
         OR EXISTS (
           SELECT 1 FROM workspace_members wm
@@ -1145,8 +1228,10 @@ function notificationRowsFiltered(db, userId, workspaceId, query) {
   const where = [
     "n.user_id = ?",
     "n.workspace_id = ?",
+    db.dialect === "postgres" ? guestNotificationAccessSql() : "1=1",
+    `(n.task_id IS NULL OR ${db.dialect === "postgres" ? taskAccessSql("t", "n.user_id") : "1=1"})`,
     "(t.id IS NULL OR t.deleted_at IS NULL)",
-    "(t.id IS NULL OR t.team_id IS NULL OR EXISTS (SELECT 1 FROM workspace_members wm WHERE wm.workspace_id=n.workspace_id AND wm.user_id=n.user_id AND wm.role IN ('owner','admin')) OR EXISTS (SELECT 1 FROM team_members tm WHERE tm.team_id=t.team_id AND tm.workspace_id=n.workspace_id AND tm.user_id=n.user_id))",
+    db.dialect === "postgres" ? "1=1" : "(t.id IS NULL OR t.team_id IS NULL OR EXISTS (SELECT 1 FROM workspace_members wm WHERE wm.workspace_id=n.workspace_id AND wm.user_id=n.user_id AND wm.role IN ('owner','admin')) OR EXISTS (SELECT 1 FROM team_members tm WHERE tm.team_id=t.team_id AND tm.workspace_id=n.workspace_id AND tm.user_id=n.user_id))",
     calendarNotificationAccessSql(),
   ];
   const params = [userId, workspaceId];
@@ -1193,6 +1278,7 @@ function planJson(plan) {
     yearlyPrice: plan.yearlyPrice,
     memberLimit: plan.memberLimit,
     features: [...plan.features],
+    entitlements: planEntitlements(plan),
   };
 }
 
@@ -1937,6 +2023,7 @@ function adminPlanJson(plan) {
     monthly: plan.monthlyPrice, yearly: plan.yearlyPrice,
     seats: plan.memberLimit, features: [...plan.features],
     active: plan.active !== false,
+    entitlements: planEntitlements(plan),
   };
 }
 
@@ -1970,9 +2057,14 @@ function settingsPlanValues(config, bodyPlans) {
     if (descriptions.length > 30) throw new HttpError(400, "Tối đa 30 quyền lợi hiển thị");
     const active = value.active === undefined ? existing?.active !== false : value.active;
     if (typeof active !== "boolean") throw new HttpError(400, "Trạng thái bán không hợp lệ");
+    const entitlements = value.entitlements === undefined ? planEntitlements(existing || { id }) : value.entitlements;
+    if (!Array.isArray(entitlements) || entitlements.some(code => !ENTITLEMENT_CODES.includes(code))
+      || new Set(entitlements).size !== entitlements.length)
+      throw new HttpError(400, "Mã quyền của gói không hợp lệ hoặc bị trùng");
     return planWithSeatFeature({
       id, name, monthlyPrice: monthly, yearlyPrice: yearly,
       memberLimit: seats, features: descriptions.map((feature) => feature.trim()), active,
+      entitlements: planEntitlements({ id, entitlements }),
     });
   });
   if (config.plans.some((plan) => !seen.has(plan.id)))
@@ -1981,27 +2073,12 @@ function settingsPlanValues(config, bodyPlans) {
 }
 
 function assertPlanSeatChanges(db, plans, clock) {
-  const now = isoNow(clock);
+  lockPlanSeatChanges(db);
   for (const plan of plans) {
-    const tooSmall = db
-      .prepare(
-        `
-        SELECT w.id, w.name,
-          (SELECT COUNT(*) FROM workspace_members wm WHERE wm.workspace_id = w.id) AS member_count,
-          (SELECT COUNT(*) FROM invitations i
-             WHERE i.workspace_id = w.id AND i.accepted_at IS NULL AND i.expires_at > ?) AS pending_count
-        FROM workspaces w
-        JOIN subscriptions s ON s.workspace_id = w.id
-        WHERE s.plan = ?
-        `,
-      )
-      .all(now, plan.id)
-      .find((row) => Number(row.member_count) + Number(row.pending_count) > plan.memberLimit);
-    if (tooSmall) {
-      throw new HttpError(
-        409,
-        `Gói ${plan.name} chỉ cho phép ${plan.memberLimit} thành viên, hiện ${tooSmall.name} đã có ${Number(tooSmall.member_count) + Number(tooSmall.pending_count)} thành viên và lời mời đang chờ`,
-      );
+    const workspaces = db.prepare('SELECT workspace_id FROM subscriptions WHERE plan=? ORDER BY workspace_id').all(plan.id);
+    for (const { workspace_id } of workspaces) {
+      lockWorkspaceSeats(db, workspace_id);
+      assertWorkspacePlanSeats(db, workspace_id, plan, clock);
     }
   }
 }
@@ -2143,6 +2220,7 @@ function applyBillingEvent(
     payload,
     raw,
     clock,
+    config,
   },
 ) {
   return withTransaction(db, () => {
@@ -2159,10 +2237,15 @@ function applyBillingEvent(
     }
     if (currency !== "VND")
       throw new HttpError(400, "unsupported webhook currency");
-    const order = db
+    let order = db
       .prepare("SELECT * FROM billing_orders WHERE id = ?")
       .get(orderId);
     if (!order) throw new HttpError(404, "billing order was not found");
+    lockWorkspaceSeats(db, order.workspace_id);
+    if (db.prepare('SELECT event_id FROM billing_webhook_events WHERE event_id=?').get(eventId))
+      return { duplicate: true };
+    order = db.prepare('SELECT * FROM billing_orders WHERE id=?').get(orderId);
+    config.plans = currentPlans(db, config.plans);
     if (order.amount !== amount || order.currency.toUpperCase() !== currency) {
       throw new HttpError(400, "webhook payment does not match billing order");
     }
@@ -2226,6 +2309,9 @@ function applyBillingEvent(
       .get(order.workspace_id);
     if (!subscription)
       throw new HttpError(409, "workspace subscription was not found");
+    // Recheck at settlement: seats may have changed since checkout. Rejecting
+    // rolls back the event too, so the same payment can be retried after cleanup.
+    assertWorkspacePlanSeats(db, order.workspace_id, config.plans.find(plan => plan.id === order.plan), clock);
     const nowDate = currentDate(clock);
     const currentEnd = new Date(subscription.current_period_end);
     // Renewals carry forward time only within the same active plan. Otherwise a
@@ -2303,7 +2389,7 @@ export function processReminders({
     .all(now);
   const sent = [];
   for (const task of tasks) {
-    const recipients = task.team_id
+    const recipients = task.team_id && db.dialect !== "postgres"
       ? task.assignee_id
         ? db
             .prepare(
@@ -2347,11 +2433,11 @@ export function processReminders({
             )
             .all(task.workspace_id);
     for(const id of extraAssigneeIds(db,task.id)){
-      if(recipients.some(r=>r.id===id)||!canAccessTeamTask(db,task.workspace_id,id,task.team_id))continue;
+      if(recipients.some(r=>r.id===id)||!canAccessTask(db,task.workspace_id,id,task))continue;
       const recipient=db.prepare("SELECT id,name,email FROM users WHERE id=? AND disabled_at IS NULL").get(id);if(recipient)recipients.push(recipient);
     }
     const scheduleKey = task.remind_at;
-    for (const recipient of recipients) {
+    for (const recipient of delegatedRecipients(db,task,recipients.filter(person=>canAccessTask(db,task.workspace_id,person.id,task,{action:"comment"})&&legacyReminderAllowed(db,task,person.id,now,{ignoreWorkCalendar:true})),now)) {
       if (!legacyReminderAllowed(db, task, recipient.id, now)) continue;
       const notification = withTransaction(db, () => {
         const delivery = db
@@ -2381,6 +2467,7 @@ export function processReminders({
           task.id,
           now,
         );
+        db.prepare('UPDATE reminder_notice_context SET schedule_key=? WHERE notification_id=?').run(scheduleKey, notificationId);
         return notificationId;
       });
       if (!notification) continue;
@@ -2396,7 +2483,7 @@ export function processReminders({
     .prepare(
       `
     SELECT i.id AS item_id, i.title AS item_title, i.remind_at, i.due_at AS item_due,
-           t.id, t.workspace_id, t.team_id, t.title, t.due_at
+           t.id, t.workspace_id, t.team_id, ${db.dialect === "postgres" ? "t.project_id, t.imported_at," : ""} t.title, t.due_at
     FROM task_checklist_items i
     JOIN task_checklists c ON c.id = i.checklist_id
     JOIN tasks t ON t.id = c.task_id
@@ -2428,7 +2515,7 @@ export function processReminders({
     `,
       )
       .all(item.id, item.item_id)
-      .filter((recipient) => canAccessTeamTask(db, item.workspace_id, recipient.id, item.team_id));
+      .filter((recipient) => canAccessTask(db, item.workspace_id, recipient.id, item, {action:"comment"}));
     const scheduleKey = `checklist:${item.item_id}:${item.remind_at}`;
     for (const recipient of recipients) {
       if (!legacyReminderAllowed(db, item, recipient.id, now)) continue;
@@ -2460,6 +2547,7 @@ export function processReminders({
           item.id,
           now,
         );
+        db.prepare('UPDATE reminder_notice_context SET schedule_key=? WHERE notification_id=?').run(scheduleKey, notificationId);
         return notificationId;
       });
       if (!notification) continue;
@@ -2475,18 +2563,19 @@ export function processReminders({
 function createRecurringSuccessor(db, task, actorUserId, now) {
   if (task.recurrence === "none") return null;
   const options = storedRecurrenceOptions(task);
-  const due = nextRecurrenceDate(task.due_at, task.recurrence, options, now, task.recurrence_anchor);
+  let due = nextRecurrenceDate(task.due_at, task.recurrence, options, now, task.recurrence_anchor);
+  if(due && db.dialect === "postgres" && hasWorkspaceEntitlement(db,db.projectConfig,task.workspace_id,"work_calendar",()=>new Date(now))) { due=nextWorkingOccurrence(task,options,now,getWorkCalendar(db,task.workspace_id)); if(!due) throw new HttpError(409,"Lịch làm việc không có mốc hợp lệ cho kỳ tiếp theo; hãy sửa lịch trước khi hoàn thành"); }
   if (!due) return null;
   const remind = task.remind_at
     ? new Date(Date.parse(task.remind_at) + due.getTime() - Date.parse(task.due_at)).toISOString()
     : null;
   const id = createId("task_");
-  const column = resolveTaskColumn(db, { workspaceId: task.workspace_id, teamId: task.team_id, status: "todo", clock: () => new Date(now), HttpError });
+  const column = resolveTaskColumn(db, { workspaceId: task.workspace_id, teamId: task.team_id, projectId: task.project_id, status: "todo", clock: () => new Date(now), HttpError });
   const inserted = db.prepare(`INSERT INTO tasks
-    (id,workspace_id,title,description,status,priority,due_at,remind_at,assignee_id,customer_id,team_id,
+    (id,workspace_id,${task.project_id ? "project_id," : ""}title,description,status,priority,due_at,remind_at,assignee_id,customer_id,team_id,
      category,recurrence,recurrence_options,recurrence_anchor,generated_from_task_id,created_by,created_at,updated_at,column_id,board_position)
-    VALUES (?,?,?,?,'todo',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0) ON CONFLICT DO NOTHING`)
-    .run(id,task.workspace_id,task.title,task.description,task.priority,due.toISOString(),remind,
+    VALUES (?, ?,${task.project_id ? ' ?,' : ''}?,?,'todo',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0) ON CONFLICT DO NOTHING`)
+    .run(id,task.workspace_id,...(task.project_id ? [task.project_id] : []),task.title,task.description,task.priority,due.toISOString(),remind,
       task.assignee_id,task.customer_id,task.team_id,task.category,task.recurrence,
       JSON.stringify(options),options.basis === "completion" ? due.toISOString() : task.recurrence_anchor || task.due_at,task.id,actorUserId,now,now,column.id);
   if (!inserted.changes) return null;
@@ -2504,6 +2593,7 @@ export function applyTaskStatusTransition({
   actorUserId,
   now,
 }) {
+  if (task && db.dialect === 'postgres') task = db.prepare('SELECT * FROM tasks WHERE id=? AND workspace_id=? AND deleted_at IS NULL FOR UPDATE').get(task.id, task.workspace_id);
   if (!task || task.status === nextStatus) return { nextTaskId: null, updatedTask: task };
   db.prepare(
     `UPDATE tasks SET status = ?, updated_at = ?
@@ -2535,20 +2625,21 @@ function createApp(options = {}) {
   const db =
     options.db ||
     openDatabase(options.databaseUrl || config.env.DATABASE_URL, { env: config.env });
-  const settingsKey = loadSettingsKey({
-    env: config.env,
-    dbPath,
-    explicitKey: options.settingsKey,
-  });
-  config._settingsKey = settingsKey;
-  applyStoredSettings(config, loadStoredSettings(db, settingsKey));
+  let settingsKey;
+  try {
+    settingsKey = loadSettingsKey({ env: config.env, dbPath, explicitKey: options.settingsKey, db });
+    config._settingsKey = settingsKey;
+    applyStoredSettings(config, loadStoredSettings(db, settingsKey));
+  } catch (error) {
+    if (!options.db) db.close();
+    throw error;
+  }
   const clock = options.clock || (() => new Date());
   const app = express();
   // The documented EnvKit/aaPanel proxy connects over loopback. Trust only
   // that hop so public clients cannot spoof IPs and all users do not share
   // the proxy's address for registration/recovery throttling.
   app.set("trust proxy", "loopback");
-  const authFailures = new Map();
   const mobilePushTransport =
     options.mobilePushTransport ||
     options.fcmTransport ||
@@ -2557,12 +2648,21 @@ function createApp(options = {}) {
   const browserPush = webPushConfig(config.env);
   app.locals.processWebPush = () => processWebPush({ db, clock, transport: options.webPushTransport || browserPush.transport });
   app.locals.db = db;
+  db.projectConfig = config;
+  db.projectClock = clock;
   app.locals.config = config;
   app.locals.clock = clock;
   app.locals.processReminders = () => processReminders({ db, config, clock });
   app.locals.processReminderEmails = () => processReminderEmails({ db, clock, transport: options.reminderEmailTransport || smtpTransport(config), from: config.smtp?.from, publicAppUrl: config.publicAppUrl });
   app.locals.processNotificationOutbox = () =>
     processNotificationOutbox({ db, clock, transport: mobilePushTransport });
+
+  // Catalog edits apply to subsequent requests in every API process, including
+  // session refresh, checkout and billing callbacks.
+  app.use((req, res, next) => {
+    try { config.plans = currentPlans(db, config.plans); next(); }
+    catch (error) { next(error); }
+  });
 
   // The BillGateway webhook must be authenticated against the exact raw body.
   app.post(
@@ -2628,6 +2728,7 @@ function createApp(options = {}) {
           payload,
           raw: raw.toString("utf8"),
           clock,
+          config,
         });
         return res.json({ ok: true, ...result });
       } catch (error) {
@@ -2636,13 +2737,16 @@ function createApp(options = {}) {
     },
   );
 
-  app.use(express.json({ limit: JSON_BODY_LIMIT_BYTES }));
+  app.use(publicApiErrorEnvelope);
+  app.use(express.json({ limit: JSON_BODY_LIMIT_BYTES, verify: (req, _res, buffer) => { if (req.path === '/api/integrations/zalo-oa/callback') req.zaloRawBody = Buffer.from(buffer); } }));
   app.use((req, res, next) => {
     try {
       if (
         req.path.startsWith("/api/") &&
         ["POST", "PATCH", "PUT", "DELETE"].includes(req.method) &&
         req.path !== "/api/billing/webhook"
+        && req.path !== "/api/integrations/google-calendar/watch"
+        && req.path !== "/api/integrations/zalo-oa/callback"
       )
         assertOrigin(req, config);
       next();
@@ -2669,14 +2773,21 @@ function createApp(options = {}) {
     }
   });
 
+  registerPublicApi(app,{db,config,clock,settingsKey,requireAuth,ensureWritable,HttpError,writeAdminAudit});
+  registerWebhooks(app,{db,config,clock,requireAuth,ensureWritable,HttpError,settingsKey,loadStoredSettings,writeStoredSetting,writeAdminAudit,transport:options.webhookTransport,lookup:options.webhookLookup});
+  registerTaskMutationPipeline(app, { db, clock, ensureWritable, requireAuth, HttpError });
   registerWebPushRoutes(app, { db, clock, requireAuth, HttpError, config: browserPush, withTransaction });
-  registerPersonalTaskRoutes(app, { db, requireAuth, ensureWritable, HttpError, taskJson });
+  registerPersonalTaskRoutes(app, { db, clock, requireAuth, ensureWritable, HttpError, taskJson });
+  registerProjectRoutes(app, { db, clock, config, requireAuth, ensureWritable, HttpError, withTransaction });
+  registerProjectAdvancedRoutes(app, { db, clock, config, requireAuth, ensureWritable, HttpError, withTransaction, taskJson });
+  registerImportRoutes(app, { db, clock, config, requireAuth, ensureWritable, HttpError, withTransaction });
   registerReminderRoutes(app, { db, clock, requireAuth, ensureWritable, HttpError, withTransaction });
   registerAppearanceRoutes(app, { db, requireAuth, HttpError });
   registerAiAssistantRoutes(app, {
     db, clock, config, requireAuth, requirePlatformAdmin, ensureWritable, HttpError,
     withTransaction, writeStoredSetting, loadStoredSettings, settingsKey, writeAdminAudit,
-    taskRowsFiltered, fetchImpl: options.aiFetch,
+    taskRowsFiltered, fetchImpl: options.aiFetch, startWorker: Boolean(options.startWorker),
+    sourceReader: options.aiSourceReader, sourceOptions: options.aiSourceOptions,
     refreshAuth: req => authContext(db, req.sessionToken, clock, req.auth.sessionKind),
   });
 
@@ -2725,11 +2836,15 @@ function createApp(options = {}) {
 
   registerBackupRoutes(app,{db,dbPath,clock,requirePlatformAdmin,withTransaction,writeAdminAudit,HttpError});
   registerGoogleRoutes(app,{db,config,clock,requirePlatformAdmin,requireAuth,HttpError,withTransaction,writeStoredSetting,loadStoredSettings,settingsKey,writeAdminAudit,createSession,setSessionCookie});
-  registerEventRoutes(app,{db,clock,requireAuth,ensureWritable,HttpError});
+  registerGoogleCalendar(app,{db,config,clock,requireAuth,requirePlatformAdmin,ensureWritable,HttpError,writeStoredSetting,loadStoredSettings,settingsKey,recordTaskActivity,writeAdminAudit,transport:options.googleCalendarTransport});
+  registerZaloOa(app,{db,config,clock,requireAuth,ensureWritable,HttpError,writeStoredSetting,loadStoredSettings,settingsKey,transport:options.zaloOaTransport,liveSendEnabled:(options.env?.ZALO_OA_LIVE_SEND_ENABLED??process.env.ZALO_OA_LIVE_SEND_ENABLED)==='true',fetchImpl:options.zaloOaFetch});
+  registerEventRoutes(app,{db,clock,requireAuth,ensureWritable,withTransaction,HttpError});
   registerBoardTransferRoutes(app,{db,clock,requireAuth,ensureWritable,withTransaction,HttpError});
   app.locals.processEventReminders=()=>processEventReminders({db,clock});
   registerCollaborationRoutes(app,{db,clock,requireAuth,ensureWritable,withTransaction,HttpError});
   registerServiceRoutes(app,{db,clock,requireAuth,ensureWritable,withTransaction,HttpError});
+  if(db.dialect==='postgres')registerOperationsDashboard(app,{db,clock,requireAuth,HttpError});
+  if(db.dialect==='postgres'){registerWorkCalendarRoutes(app,{db,clock,config,requireAuth,ensureWritable,HttpError,withTransaction});registerTimeRoutes(app,{db,clock,config,requireAuth,ensureWritable,HttpError});registerWorkReports(app,{db,clock,config,requireAuth,ensureWritable,HttpError});}
   registerAutomationRoutes(app,{db,clock,requireAuth,ensureWritable,withTransaction,HttpError,transitionTaskStatus:applyTaskStatusTransition});
   app.locals.processServiceReminders = () => processServiceReminders({db,clock});
 
@@ -2757,19 +2872,23 @@ function createApp(options = {}) {
     isoNow,
   });
 
+  const limitAuthRequests = authRequestLimiter({ db, clock, settingsKey, withTransaction, HttpError });
+  const limitLogin = [
+    limitAuthRequests("login", { ipLimit: 30, windowMs: 60_000 }),
+    authRateLimiter({ db, clock, settingsKey }),
+  ];
   registerMobileRoutes(app, {
     db,
     config,
     clock,
     requireAuth,
-    authRateLimiter: authRateLimiter(authFailures),
+    authRateLimiter: limitLogin,
     HttpError,
     withTransaction,
     authContext,
     setSessionCookie,
   });
 
-  const limitAuthRequests = authRequestLimiter({ db, clock, settingsKey, withTransaction, HttpError });
   registerPasswordResetRoutes(app, {
     db, clock, config, settingsKey, withTransaction, HttpError,
     emailValue, passwordValue, clearSessionCookie,
@@ -2841,6 +2960,7 @@ function createApp(options = {}) {
         subscription: subscriptionJson(
           getSubscription(db, created.workspaceId),
           clock,
+          config.plans,
         ),
       });
     } catch (error) {
@@ -2850,7 +2970,7 @@ function createApp(options = {}) {
 
   app.post(
     "/api/auth/login",
-    authRateLimiter(authFailures),
+    limitLogin,
     (req, res, next) => {
       try {
         const email = emailValue(req.body?.email);
@@ -2905,6 +3025,7 @@ function createApp(options = {}) {
           subscription: subscriptionJson(
             getSubscription(db, membership.workspace_id),
             clock,
+          config.plans,
           ),
         });
       } catch (error) {
@@ -2916,9 +3037,7 @@ function createApp(options = {}) {
   app.post("/api/auth/logout", (req, res, next) => {
     try {
       if (req.sessionToken)
-        db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(
-          hashToken(req.sessionToken),
-        );
+        invalidateSessions(db, { tokenHash: hashToken(req.sessionToken) });
       clearSessionCookie(res, config);
       return res.json({ ok: true });
     } catch (error) {
@@ -3015,6 +3134,7 @@ function createApp(options = {}) {
         subscription: subscriptionJson(
           getSubscription(db, membership.workspace_id),
           clock,
+          config.plans,
         ),
       });
     } catch (error) {
@@ -3030,6 +3150,7 @@ function createApp(options = {}) {
         subscription: subscriptionJson(
           getSubscription(db, req.auth.workspaceId),
           clock,
+          config.plans,
         ),
         billingConfigured: config.billingConfigured,
       });
@@ -3162,6 +3283,11 @@ function createApp(options = {}) {
       const id = creating
         ? cleanString(body.id, { required: true, max: 20, field: "plan.id" })
         : req.params.id;
+      let plans;
+      const updatedAt = isoNow(clock);
+      withTransaction(db, () => {
+      lockPlanSeatChanges(db);
+      config.plans = currentPlans(db, config.plans);
       const current = config.plans.find((plan) => plan.id === id);
       if (creating && current) throw new HttpError(409, "Mã gói đã tồn tại");
       if (!creating && !current) throw new HttpError(404, "Không tìm thấy gói thuê bao");
@@ -3170,10 +3296,8 @@ function createApp(options = {}) {
       const input = { ...(current ? adminPlanJson(current) : {}), ...body, id };
       const values = config.plans.map((plan) => plan.id === id ? input : adminPlanJson(plan));
       if (creating) values.push(input);
-      const plans = settingsPlanValues(config, values);
+      plans = settingsPlanValues(config, values);
       const saved = plans.find((plan) => plan.id === id);
-      const updatedAt = isoNow(clock);
-      withTransaction(db, () => {
         assertPlanSeatChanges(db, [saved], clock);
         writeStoredSetting(db, "plans", plans, { updatedAt });
         writeAdminAudit(db, {
@@ -3246,7 +3370,6 @@ function createApp(options = {}) {
       }
       if (hasPlans) {
         next.plans = settingsPlanValues(config, body.plans);
-        assertPlanSeatChanges(db, next.plans, clock);
         plainWrites.push(["plans", next.plans]);
         source.plans = "database";
       }
@@ -3362,6 +3485,14 @@ function createApp(options = {}) {
       if (secretWrites.length)
         afterAudit.changedSecretFields = secretWrites.map(([key]) => key);
       withTransaction(db, () => {
+        if (hasPlans) {
+          lockPlanSeatChanges(db);
+          config.plans = currentPlans(db, config.plans);
+          next.plans = settingsPlanValues(config, body.plans);
+          assertPlanSeatChanges(db, next.plans, clock);
+          plainWrites.find(([key]) => key === 'plans')[1] = next.plans;
+          afterAudit.plans = next.plans.map(adminPlanJson);
+        }
         const updatedAt = isoNow(clock);
         for (const [key, value] of plainWrites)
           writeStoredSetting(db, key, value, { updatedAt });
@@ -3603,7 +3734,7 @@ function createApp(options = {}) {
           disabledAt,
           current.id,
         );
-        if (disabled) db.prepare("DELETE FROM sessions WHERE user_id = ?").run(current.id);
+        if (disabled) invalidateSessions(db, { userId: current.id });
         writeAdminAudit(db, {
           actorUserId: req.auth.userId,
           action: disabled ? "user.disable" : "user.reactivate",
@@ -3640,6 +3771,8 @@ function createApp(options = {}) {
         const reason = adminReason(req.body?.reason);
         let subscription;
         withTransaction(db, () => {
+          lockWorkspaceSeats(db, req.params.workspaceId);
+          config.plans = currentPlans(db, config.plans);
           const current = db
             .prepare("SELECT * FROM subscriptions WHERE workspace_id = ?")
             .get(req.params.workspaceId);
@@ -3675,22 +3808,7 @@ function createApp(options = {}) {
                   required: true,
                 });
           const planConfig = config.plans.find((item) => item.id === plan);
-          const counts = db
-            .prepare(
-              `
-              SELECT
-                (SELECT COUNT(*) FROM workspace_members WHERE workspace_id = ?) AS member_count,
-                (SELECT COUNT(*) FROM invitations
-                  WHERE workspace_id = ? AND accepted_at IS NULL AND expires_at > ?) AS pending_count
-            `,
-            )
-            .get(req.params.workspaceId, req.params.workspaceId, isoNow(clock));
-          const committedSeats = Number(counts.member_count) + Number(counts.pending_count);
-          if (committedSeats > planConfig.memberLimit)
-            throw new HttpError(
-              409,
-              `Gói ${planConfig.name} chỉ cho phép ${planConfig.memberLimit} thành viên, hiện đã có ${committedSeats} thành viên và lời mời đang chờ`,
-            );
+          assertWorkspacePlanSeats(db, req.params.workspaceId, planConfig, clock);
           const before = {
             plan: current.plan,
             cycle: current.cycle,
@@ -3738,11 +3856,15 @@ function createApp(options = {}) {
   app.get("/api/dashboard", requireAuth, (req, res, next) => {
     try {
       const subscription = getSubscription(db, req.auth.workspaceId);
+      const query = taskListQuery(req);
+      const result = req.query.tasks === 'none' ? null : taskRowsFiltered(db, req.auth.workspaceId, req.auth.userId, query, clock);
       return res.json({
-        tasks: taskRows(db, req.auth.workspaceId, req.auth.userId),
-        teams: visibleTeamRows(db, req.auth.workspaceId, req.auth.userId),
-        customers: customerRows(db, req.auth.workspaceId),
-        members: memberRows(db, req.auth.workspaceId),
+        tasks: result?.rows || [],
+        taskPage: result ? { page: query.page, pageSize: query.pageSize, total: result.total, hasMore: result.offset + result.rows.length < result.total } : null,
+        taskSummary: dashboardTaskSummary(db, req.auth.workspaceId, req.auth.userId, clock, req.auth.memberType === 'guest'),
+        teams: req.auth.memberType === "guest" ? [] : visibleTeamRows(db, req.auth.workspaceId, req.auth.userId),
+        customers: req.auth.memberType === "guest" ? [] : customerRows(db, req.auth.workspaceId),
+        members: req.auth.memberType === "guest" ? [] : memberRows(db, req.auth.workspaceId),
         transactions: isRole(req.auth, ["owner", "admin"])
           ? transactionRows(db, req.auth.workspaceId)
           : [],
@@ -3751,7 +3873,7 @@ function createApp(options = {}) {
           req.auth.userId,
           req.auth.workspaceId,
         ),
-        subscription: subscriptionJson(subscription, clock),
+        subscription: subscriptionJson(subscription, clock, config.plans),
         workspace: req.auth.workspace,
       });
     } catch (error) {
@@ -3830,14 +3952,14 @@ function createApp(options = {}) {
           // to this browser login across all accessible workspaces.
           db.prepare('UPDATE web_push_subscriptions SET session_id=? WHERE session_id=? AND user_id=?')
             .run(auth.sessionId, req.auth.sessionId, req.auth.userId);
-          db.prepare('DELETE FROM sessions WHERE id=?').run(req.auth.sessionId);
+          invalidateSessions(db, { id: req.auth.sessionId });
         }
       });
       setSessionCookie(res, session.token, config);
       return res.json({
         user: auth.user,
         workspace: auth.workspace,
-        subscription: subscriptionJson(getSubscription(db, workspaceId), clock),
+        subscription: subscriptionJson(getSubscription(db, workspaceId), clock, config.plans),
         billingConfigured: config.billingConfigured,
       });
     } catch (error) {
@@ -3845,8 +3967,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.post("/api/tasks", requireAuth, (req, res, next) => {
-    try {
+  registerTaskMutationCommand(app, "POST", "/api/tasks", requireAuth, (req) => {
       ensureWritable(req);
       const title = cleanString(req.body?.title, {
         required: true,
@@ -3884,14 +4005,25 @@ function createApp(options = {}) {
       const customerId = req.body?.customerId
         ? cleanString(req.body.customerId, { max: 100, field: "customerId" })
         : null;
-      const teamId =
+      let teamId =
         req.body?.teamId === undefined ||
         req.body?.teamId === null ||
         req.body?.teamId === ""
           ? null
           : cleanString(req.body.teamId, { max: 100, field: "teamId" });
+      const project = db.dialect === 'postgres' ? resolveTaskProject(db, req.auth.workspaceId, req.auth.userId, {
+        projectId: req.body?.projectId, teamId, config, clock,
+      }) : null;
+      if (db.dialect === 'postgres' && !project) throw new HttpError(403, 'Không có quyền tạo công việc trong dự án');
+      if (project) {
+        if (req.body?.teamId && req.body.teamId !== project.team_id) throw new HttpError(400, 'Đội nhóm không khớp dự án');
+        teamId = project.team_id;
+        if (assigneeId && !canAccessTask(db, req.auth.workspaceId, assigneeId, { workspace_id: req.auth.workspaceId, project_id: project.id }))
+          throw new HttpError(400, 'Người phụ trách không có quyền với dự án');
+      }
+      if (req.auth.memberType === 'guest' && customerId) throw new HttpError(403, 'Khách không được liên kết dữ liệu khách hàng');
       assertMemberReference(db, req.auth.workspaceId, assigneeId, customerId);
-      if (teamId) {
+      if (teamId && !project) {
         const access = getTeamAccess(
           db,
           req.auth.workspaceId,
@@ -3919,6 +4051,7 @@ function createApp(options = {}) {
       const column = resolveTaskColumn(db, {
         workspaceId: req.auth.workspaceId,
         teamId,
+        projectId: project?.id,
         status,
         columnId: explicitColumnId,
         clock,
@@ -3930,17 +4063,22 @@ function createApp(options = {}) {
       const now = isoNow(clock);
       const id = createId("task_");
       withTransaction(db,()=> {
+      if (project) {
+        db.prepare('SELECT id FROM projects WHERE id=? AND workspace_id=? FOR SHARE').get(project.id, req.auth.workspaceId);
+        if (!resolveTaskProject(db, req.auth.workspaceId, req.auth.userId, { projectId: project.id, config, clock })) throw new HttpError(403, 'Quyền dự án đã thay đổi');
+      }
       db.prepare(
         `
         INSERT INTO tasks
-          (id, workspace_id, title, description, status, priority, due_at, remind_at,
+          (id, workspace_id, ${project ? "project_id," : ""} title, description, status, priority, due_at, remind_at,
            assignee_id, customer_id, team_id, column_id, board_position, category,
            recurrence, recurrence_options, recurrence_anchor, created_by, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ${project ? "?," : ""} ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
       `,
       ).run(
         id,
         req.auth.workspaceId,
+        ...(project ? [project.id] : []),
         title,
         description,
         taskStatus,
@@ -3961,52 +4099,68 @@ function createApp(options = {}) {
       );
       recordTaskActivity(db,{taskId:id,actorUserId:req.auth.userId,action:"task_created",summary:"đã tạo công việc",createdAt:now});
       });
-      return res
-        .status(201)
-        .json({
+      return {
           task: taskJson(
-            taskRowById(db, id, req.auth.workspaceId),
+            taskRowById(db, id, req.auth.workspaceId), req.auth,
           ),
-        });
-    } catch (error) {
-      return next(error);
-    }
-  });
+        };
+  }, 201);
 
   app.get("/api/tasks/:id", requireAuth, (req, res, next) => {
     try {
       const task = taskRowById(db, req.params.id, req.auth.workspaceId);
       if (!task) return fail(res, 404, "task was not found");
-      if (!canAccessTeamTask(db, req.auth.workspaceId, req.auth.userId, task.team_id))
+      if (!canAccessTask(db, req.auth.workspaceId, req.auth.userId, task))
         return fail(res, 404, "task was not found");
-      return res.json({ task: taskJson(task) });
+      return res.json({ task: taskJson(task, req.auth) });
     } catch (error) {
       return next(error);
     }
   });
 
-  app.patch("/api/tasks/:id", requireAuth, (req, res, next) => {
-    try {
+  registerTaskMutationCommand(app, "PATCH", "/api/tasks/:id", requireAuth, (req) => {
+      const result = withTransaction(db, () => {
       ensureWritable(req);
       const task = db
         .prepare(
-          "SELECT * FROM tasks WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL",
+          `SELECT * FROM tasks WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL${db.dialect === "postgres" ? " FOR UPDATE" : ""}`,
         )
         .get(req.params.id, req.auth.workspaceId);
-      if (!task) return fail(res, 404, "task was not found");
-      if (!canAccessTeamTask(db, req.auth.workspaceId, req.auth.userId, task.team_id))
-        return fail(res, 404, "task was not found");
-      if (!canAccessTeamTask(db, req.auth.workspaceId, req.auth.userId, task.team_id, { write: true }))
+      if (!task) throw new HttpError(404, "task was not found");
+      if (!canAccessTask(db, req.auth.workspaceId, req.auth.userId, task))
+        throw new HttpError(404, "task was not found");
+      if (!canAccessTask(db, req.auth.workspaceId, req.auth.userId, task, { write: true }))
         throw new HttpError(409, "Đội nhóm đã lưu trữ và chỉ được đọc");
       const body = req.body || {};
+      assertRevision(body, task, "task", HttpError);
       const fields = [];
       const values = [];
       const set = (column, value) => {
         fields.push(`${column} = ?`);
         values.push(value);
       };
-      const hasTeamId = body.teamId !== undefined;
-      const nextTeamId = hasTeamId
+      const legacyMove = body.projectId === undefined && body.teamId !== undefined && (body.teamId || null) !== (task.team_id || null)
+        && task.project_id === defaultProjectId(req.auth.workspaceId, task.team_id);
+      const project = db.dialect === 'postgres' ? resolveTaskProject(db, req.auth.workspaceId, req.auth.userId, {
+        projectId: body.projectId || (legacyMove ? defaultProjectId(req.auth.workspaceId, body.teamId || null) : undefined), task, config, clock,
+      }) : null;
+      if (db.dialect === 'postgres' && !project) throw new HttpError(403, 'Không có quyền ghi dự án');
+      if (body.teamId !== undefined && (body.teamId || null) !== (task.team_id || null) && !canManageAllTeams(db, req.auth.workspaceId, req.auth.userId))
+        throw new HttpError(403, 'Chỉ quản trị workspace được chuyển công việc giữa các đội nhóm');
+      if (project && body.teamId !== undefined && (body.teamId || null) !== (project.team_id || null))
+        throw new HttpError(400, 'Đổi đội nhóm cần chọn project đích phù hợp');
+      const projectChanged = project && project.id !== task.project_id;
+      if (projectChanged) {
+        const linkConflict = taskScopeLinkConflict(db, task, project.id);
+        if (linkConflict) throw new HttpError(409, linkConflict);
+        if (db.prepare('SELECT 1 FROM task_dependencies WHERE predecessor_id=? OR successor_id=? LIMIT 1').get(task.id,task.id)
+          || db.prepare('SELECT 1 FROM task_field_values WHERE task_id=? LIMIT 1').get(task.id))
+          throw new HttpError(409, 'Cần xử lý phụ thuộc và trường tùy chỉnh trước khi chuyển dự án');
+        if (!canAccessTask(db, req.auth.workspaceId, req.auth.userId, task, { action: 'move' })) throw new HttpError(403, 'Không có quyền chuyển dự án');
+        set('project_id', project.id);
+      }
+      const hasTeamId = body.teamId !== undefined || projectChanged;
+      const nextTeamId = project ? project.team_id : hasTeamId
         ? body.teamId === null || body.teamId === ""
           ? null
           : cleanString(body.teamId, { max: 100, field: "teamId" })
@@ -4015,7 +4169,7 @@ function createApp(options = {}) {
         if (!canManageAllTeams(db, req.auth.workspaceId, req.auth.userId))
           throw new HttpError(403, "Chỉ quản trị workspace được chuyển công việc giữa các đội nhóm");
       }
-      if (nextTeamId) {
+      if (nextTeamId && !project) {
         const targetTeam = getTeamAccess(
           db,
           req.auth.workspaceId,
@@ -4070,6 +4224,9 @@ function createApp(options = {}) {
           : body.assigneeId
             ? cleanString(body.assigneeId, { max: 100, field: "assigneeId" })
             : null;
+      if (project && nextAssigneeId && !(task.status === "done" && (body.status === undefined || body.status === "done") && !projectChanged && nextAssigneeId === task.assignee_id) && !canAccessTask(db, req.auth.workspaceId, nextAssigneeId, { workspace_id: req.auth.workspaceId, project_id: project.id }))
+        throw new HttpError(400, 'Người phụ trách không có quyền với dự án');
+      if (req.auth.memberType === 'guest' && body.customerId !== undefined) throw new HttpError(403, 'Khách không được sửa liên kết khách hàng');
       if (body.customerId !== undefined) {
         const value = body.customerId
           ? cleanString(body.customerId, { max: 100, field: "customerId" })
@@ -4103,10 +4260,11 @@ function createApp(options = {}) {
       const teamChanged = nextTeamId !== (task.team_id || null);
       const statusChanged = nextStatus !== task.status;
       let nextColumn = null;
-      if (hasColumnId || teamChanged || statusChanged) {
+      if (hasColumnId || teamChanged || statusChanged || projectChanged) {
         nextColumn = resolveTaskColumn(db, {
           workspaceId: req.auth.workspaceId,
           teamId: nextTeamId,
+          projectId: project?.id,
           status: nextStatus,
           columnId: explicitColumnId,
           clock,
@@ -4121,13 +4279,14 @@ function createApp(options = {}) {
         set("board_position", 0);
       }
       if (!fields.length)
-        return fail(res, 400, "no task changes were supplied");
+        throw new HttpError(400, "no task changes were supplied");
       const preserveHistoricalAssignee =
         task.status === "done" &&
         nextStatus === "done" &&
         nextTeamId === (task.team_id || null) &&
         nextAssigneeId === task.assignee_id;
       if (
+        !project &&
         nextTeamId &&
         nextAssigneeId &&
         !preserveHistoricalAssignee &&
@@ -4147,6 +4306,8 @@ function createApp(options = {}) {
         body.dueAt === undefined
           ? task.due_at
           : dateValue(body.dueAt, "dueAt");
+      if (task.start_at && nextDue && Date.parse(task.start_at) > Date.parse(nextDue))
+        throw new HttpError(400, 'Hạn hoàn thành phải sau ngày bắt đầu');
       if (!nextDue && nextRecurrence !== "none") throw new HttpError(400, "Công việc lặp cần có hạn hoàn thành.");
       const nextOptions = validateRecurrenceOptions(nextRecurrence, body.recurrenceOptions === undefined
         ? (nextRecurrence === task.recurrence ? storedRecurrenceOptions(task) : undefined)
@@ -4158,7 +4319,6 @@ function createApp(options = {}) {
       const now = isoNow(clock);
       let nextTaskId = null;
       let updatedTask = null;
-      withTransaction(db, () => {
         set("updated_at", now);
         values.push(req.params.id, req.auth.workspaceId);
         db.prepare(
@@ -4180,20 +4340,18 @@ function createApp(options = {}) {
         if (task.status !== "done" && effectiveNextStatus === "done")
           nextTaskId = createRecurringSuccessor(db, updatedTask, req.auth.userId, now);
         if(task.status!==updatedTask.status)emitTaskEvent(db,{taskId:task.id,actorUserId:req.auth.userId,action:"task_updated",summary:"trạng thái"});
-      });
-      return res.json({
+      return {
         task: taskJson(
-          taskRowById(db, req.params.id, req.auth.workspaceId),
+          taskRowById(db, req.params.id, req.auth.workspaceId), req.auth,
         ),
         nextTask: nextTaskId
           ? taskJson(
-              taskRowById(db, nextTaskId, req.auth.workspaceId),
+              taskRowById(db, nextTaskId, req.auth.workspaceId), req.auth,
             )
           : null,
+      };
       });
-    } catch (error) {
-      return next(error);
-    }
+      return result;
   });
 
   app.delete("/api/tasks/:id", requireAuth, (req, res, next) => {
@@ -4201,13 +4359,13 @@ function createApp(options = {}) {
       ensureWritable(req);
       const task = db
         .prepare(
-          "SELECT id, team_id FROM tasks WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL",
+          "SELECT * FROM tasks WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL",
         )
         .get(req.params.id, req.auth.workspaceId);
       if (!task) return fail(res, 404, "task was not found");
-      if (!canAccessTeamTask(db, req.auth.workspaceId, req.auth.userId, task.team_id))
+      if (!canAccessTask(db, req.auth.workspaceId, req.auth.userId, task))
         return fail(res, 404, "task was not found");
-      if (!canAccessTeamTask(db, req.auth.workspaceId, req.auth.userId, task.team_id, { write: true }))
+      if (!canAccessTask(db, req.auth.workspaceId, req.auth.userId, task, { action: "delete" }))
         throw new HttpError(409, "Đội nhóm đã lưu trữ và chỉ được đọc");
       const now = isoNow(clock);
       withTransaction(db, () => {
@@ -4402,6 +4560,11 @@ function createApp(options = {}) {
     requireRoles("owner", "admin"),
     (req, res, next) => {
       try {
+        const invitation = withTransaction(db, () => {
+        lockWorkspaceSeats(db, req.auth.workspaceId);
+        config.plans = currentPlans(db, config.plans);
+        if (!canManageAllTeams(db, req.auth.workspaceId, req.auth.userId))
+          throw new HttpError(403, 'Bạn không có quyền mời thành viên');
         const subscription = ensureWritable(req);
         const email = emailValue(req.body?.email);
         const role = cleanString(req.body?.role || "member", {
@@ -4410,21 +4573,17 @@ function createApp(options = {}) {
         });
         if (!["admin", "member"].includes(role))
           throw new HttpError(400, "role must be admin or member");
+        const memberType = req.body?.memberType || 'member';
+        if (!['member','guest'].includes(memberType)) throw new HttpError(400,'Loại thành viên không hợp lệ');
+        const projectId = memberType === 'guest' ? cleanString(req.body?.projectId,{required:true,max:160,field:'projectId'}) : null;
+        const projectRole = memberType === 'guest' ? (req.body?.projectRole || 'viewer') : null;
+        if (memberType === 'guest') {
+          if (role !== 'member' || !['viewer','commenter','editor'].includes(projectRole)) throw new HttpError(400,'Vai trò guest không hợp lệ');
+          if (!hasWorkspaceEntitlement(db,config,req.auth.workspaceId,'guests',clock)) throw new HttpError(403,'Gói hiện tại không cho mời guest');
+          if (!resolveTaskProject(db,req.auth.workspaceId,req.auth.userId,{projectId,action:'manage',config,clock})) throw new HttpError(403,'Không có quyền mời vào project');
+        }
         const limit = memberLimit(config, subscription);
-        const memberCount = db
-          .prepare(
-            "SELECT COUNT(*) AS count FROM workspace_members WHERE workspace_id = ?",
-          )
-          .get(req.auth.workspaceId).count;
-        const pendingCount = db
-          .prepare(
-            `
-        SELECT COUNT(*) AS count FROM invitations
-        WHERE workspace_id = ? AND accepted_at IS NULL AND expires_at > ?
-      `,
-          )
-          .get(req.auth.workspaceId, isoNow(clock)).count;
-        if (Number(memberCount) + Number(pendingCount) >= limit)
+        if (workspaceSeatCount(db, req.auth.workspaceId, isoNow(clock)) >= limit)
           throw new HttpError(409, `plan allows at most ${limit} members`);
         const existing = db
           .prepare(
@@ -4436,13 +4595,16 @@ function createApp(options = {}) {
           .get(req.auth.workspaceId, email);
         if (existing)
           throw new HttpError(409, "email is already a workspace member");
+        if (db.prepare('SELECT id FROM invitations WHERE workspace_id=? AND email=? AND accepted_at IS NULL AND expires_at>?')
+          .get(req.auth.workspaceId, email, isoNow(clock)))
+          throw new HttpError(409, "email already has a pending invitation");
         const rawToken = createToken(32);
         const now = currentDate(clock);
         const expires = addDays(now, config.inviteDays).toISOString();
         db.prepare(
           `
-        INSERT INTO invitations(id, workspace_id, email, role, token_hash, expires_at, invited_by, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO invitations(id, workspace_id, email, role, token_hash, expires_at, invited_by, created_at, member_type, project_id, project_role)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
         ).run(
           createId("invite_"),
@@ -4453,13 +4615,16 @@ function createApp(options = {}) {
           expires,
           req.auth.userId,
           now.toISOString(),
+          memberType, projectId, projectRole,
         );
-        return res.status(201).json({
+        return {
           // The SPA reads the query parameter while preserving the token in a
           // normal browser URL that can be pasted into a new session.
           inviteUrl: `${config.publicAppUrl}/?invite=${encodeURIComponent(rawToken)}`,
           expiresAt: expires,
+        };
         });
+        return res.status(201).json(invitation);
       } catch (error) {
         return next(error);
       }
@@ -4546,6 +4711,26 @@ function createApp(options = {}) {
         createdUser = true;
       }
       withTransaction(db, () => {
+        lockWorkspaceSeats(db, invite.workspace_id);
+        config.plans = currentPlans(db, config.plans);
+        const liveInvite = db.prepare('SELECT * FROM invitations WHERE id=? AND accepted_at IS NULL AND expires_at>?')
+          .get(invite.id, isoNow(clock));
+        if (!liveInvite) throw new HttpError(409, 'invitation is no longer valid');
+        const liveWorkspace = db.prepare('SELECT suspended_at FROM workspaces WHERE id=?').get(invite.workspace_id);
+        if (liveWorkspace?.suspended_at) throw new HttpError(423, 'workspace is suspended');
+        const liveSubscription = getSubscription(db, invite.workspace_id);
+        if (db.prepare('SELECT disabled_at FROM users WHERE id=?').get(userId)?.disabled_at)
+          throw new HttpError(403, 'user account is disabled');
+        if (!liveSubscription || ['expired', 'canceled'].includes(liveSubscription.status)
+          || Date.parse(liveSubscription.current_period_end) <= currentDate(clock).getTime())
+          throw new HttpError(402, 'workspace subscription has expired');
+        assertWorkspacePlanSeats(db, invite.workspace_id, config.plans.find(plan => plan.id === liveSubscription.plan), clock);
+        if (liveInvite.member_type === 'guest') {
+          if (!hasWorkspaceEntitlement(db,config,invite.workspace_id,'guests',clock)) throw new HttpError(403,'Gói hiện tại không còn quyền guest');
+          const inviter = db.prepare('SELECT role,member_type FROM workspace_members WHERE workspace_id=? AND user_id=?').get(invite.workspace_id,liveInvite.invited_by);
+          if (inviter?.member_type!=='member' || !['owner','admin'].includes(inviter.role)
+            || !resolveTaskProject(db,invite.workspace_id,liveInvite.invited_by,{projectId:liveInvite.project_id,action:'manage',config,clock})) throw new HttpError(403,'Lời mời không còn quyền với project');
+        }
         if (createdUser) {
           db.prepare(
             "INSERT INTO users(id, name, email, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -4562,8 +4747,9 @@ function createApp(options = {}) {
           );
         }
         db.prepare(
-          `INSERT INTO workspace_members(workspace_id, user_id, role, created_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-        ).run(invite.workspace_id, userId, invite.role, isoNow(clock));
+          `INSERT INTO workspace_members(workspace_id, user_id, role, created_at, member_type) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+        ).run(invite.workspace_id, userId, invite.role, isoNow(clock),liveInvite.member_type);
+        if(liveInvite.project_id) db.prepare(`INSERT INTO project_members(project_id,workspace_id,user_id,role,created_at) VALUES (?,?,?,?,?) ON CONFLICT(project_id,user_id) DO NOTHING`).run(liveInvite.project_id,invite.workspace_id,userId,liveInvite.project_role,isoNow(clock));
         const accepted = db
           .prepare(
             "UPDATE invitations SET accepted_at = ? WHERE id = ? AND accepted_at IS NULL",
@@ -4596,13 +4782,37 @@ function createApp(options = {}) {
       return res.json({
         user: joinedAuth.user,
         workspace: joinedAuth.workspace,
-        subscription: subscriptionJson(subscription, clock),
+        subscription: subscriptionJson(getSubscription(db, invite.workspace_id), clock, config.plans),
         member: memberJson(member),
         createdAccount: createdUser,
       });
     } catch (error) {
       return next(error);
     }
+  });
+
+  app.get('/api/invitations', requireRoles('owner', 'admin'), (req, res, next) => {
+    try {
+      const invitations = db.prepare(`SELECT id,email,role,member_type AS "memberType",project_id AS "projectId",project_role AS "projectRole",expires_at AS "expiresAt",created_at AS "createdAt"
+        FROM invitations WHERE workspace_id=? AND accepted_at IS NULL AND expires_at>?
+        ORDER BY created_at,id`).all(req.auth.workspaceId, isoNow(clock));
+      return res.json({ invitations });
+    } catch (error) { next(error); }
+  });
+  app.delete('/api/invitations/:id', requireRoles('owner', 'admin'), (req, res, next) => {
+    try {
+      withTransaction(db, () => {
+        lockWorkspaceSeats(db, req.auth.workspaceId);
+        if (!canManageAllTeams(db, req.auth.workspaceId, req.auth.userId))
+          throw new HttpError(403, 'Bạn không có quyền thu hồi lời mời');
+        const invitation = db.prepare('SELECT id,accepted_at FROM invitations WHERE id=? AND workspace_id=?')
+          .get(req.params.id, req.auth.workspaceId);
+        if (!invitation) throw new HttpError(404, 'Không tìm thấy lời mời');
+        if (invitation.accepted_at) throw new HttpError(409, 'Lời mời đã được chấp nhận');
+        db.prepare('DELETE FROM invitations WHERE id=? AND workspace_id=?').run(req.params.id, req.auth.workspaceId);
+      });
+      return res.json({ ok: true });
+    } catch (error) { next(error); }
   });
 
   app.get(
@@ -4804,6 +5014,7 @@ function createApp(options = {}) {
         subscription: subscriptionJson(
           getSubscription(db, req.auth.workspaceId),
           clock,
+          config.plans,
         ),
         orders,
         configured: config.billingConfigured,
@@ -4828,10 +5039,11 @@ function createApp(options = {}) {
           max: 20,
           field: "cycle",
         });
-        const plan = config.plans.find((item) => item.id === planId);
+        let plan = config.plans.find((item) => item.id === planId);
         if (!plan || !["monthly", "yearly"].includes(cycle))
           throw new HttpError(400, "plan or cycle is invalid");
         if (plan.active === false) throw new HttpError(409, "Gói thuê bao đã ngừng bán; vui lòng chọn gói khác");
+        assertWorkspacePlanSeats(db, req.auth.workspaceId, plan, clock);
         if (
           !config.billingConfigured ||
           !config.gatewayApiUrl ||
@@ -4842,9 +5054,14 @@ function createApp(options = {}) {
             "billing is not configured; set BILLGATE_API_URL, BILLGATE_API_KEY and BILLGATE_WEBHOOK_SECRET",
           );
         }
-        const amount =
-          cycle === "yearly" ? plan.yearlyPrice : plan.monthlyPrice;
         const orderId = createId("order_");
+        const amount = withTransaction(db, () => {
+        lockWorkspaceSeats(db, req.auth.workspaceId);
+        config.plans = currentPlans(db, config.plans);
+        plan = config.plans.find(item => item.id === planId);
+        if (!plan || plan.active === false) throw new HttpError(409, 'Gói thuê bao đã ngừng bán');
+        assertWorkspacePlanSeats(db, req.auth.workspaceId, plan, clock);
+        const quotedAmount = cycle === 'yearly' ? plan.yearlyPrice : plan.monthlyPrice;
         db.prepare(
           `
         INSERT INTO billing_orders(id, workspace_id, plan, cycle, amount, currency, status, created_at)
@@ -4855,9 +5072,11 @@ function createApp(options = {}) {
           req.auth.workspaceId,
           planId,
           cycle,
-          amount,
+          quotedAmount,
           isoNow(clock),
         );
+        return quotedAmount;
+        });
         const endpoint = billGatewayEndpoint(config, "/integration/payments");
         let response;
         try {
@@ -5027,6 +5246,7 @@ function createApp(options = {}) {
           payload,
           raw: JSON.stringify(payload),
           clock,
+          config,
         });
         return res.json({ ok: true, ...result });
       } catch (error) {
@@ -5046,6 +5266,10 @@ function createApp(options = {}) {
       return fail(res, 413, "Dữ liệu gửi lên vượt quá dung lượng cho phép");
     if (error?.code === "23505")
       return fail(res, 409, "a record with those values already exists");
+    if (error?.code === '23514' && error.constraint === 'tasks_timeline_order')
+      return fail(res, 400, 'Ngày bắt đầu phải trước hạn hoàn thành');
+    if (error?.code === '23514' && error.message === 'Resolve dependencies and custom fields before moving project')
+      return fail(res, 409, 'Cần xử lý phụ thuộc và trường tùy chỉnh trước khi chuyển dự án');
     console.error("[nhactoi] request failed:", error);
     return fail(res, 500, "internal server error");
   });
@@ -5059,6 +5283,12 @@ function createApp(options = {}) {
         try {
           processReminders({ db, config, clock });
           app.locals.processServiceReminders();
+          app.locals.processAutomations?.();
+          void app.locals.processAiComments?.().catch(()=>console.warn('[nhactoi] assistant worker failed'));
+          app.locals.processWorkTimers?.();
+          void app.locals.processWebhooks?.().catch(()=>console.error("[nhactoi] webhook worker failed"));
+          void app.locals.processGoogleCalendar?.().catch(()=>console.error("[nhactoi] calendar sync failed"));
+          void app.locals.processZaloOa?.().catch(()=>console.error("[nhactoi] OA worker failed"));
           void app.locals.processReminderEmails().catch(error=>console.error("[nhactoi] email worker failed",error));
           processEventReminders({db,clock});
           void app.locals.processWebPush().catch(error=>console.error("[nhactoi] web push worker failed", error));
@@ -5075,6 +5305,7 @@ function createApp(options = {}) {
     app.locals.reminderInterval = interval;
   }
   app.locals.close = () => {
+    app.locals.stopCommentAssistant?.();
     if (app.locals.reminderInterval) clearInterval(app.locals.reminderInterval);
     if (!options.db && db?.close) db.close();
   };

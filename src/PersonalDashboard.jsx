@@ -41,12 +41,12 @@ function entryOf(task, slot, day, now, onOpen) {
   };
 }
 
-function useToday({ tasks, groups, now, onOpen }) {
+function useToday({ tasks, groups, now, onOpen, pageInfo }) {
   const today = planningDay(now);
   return useMemo(() => {
     const open = groups.flatMap(g => g.tasks);
     const review = groups.find(g => g.label === 'Cần xem lại')?.tasks || [];
-    const done = tasks.filter(t => t.status === 'done' && (t.plannedDate === today || dueDay(t) === today)).length;
+    const done = pageInfo?.doneToday ?? tasks.filter(t => t.status === 'done' && (t.plannedDate === today || dueDay(t) === today)).length;
     const rows = new Map(), unscheduled = [];
     for (const task of open) {
       const slot = slotOf(task, today);
@@ -66,7 +66,7 @@ function useToday({ tasks, groups, now, onOpen }) {
     return {
       title: 'Hôm nay',
       subtitle: `${open.length ? `Bạn có ${open.length} việc cần tập trung${review.length ? `, trong đó ${review.length} việc cần xem lại` : ''}.` : 'Chưa có việc nào cho hôm nay.'} Giờ Việt Nam (UTC+7).`,
-      badge: <Badge icon={Check} done={open.length === 0 && done > 0}>Hoàn thành · {done} / {open.length + done}</Badge>,
+      badge: <Badge icon={Check} done={(pageInfo?.total??open.length) === 0 && done > 0}>Hoàn thành · {done} / {(pageInfo?.total??open.length) + done}</Badge>,
       date: `${longDay(now)} · ${clock(vnMinutes(now))}`,
       caption: 'Nhóm việc', timeline,
       unscheduled: unscheduled.map(t => ({ key: t.id, title: t.title, onClick: () => onOpen(t) })),
@@ -79,7 +79,7 @@ function useToday({ tasks, groups, now, onOpen }) {
         { icon: Hourglass, tone: 'amber', value: `${unscheduled.length} chưa xếp giờ`, note: 'cần lên lịch', noteIcon: Clock },
       ],
     };
-  }, [tasks, groups, now, today, onOpen]);
+  }, [tasks, groups, now, today, onOpen, pageInfo]);
 }
 
 function useUpcoming({ groups, now, onOpen }) {
@@ -188,13 +188,14 @@ function InboxBoard({ model, today, canPlan, onPlan, onOpen }) {
   </div>;
 }
 
-export default function PersonalDashboard({ view, me, tasks, groups, capture, list, readOnly, busy, onOpen, onPlan, onSuggest }) {
+export default function PersonalDashboard({ pageInfo, loading, view, me, tasks, groups, capture, list, readOnly, busy, onOpen, onPlan, onSuggest }) {
   const now = useNow();
   const today = planningDay(now);
-  const models = { today: useToday({ tasks, groups, now, onOpen }), upcoming: useUpcoming({ groups, now, onOpen }), inbox: useInbox({ groups, now, onOpen }) };
+  const models = { today: useToday({ tasks, groups, now, onOpen, pageInfo }), upcoming: useUpcoming({ groups, now, onOpen }), inbox: useInbox({ groups, now, onOpen }) };
   const model = models[view];
 
   return <div className="pd-dash">
+    {Number.isFinite(pageInfo?.total) && pageInfo.total > tasks.length && <p role="status" className="pd-page-note">{loading ? "Đang cập nhật kế hoạch…" : `Trang ${pageInfo.page}: ${tasks.length}/${pageInfo.total} công việc. Lịch, gợi ý và thống kê bên dưới chỉ tính các việc trên trang này; số hoàn thành hôm nay tính toàn bộ phạm vi.`}</p>}
     <Hero title={model.title} subtitle={model.subtitle}
       tools={<>{model.badge}<Pill icon={Calendar}>{model.date}</Pill><Pill icon={ArrowUpRight} onClick={showList}>Danh sách</Pill></>}
       footer={<>

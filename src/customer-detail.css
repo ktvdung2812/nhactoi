@@ -109,7 +109,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: var(--accent);
+  color: var(--green);
   text-decoration: none;
   transition: opacity 0.15s ease;
 }
@@ -230,8 +230,8 @@
 }
 
 .customer-tab-btn.active {
-  color: var(--accent);
-  background: var(--accent-subtle, rgba(0, 168, 150, 0.08));
+  color: var(--green);
+  background: var(--green-subtle);
 }
 
 /* Tab content & Toolbar */
@@ -273,9 +273,9 @@
 }
 
 .filter-chip.active {
-  background: var(--accent);
+  background: var(--green);
   color: #fff;
-  border-color: var(--accent);
+  border-color: var(--green);
 }
 
 .customer-tasks-list-panel {
@@ -423,5 +423,43 @@
   }
   .customer-hero-actions button {
     flex: 1;
+  }
+}
+
+/* Customer task rows: priority, due date and assignee keep their own columns. */
+.customer-tasks-list-panel .task-row { border-bottom: 0; border-radius: 8px; }
+.customer-tasks-list-panel .task-row + .task-row { border-top: 1px solid var(--line); border-radius: 0; }
+.customer-tasks-list-panel .tag { flex: 0 0 auto; }
+.customer-tasks-list-panel .due { flex: 0 0 auto; min-width: 104px; }
+.customer-tasks-list-panel .task-assignee {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 150px;
+  min-width: 0;
+}
+.customer-tasks-list-panel .assignee-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-secondary);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.customer-filter-chips { flex-wrap: wrap; }
+@media (max-width: 600px) {
+  .customer-tasks-list-panel .task-row {
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+    align-items: center;
+  }
+  .customer-tasks-list-panel .task-row > .check-task { grid-row: 1; }
+  .customer-tasks-list-panel .task-row > .tag { grid-column: 3; grid-row: 1; justify-self: end; }
+  .customer-tasks-list-panel .task-row > .due { grid-column: 2; grid-row: 2; }
+  .customer-tasks-list-panel .task-row > .task-assignee {
+    grid-column: 3;
+    grid-row: 2;
+    flex: none;
+    max-width: 140px;
+    justify-self: end;
   }
 }

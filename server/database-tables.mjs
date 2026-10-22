@@ -1,5 +1,5 @@
 // Columns in the PostgreSQL baseline, also the allowlist for logical backups/imports.
-export const TABLE_COLUMNS = {
+export const V2_TABLE_COLUMNS = {
   "admin_audit_logs": [
     "id",
     "actor_user_id",
@@ -245,7 +245,8 @@ export const TABLE_COLUMNS = {
     "notification_id",
     "due_at",
     "audience",
-    "condition"
+    "condition",
+    "schedule_key"
   ],
   "reminder_policies": [
     "workspace_id",
@@ -599,4 +600,104 @@ export const TABLE_COLUMNS = {
     "tax_code",
     "note"
   ]
+};
+
+export const V3_TABLE_COLUMNS = {
+  ...V2_TABLE_COLUMNS,
+  workspace_members: [...V2_TABLE_COLUMNS.workspace_members, 'member_type'],
+  invitations: [...V2_TABLE_COLUMNS.invitations, 'member_type'],
+  tasks: [...V2_TABLE_COLUMNS.tasks, 'project_id'],
+  board_columns: [...V2_TABLE_COLUMNS.board_columns, 'project_id'],
+  projects: ['id', 'workspace_id', 'name', 'description', 'access_mode', 'team_id', 'is_default', 'archived_at', 'created_by', 'created_at', 'updated_at'],
+  project_members: ['project_id', 'workspace_id', 'user_id', 'role', 'created_at'],
+};
+export const V4_TABLE_COLUMNS = {
+  ...V3_TABLE_COLUMNS,
+  tasks: [...V3_TABLE_COLUMNS.tasks, 'aggregate_revision'],
+  business_events: ['id', 'workspace_id', 'project_id', 'task_id', 'type', 'actor_user_id', 'source', 'operation_id', 'causation_id', 'occurred_at', 'before_json', 'after_json'],
+  task_assignment_cycles: ['id', 'workspace_id', 'task_id', 'user_id', 'started_at', 'deadline_snapshot', 'acknowledged_at', 'closed_at', 'close_reason', 'history_known'],
+  mutation_receipts: ['workspace_id', 'principal_id', 'operation_id', 'action', 'resource_id', 'payload_hash', 'response_status', 'response_json', 'committed_at'],
+  personal_plan_revisions: ['task_id', 'user_id', 'revision'],
+};
+export const V5_TABLE_COLUMNS = {
+  ...V4_TABLE_COLUMNS,
+  delivery_leases: ['channel', 'notification_id', 'target_id', 'workspace_id', 'status', 'lease_token', 'lease_until', 'attempts', 'provider_reference', 'last_error', 'updated_at'],
+};
+
+export const V6_TABLE_COLUMNS = {
+  ...V5_TABLE_COLUMNS,
+  invitations: [...V5_TABLE_COLUMNS.invitations, 'project_id', 'project_role'],
+  task_templates: [...V5_TABLE_COLUMNS.task_templates, 'project_id'],
+  task_labels: [...V5_TABLE_COLUMNS.task_labels, 'project_id'],
+  automation_rules: [...V5_TABLE_COLUMNS.automation_rules, 'project_id'],
+};
+
+export const V7_TABLE_COLUMNS = {
+  ...V6_TABLE_COLUMNS,
+  service_contracts: [...V5_TABLE_COLUMNS.service_contracts, 'reminder_time', 'reminder_mode', 'renewal_anchor'],
+  service_renewals: [...V5_TABLE_COLUMNS.service_renewals, 'expense_id', 'task_id'],
+  service_cycle_tasks: ['service_id', 'period_date', 'workspace_id', 'task_id'],
+};
+
+export const V8_TABLE_COLUMNS = {
+  ...V7_TABLE_COLUMNS,
+  tasks: [...V7_TABLE_COLUMNS.tasks, 'start_at'],
+  project_fields: ['id','workspace_id','project_id','name','type','position','options_json','retired_at','created_at','updated_at'],
+  task_field_values: ['task_id','field_id','workspace_id','project_id','value_json'],
+  project_views: ['id','workspace_id','project_id','owner_id','name','visibility','config_json','created_at','updated_at'],
+  task_dependencies: ['workspace_id','project_id','predecessor_id','successor_id','created_at'],
+  project_templates: ['id','workspace_id','source_project_id','name','payload_json','created_by','created_at'],
+};
+
+export const V9_TABLE_COLUMNS = {
+  ...V8_TABLE_COLUMNS,
+  google_calendar_connections: ['id','workspace_id','user_id','account_id','calendar_id','status','enabled_json','generation','sync_token','sync_requested','sync_processed','channel_id','channel_token_hash','channel_resource','channel_expires_at','channel_sequence','lease_token','lease_until','last_success_at','last_error','next_attempt_at','created_at','updated_at'],
+  google_calendar_states: ['state_hash','user_id','workspace_id','session_id','callback_uri','verifier','expires_at'],
+  google_calendar_mappings: ['id','connection_id','workspace_id','kind','source_id','event_id','etag','base_revision','base_json','state','conflict_json','last_error','updated_at'],
+  google_calendar_jobs: ['connection_id','kind','source_id','revision','attempts','next_attempt_at','last_error'],
+};
+
+export const V10_TABLE_COLUMNS = {
+  ...V9_TABLE_COLUMNS,
+  automation_event_queue: ['rule_id','event_id','task_id','created_at','processed_at'],
+  work_calendars: ['workspace_id','user_scope','config_json','updated_at'],
+  reminder_delegates: ['id','workspace_id','principal_id','delegate_id','starts_at','ends_at','created_at'],
+  work_timers: ['id','workspace_id','task_id','user_id','started_at','closed_at','close_reason'],
+  time_entries: ['id','workspace_id','task_id','user_id','started_at','ended_at','duration_seconds','source','timer_id','note','created_at','updated_at'],
+  task_estimates: ['task_id','user_id','seconds','updated_at'],
+  task_assignment_cycles: [...V9_TABLE_COLUMNS.task_assignment_cycles,'calendar_json'],
+  automation_rules: [...V9_TABLE_COLUMNS.automation_rules,'conditions_json','schedule_json','activated_at'],
+  automation_runs: [...V9_TABLE_COLUMNS.automation_runs,'trigger_key'],
+};
+
+export const V11_TABLE_COLUMNS = {
+  ...V10_TABLE_COLUMNS,
+  tasks: [...V10_TABLE_COLUMNS.tasks, 'imported_at'],
+  import_sources: ['workspace_id','project_id','source_board','source_kind','source_id','destination_id','created_at'],
+};
+
+export const V12_TABLE_COLUMNS = {
+  ...V11_TABLE_COLUMNS,
+  zalo_oa_connections: ["id", "workspace_id", "oa_id", "authorized_by", "status", "contract_json", "generation", "created_at", "updated_at"],
+  zalo_oa_templates: ["connection_id", "template_id", "version", "status", "purpose", "definition_json", "updated_at"],
+  zalo_oa_recipients: ["id", "connection_id", "recipient_key", "user_id", "customer_id", "eligibility_json", "opted_out", "updated_at"],
+  zalo_oa_deliveries: ["id", "connection_id", "workspace_id", "actor_id", "source_kind", "source_id", "cycle", "recipient_id", "purpose", "template_id", "generation", "payload_json", "source_json", "status", "attempts", "next_attempt_at", "lease_token", "lease_until", "provider_message_id", "last_error", "created_at", "updated_at"],
+  zalo_oa_attempts: ["id", "delivery_id", "attempt", "status", "provider_reference", "error_code", "started_at", "finished_at"],
+  zalo_oa_callbacks: ["connection_id", "event_id", "delivery_id", "status", "received_at"],
+};
+
+export const V14_TABLE_COLUMNS = {
+  ...V12_TABLE_COLUMNS,
+  business_events: [...V12_TABLE_COLUMNS.business_events, 'resource_revision'],
+  api_tokens: ['id','workspace_id','created_by','name','token_hash','scopes_json','projects_json','created_at','last_used_at','revoked_at'],
+  webhook_subscriptions: ['id','workspace_id','created_by','name','url','projects_json','events_json','active','key_version','created_at','updated_at'],
+  webhook_deliveries: ['id','subscription_id','workspace_id','event_id','state','attempt_count','manual_retries','next_attempt_at','lease_token','lease_until','last_status','last_error','created_at','updated_at'],
+  webhook_attempts: ['id','delivery_id','attempt_number','key_version','started_at','completed_at','status','outcome'],
+};
+
+export const TABLE_COLUMNS = {
+  ...V14_TABLE_COLUMNS,
+  workspace_ai_settings: ['workspace_id','name','handle','enabled','updated_at'],
+  task_comments: [...V14_TABLE_COLUMNS.task_comments,'author_type','author_name_snapshot','reply_to_comment_id','ai_run_id','ai_metadata'],
+  ai_comment_runs: ['id','workspace_id','project_id','task_id','comment_id','requested_by','request_body','assistant_name','assistant_handle','status','error','reply_comment_id','state_json','sources_json','actions_json','attempts','lease_token','lease_until','created_at','updated_at'],
 };

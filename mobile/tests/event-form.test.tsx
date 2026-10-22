@@ -42,6 +42,7 @@ beforeEach(() => {
         value: {
           event: {
             id: "event-1",
+            revision: "original-event",
             title: "Demo appointment",
             description: "",
             status: "todo",
@@ -69,6 +70,7 @@ test("saves the appointment status with the existing event payload", async () =>
   expect(api).toHaveBeenCalledWith("/calendar-events/event-1", {
     method: "PUT",
     body: JSON.stringify({
+      expectedRevision: "original-event",
       title: "Demo appointment",
       description: "",
       startsAt: "2099-01-01T10:00:00.000Z",
@@ -80,4 +82,19 @@ test("saves the appointment status with the existing event payload", async () =>
   });
   expect(refreshData).toHaveBeenCalledTimes(1);
   expect(router.back).toHaveBeenCalledTimes(1);
+});
+
+test("an appointment draft retains its original revision when another client updates it", async () => {
+  const view = await render(<EventForm id="event-1" />);
+  await fireEvent.changeText(screen.getByLabelText("Tên lịch hẹn"), "Phone draft");
+  const original = resource.getMockImplementation()!;
+  resource.mockImplementation((path: string) => {
+    const result = original(path) as any;
+    if (result.data?.value.event) result.data.value.event = { ...result.data.value.event, revision: "new-event", status: "done" };
+    return result;
+  });
+  await view.rerender(<EventForm id="event-1" />);
+  await fireEvent.press(screen.getByLabelText("Lưu lịch hẹn"));
+  await waitFor(() => expect(api).toHaveBeenCalledTimes(1));
+  expect(JSON.parse(api.mock.calls[0][1].body)).toMatchObject({ expectedRevision: "original-event", title: "Phone draft" });
 });

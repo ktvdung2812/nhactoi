@@ -1,13 +1,18 @@
+import { useTaskMutation } from './useTaskMutation.js';
+import PublicIntegrations from "./PublicIntegrations.jsx";
 import WebPushSettings from "./WebPushSettings.jsx";
 import RecurrenceFields from "./RecurrenceFields.jsx";
 import WeekCalendar from "./WeekCalendar.jsx";
 import PersonalTasks from "./PersonalTasks.jsx";
 import Appearance from "./Appearance.jsx";
 import { useAppearance } from "./appearance.js";
+import Projects from "./Projects.jsx";
+import GoogleCalendar from "./GoogleCalendar.jsx";
+import ZaloOa from "./ZaloOa.jsx";
 import TaskTemplates from "./TaskTemplates.jsx";
 import AssistantChat from "./AssistantChat.jsx";
 import {GoogleAccount} from "./OperationsSettings.jsx";
-import Account, { ThemeSettings } from "./Account.jsx";
+import Account, { AssistantSettings, ThemeSettings } from "./Account.jsx";
 import ThemeToggle, { ThemeToggleButton } from "./ThemeToggle.jsx";
 import { useTheme } from "./theme.js";
 import BoardTransfer from "./BoardTransfer.jsx";
@@ -69,6 +74,10 @@ import Trash, { MoveToTrashDialog } from "./Trash.jsx";
 import TaskDetail from "./TaskDetail.jsx";
 import CustomerDetail from "./CustomerDetail.jsx";
 import { readRoute } from "./routes.js";
+import { planningDay } from "../shared/personal-planning.mjs";
+import { useNow } from "./PlannerDashboard.jsx";
+import OperationsDashboard from "./OperationsDashboard.jsx";
+import {WorkSettings,WorkReports} from "./WorkManagement.jsx";
 
 const money = (n) =>
   new Intl.NumberFormat("vi-VN", {
@@ -77,13 +86,11 @@ const money = (n) =>
     maximumFractionDigits: 0,
   }).format(n || 0);
 const dateLabel = (d, options = { day: "2-digit", month: "2-digit" }) =>
-  d ? new Date(d).toLocaleDateString("vi-VN", options) : "Chưa đặt lịch";
+  d ? new Date(d).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", ...options }) : "Chưa đặt lịch";
 const localInput = (d) => {
   const t = new Date(d || Date.now());
   return new Date(t - t.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 };
-const localDay = (d = new Date()) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const statuses = { todo: "Cần làm", doing: "Đang làm", done: "Hoàn thành" };
 const priorities = { low: "Thấp", medium: "Trung bình", high: "Cao" };
 const navItems = [
@@ -93,6 +100,7 @@ const navItems = [
   ["upcoming", "Sắp tới", CalendarDays],
   ["week", "Lịch tuần", CalendarDays],
   ["inbox", "Inbox", Inbox],
+  ["projects", "Dự án", Building2],
   ["teams", "Teams", Users],
   ["customers", "Khách hàng", Users],
   ["services", "Quản lý gia hạn", RefreshCw],
@@ -101,6 +109,9 @@ const navItems = [
   ["tickets", "Hỗ trợ", LifeBuoy],
   ["trash", "Thùng rác", Trash2],
   ["automations", "Tự động hóa", Sparkles],
+  ["google-calendar", "Google Calendar", CalendarDays],
+  ["public-integrations", "API và webhook", ShieldCheck],
+  ["zalo-oa", "Zalo OA", CalendarDays],
   ["account", "Tài khoản", ShieldCheck],
   ["templates", "Mẫu công việc", Copy],
 ];
@@ -118,13 +129,13 @@ const navSections = [
   {
     id: "workspace",
     label: "Không gian",
-    items: ["teams", "customers", "services", "finance"],
+    items: ["projects", "teams", "customers", "services", "finance"],
   },
   {
     id: "utilities",
     label: "Tiện ích",
     collapsible: true,
-    items: ["transfer", "tickets", "trash"],
+    items: ["templates", "automations", "public-integrations", "google-calendar", "zalo-oa", "transfer", "tickets", "trash"],
   },
 ];
 function migrateLegacyHashRoute() {
@@ -145,7 +156,10 @@ async function api(path, options = {}) {
     error.status = 503;
     throw error;
   });
-  const data = await r.json().catch(() => ({}));
+  const data = r.status === 204 ? {} : await r.json().catch(() => {
+    if (r.ok) throw Object.assign(new Error("Chưa xác minh được phản hồi máy chủ. Giữ nguyên nội dung và thử lại để đối soát."), { status: 503 });
+    return {};
+  });
   if (!r.ok) {
     const raw = String(data.error?.message || data.error || data.message || "");
     const known = {
@@ -364,12 +378,18 @@ export default function App() {
     [workspaces, setWorkspaces] = useState(null),
     [bootError, setBootError] = useState(null),
     [previewToast, setPreviewToast] = useState("");
+  const taskApi = useTaskMutation(api, `${me?.workspace?.id || ''}:${me?.user?.id || ''}`);
+  const modalTaskApi = useTaskMutation(api, modal);
   const [trashTarget, setTrashTarget] = useState(null);
   const [calendarEvents, setCalendarEvents] = useState([]);
+  const [calendarMeta,setCalendarMeta]=useState({});
+  const [calendarPage,setCalendarPage]=useState(1);
   const [selectedServiceId, setSelectedServiceId] = useState(() => new URLSearchParams(location.search).get("service"));
   const [teamsRevision, setTeamsRevision] = useState(0);
   const [taskTeamFilter, setTaskTeamFilter] = useState("all");
   const [taskTeamId, setTaskTeamId] = useState("");
+  const [taskPage, setTaskPage] = useState(1), [customerTaskFilter, setCustomerTaskFilter] = useState("all"), [bootstrapReadError, setBootstrapReadError] = useState("");
+  const [projects,setProjects]=useState([]),[taskProjectId,setTaskProjectId]=useState(""),[projectFilter,setProjectFilter]=useState("all"),[projectMembers,setProjectMembers]=useState([]);
   const [taskReturnPage, setTaskReturnPage] = useState(null);
   const [aiTaskId, setAiTaskId] = useState(null);
   const [selectedAiTaskId, setSelectedAiTaskId] = useState(null);
@@ -405,6 +425,7 @@ export default function App() {
   }, []);
 
   const workspaceRef = useRef(null);
+  const refreshSequence = useRef(0), calendarSequence = useRef(0);
   workspaceRef.current = me?.workspace?.id || null;
   useEffect(() => {
     const query = searchParams?.toString();
@@ -436,17 +457,23 @@ export default function App() {
     setPage(readRoute());
   }, [router]);
   useEffect(() => {
-    if (modal?.type === "task")
+    if (modal?.type === "task") {
       setTaskTeamId(modal.item?.teamId || modal.teamId || "");
+      setTaskProjectId(modal.item?.projectId || (projectFilter!=="all"?projectFilter:""));
+    }
   }, [modal]);
+  useEffect(()=>{let live=true;setProjectMembers([]);if(taskProjectId)api(`/projects/${taskProjectId}/members`).then(r=>live&&setProjectMembers(r.members)).catch(e=>live&&notify(e.message));return()=>{live=false;};},[taskProjectId]);
   useEffect(() => {
     setTaskTeamFilter("all");
+    setProjectFilter("all");
+    setTaskProjectId("");
     setModal(null);
     setTrashTarget(null);
     setTaskReturnPage(null);
     setAiTaskId(null);
     setSelectedAiTaskId(null);
     setCalendarEvents([]);
+    setCalendarMeta({});
     setSelectedServiceId(new URLSearchParams(location.search).get("service"));
   }, [me?.workspace?.id]);
   useEffect(() => {
@@ -478,17 +505,50 @@ export default function App() {
     : page === "tasks" && !["all", "common"].includes(taskTeamFilter) ? taskTeamFilter : "";
   const appearance = useAppearance({ api, userId: me?.user?.id, workspaceId: me?.workspace?.id,
     teamId: appearanceTeamId, enabled: !!me && !page.startsWith("admin/") && !["login", "register", "forgot-password", "reset-password"].includes(page), notify });
+  const customerScope = modal?.type === "customer" ? modal.item?.id : page.startsWith("customers/") ? page.split("/")[1] : null;
+  const taskBoardPage = page === "tasks" || page.startsWith("tasks/");
+  const needsTasks = page === "dashboard" || taskBoardPage || Boolean(customerScope);
+  const taskQuery = new URLSearchParams({ page: String(taskPage), pageSize: "50" });
+  if (!needsTasks) taskQuery.set("tasks", "none");
+  if (customerScope) {
+    taskQuery.set("customerId", customerScope);
+    if (modal?.type !== "customer" && customerTaskFilter === "open") taskQuery.set("openOnly", "true");
+    else if (modal?.type !== "customer" && customerTaskFilter !== "all") taskQuery.set("status", customerTaskFilter);
+  } else if (page === "dashboard") {
+    taskQuery.set("openOnly", "true");
+    if (["today", "overdue"].includes(filter)) taskQuery.set("due", filter);
+  } else if (taskBoardPage) {
+    if (taskTeamFilter !== "all") taskQuery.set("teamId", taskTeamFilter);
+    if (projectFilter !== "all") taskQuery.set("projectId", projectFilter);
+    if (search) taskQuery.set("q", search);
+  }
+  const dashboardPath = `/dashboard?${taskQuery}`;
+  const calendarQuery=new URLSearchParams({page:String(calendarPage),pageSize:'50'});
+  if(page==='dashboard'){calendarQuery.set('kind','event');calendarQuery.set('openOnly','true');if(['today','overdue'].includes(filter))calendarQuery.set('due',filter);}
+  else if(taskBoardPage){if(taskTeamFilter!=='all')calendarQuery.set('teamId',taskTeamFilter);if(projectFilter!=='all')calendarQuery.set('kind','none');if(search)calendarQuery.set('q',search);}
+  const calendarPath=`/calendar-events?${calendarQuery}`;
+  useEffect(()=>{setCalendarPage(1);},[page,taskTeamFilter,projectFilter,search,filter]);
+  useEffect(() => { setTaskPage(1); }, [page, customerScope, customerTaskFilter, taskTeamFilter, projectFilter, search, filter]);
+  useEffect(() => { setCustomerTaskFilter("all"); }, [page]);
   async function refresh() {
-    const [m, d] = await Promise.all([api("/me"), api("/dashboard")]);
+    const sequence = ++refreshSequence.current, workspaceId = workspaceRef.current;
+    const [m, d, p] = await Promise.all([api("/me"), api(dashboardPath), api("/projects")]);
+    if (sequence !== refreshSequence.current || workspaceRef.current !== workspaceId) return;
+    if (m.workspace.id !== d.workspace.id) throw new Error("Không gian đã thay đổi. Vui lòng làm mới dữ liệu.");
     setMe(m);
-    setData(d);
+    setProjects(p.projects);
+    if(m.user.memberType==='guest')setProjectFilter(current=>current==='all'?(p.projects[0]?.id||'all'):current);
+    setData({ ...d, taskQuery: dashboardPath });
+    setBootstrapReadError("");
     setTeamsRevision((v) => v + 1);
     setBootError(null);
   }
   async function loadCalendarEvents() {
+    if(me?.user?.memberType==='guest') {setCalendarEvents([]);return {events:[]};}
     const workspaceId = workspaceRef.current;
-    const result = await api("/calendar-events");
-    if (workspaceRef.current === workspaceId) setCalendarEvents(result.events || []);
+    const sequence = ++calendarSequence.current;
+    const result = await api(calendarPath);
+    if (sequence === calendarSequence.current && workspaceRef.current === workspaceId) {setCalendarEvents(result.events || []);setCalendarMeta({...result,path:calendarPath});}
     return result;
   }
   async function loadSession() {
@@ -507,65 +567,45 @@ export default function App() {
     loadSession();
   }, []);
   useEffect(() => {
-    if (!me || !["tasks", "inbox", "today", "upcoming", "week"].includes(page)) return undefined;
+    if (!me) return undefined;
     let canceled = false;
+    const withCalendar = me.user.memberType!=="guest" && ["tasks", "dashboard"].includes(page);
     const load = () => {
+      if (document.visibilityState === "hidden") return;
       const workspaceId = workspaceRef.current;
-      Promise.all([api("/dashboard"), api("/calendar-events")])
+      const sequence = ++refreshSequence.current;
+      const calendarRequest = withCalendar ? ++calendarSequence.current : null;
+      Promise.all([api(dashboardPath), withCalendar ? api(calendarPath) : null])
         .then(([dashboard, calendarResult]) => {
-          if (canceled || workspaceRef.current !== workspaceId) return;
-          setData(dashboard);
+          if (canceled || sequence !== refreshSequence.current || workspaceRef.current !== workspaceId) return;
+          setData({ ...dashboard, taskQuery: dashboardPath });
+          setBootstrapReadError("");
           setMe((current) => current ? { ...current, workspace: dashboard.workspace, subscription: dashboard.subscription } : current);
-          setCalendarEvents(calendarResult.events || []);
+          setTeamsRevision((v) => v + 1);
+          if (calendarResult && calendarRequest === calendarSequence.current) {setCalendarEvents(calendarResult.events || []);setCalendarMeta({...calendarResult,path:calendarPath});}
         })
         .catch(error => {
-          if (!canceled && error.status === 401) setMe(null);
+          if (!canceled && sequence === refreshSequence.current) { if (error.status === 401) setMe(null); else setBootstrapReadError(error.message); }
         });
     };
     load();
     const timer = setInterval(load, 30000);
     window.addEventListener("focus", load);
+    window.addEventListener("online", load);
+    document.addEventListener("visibilitychange", load);
     return () => {
       canceled = true;
       clearInterval(timer);
       window.removeEventListener("focus", load);
+      window.removeEventListener("online", load);
+      document.removeEventListener("visibilitychange", load);
     };
-  }, [me?.workspace?.id, page]);
+  }, [me?.workspace?.id, page, dashboardPath, calendarPath]);
   useEffect(() => {
     if (!previewToast) return;
     const timer = setTimeout(() => setPreviewToast(""), 3000);
     return () => clearTimeout(timer);
   }, [previewToast]);
-  useEffect(() => {
-    if (!me || page === "tasks") return;
-    let canceled = false;
-    const timer = setInterval(
-      () =>
-        api("/dashboard")
-          .then((d) => {
-            if (!canceled) {
-              setData(d);
-              setMe((m) =>
-                m
-                  ? {
-                      ...m,
-                      workspace: d.workspace,
-                      subscription: d.subscription,
-                    }
-                  : m,
-              );
-            }
-          })
-          .catch((e) => {
-            if (!canceled && e.status === 401) setMe(null);
-          }),
-      30000,
-    );
-    return () => {
-      canceled = true;
-      clearInterval(timer);
-    };
-  }, [me?.workspace?.id, page]);
   useEffect(() => {
     if (toast) {
       const t = setTimeout(() => setToast(null), 5000);
@@ -630,7 +670,7 @@ export default function App() {
     window.addEventListener("keydown", fn);
     return () => window.removeEventListener("keydown", fn);
   }, []);
-  const tasks = data.tasks || [],
+  const tasks = data.taskQuery === dashboardPath ? data.tasks || [] : [],
     teams = data.teams || [],
     customers = data.customers || [],
     members = data.members || [],
@@ -639,9 +679,9 @@ export default function App() {
   const customerTasks = modal?.type === "customer" && modal.item
     ? tasks.filter((task) => task.customerId === modal.item.id)
     : [];
-  const now = new Date(),
-    today = localDay(),
-    isToday = (d) => d && localDay(new Date(d)) === today;
+  const now = useNow(),
+    today = planningDay(now),
+    isToday = (d) => d && planningDay(d) === today;
   const openTasks = tasks.filter((t) => t.status !== "done"),
     overdue = openTasks.filter((t) => t.dueAt && new Date(t.dueAt) < now),
     dueToday = tasks.filter((t) => isToday(t.dueAt)),
@@ -680,12 +720,12 @@ export default function App() {
   ];
   const teamScopedItems = unifiedItems.filter(
     (item) =>
-      taskTeamFilter === "all" ||
-      (taskTeamFilter === "common" ? !item.teamId : item.teamId === taskTeamFilter),
+      (projectFilter === "all" || item.projectId === projectFilter) && (taskTeamFilter === "all" ||
+      (taskTeamFilter === "common" ? !item.teamId : item.teamId === taskTeamFilter)),
   );
   const filteredItems = teamScopedItems.filter(
     (item) =>
-      `${item.title} ${item.description || ""} ${item.category || ""} ${item.teamName || ""} ${item.kind === "event" ? "lịch hẹn" : item.kind === "renewal" ? "gia hạn" : "công việc"}`
+      item.kind === "task" || `${item.title} ${item.description || ""} ${item.category || ""} ${item.teamName || ""} ${item.kind === "event" ? "lịch hẹn" : item.kind === "renewal" ? "gia hạn" : "công việc"}`
         .toLowerCase()
         .includes(search.toLowerCase()),
   );
@@ -694,13 +734,24 @@ export default function App() {
   const overdueBoard = openBoard.filter((item) => item.dueAt && new Date(item.dueAt) < now);
   const dueTodayBoard = openBoard.filter((item) => isToday(item.dueAt));
   const dashboardItems = filter === "overdue" ? overdueBoard : filter === "today" ? dueTodayBoard : openBoard;
+  const taskTotals = data.taskSummary || { total: tasks.length, open: openTasks.length, completed: completed.length, today: dueToday.length, overdue: overdue.length, byAssignee: members.map(member=>{const rows=tasks.filter(task=>task.assigneeId===member.id);return {id:member.id,total:rows.length,open:rows.filter(task=>task.status!=="done").length,completed:rows.filter(task=>task.status==="done").length};}), byCustomer: customers.map(customer=>{const rows=tasks.filter(task=>task.customerId===customer.id);return {id:customer.id,total:rows.length,open:rows.filter(task=>task.status!=="done").length,completed:rows.filter(task=>task.status==="done").length};}) };
+  const boardCounts = { open: taskTotals.open + (calendarMeta.summary?.eventOpen??eventItems.filter(item=>item.kind!=="renewal" && item.status!=="done").length),
+    today: taskTotals.today + (calendarMeta.summary?.eventToday??eventItems.filter(item=>item.kind!=="renewal" && item.status!=="done" && isToday(item.dueAt)).length),
+    overdue: taskTotals.overdue + (calendarMeta.summary?.eventOverdue??eventItems.filter(item=>item.kind!=="renewal" && item.status!=="done" && item.dueAt && new Date(item.dueAt)<now).length) };
+  const taskPagination = needsTasks && data.taskPage ? <><nav className="task-pagination" aria-label="Phân trang công việc">
+    <button type="button" disabled={taskPage===1 || data.taskQuery!==dashboardPath} onClick={()=>setTaskPage(n=>n-1)}>Trang trước</button>
+    <span role="status">{data.taskQuery!==dashboardPath ? "Đang tải…" : `Trang ${data.taskPage.page} · ${data.taskPage.total} công việc`}</span>
+    <button type="button" disabled={!data.taskPage.hasMore || data.taskQuery!==dashboardPath} onClick={()=>setTaskPage(n=>n+1)}>Trang tiếp</button>
+  </nav>
+    {me.user.memberType!=='guest'&&!customerScope&&calendarMeta.total>0&&<nav className="task-pagination" aria-label="Phân trang lịch hẹn"><button disabled={calendarPage===1||calendarMeta.path!==calendarPath} onClick={()=>setCalendarPage(n=>n-1)}>Lịch hẹn trước</button><span role="status">{calendarMeta.path!==calendarPath?'Đang tải…':`Trang lịch hẹn ${calendarMeta.page} · ${calendarMeta.total} lịch hẹn/gia hạn`}</span><button disabled={!calendarMeta.hasMore||calendarMeta.path!==calendarPath} onClick={()=>setCalendarPage(n=>n+1)}>Lịch hẹn tiếp</button></nav>}
+  </> : null;
   const person = (id) => members.find((m) => m.id === id),
     client = (id) => customers.find((c) => c.id === id);
   const selectedTaskTeam = teams.find((t) => t.id === taskTeamId);
   const preserveHistoricalAssignee =
     modal?.item?.teamId === taskTeamId &&
     (modal?.readOnly || modal?.item?.status === "done");
-  const taskAssignees = taskTeamId
+  const taskAssignees = taskProjectId ? projectMembers : taskTeamId
     ? members.filter(
         (m) =>
           selectedTaskTeam?.memberIds?.includes(m.id) ||
@@ -751,7 +802,11 @@ export default function App() {
     setBusy(true);
     try {
       const result = await fn();
-      await refresh();
+      try { await refresh(); }
+      catch (error) {
+        notify(`${success || 'Đã lưu thành công.'} Chưa làm mới được danh sách: ${error.message}`, true);
+        return result;
+      }
       if (success) notify(success);
       return result;
     } catch (e) {
@@ -778,10 +833,11 @@ export default function App() {
   }
   async function moveBoardTask(task, status) {
     const workspaceId = me.workspace.id;
-    const result = await api(`/tasks/${encodeURIComponent(task.id)}`, {
+    const result = await taskApi(`/tasks/${encodeURIComponent(task.id)}`, {
       method: "PATCH",
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ status, expectedRevision: task.revision }),
     });
+    refreshSequence.current++;
     setData((current) => current.workspace?.id !== workspaceId ? current : ({
       ...current,
       tasks: [
@@ -798,6 +854,8 @@ export default function App() {
         method: "PATCH",
         body: JSON.stringify({ status }),
       });
+      refreshSequence.current++;
+      calendarSequence.current++;
       if (result.event && workspaceRef.current === workspaceId) {
         setCalendarEvents((current) => current.map((event) =>
           event.id === result.event.id
@@ -813,10 +871,11 @@ export default function App() {
   async function complete(t) {
     await action(
       () =>
-        api(`/tasks/${t.id}`, {
+        taskApi(`/tasks/${t.id}`, {
           method: "PATCH",
           body: JSON.stringify({
             status: t.status === "done" ? "todo" : "done",
+            expectedRevision: t.revision,
           }),
         }),
       t.status === "done" ? "Đã mở lại công việc" : "Đã hoàn thành công việc",
@@ -861,7 +920,7 @@ export default function App() {
     setNoticeOpen(false);
     if (item.kind === "renewal") {
       setSelectedServiceId(item.service_id || null);
-      go("services");
+      go(item.service_id ? `services?service=${encodeURIComponent(item.service_id)}` : "services");
       return;
     }
     if (item.kind === "event") {
@@ -902,6 +961,7 @@ export default function App() {
         method: id ? "PUT" : "POST",
         body: JSON.stringify({
           title: String(f.title || "").trim(),
+          expectedRevision: id ? modal.item.revision : undefined,
           description: f.description || "",
           teamId: taskTeamId || null,
           status: f.status,
@@ -921,12 +981,14 @@ export default function App() {
       method = modal.item ? "PATCH" : "POST";
       payload = {
         ...f,
+        expectedRevision: modal.item?.revision,
         recurrenceOptions: JSON.parse(f.recurrenceOptions || '{}'),
         dueAt: f.dueAt ? new Date(f.dueAt).toISOString() : null,
         remindAt: f.remindAt ? new Date(f.remindAt).toISOString() : null,
+        projectId: taskProjectId || undefined,
         assigneeId: f.assigneeId || null,
-        customerId: f.customerId || null,
-        teamId: taskTeamId || null,
+        ...(me.user.memberType==='guest'?{}:{customerId: f.customerId || null}),
+        teamId: taskProjectId ? projects.find(p=>p.id===taskProjectId)?.teamId || null : taskTeamId || null,
         ...(!modal.item && modal.columnId && (taskTeamId || null) === (modal.teamId || null) && f.status === modal.status ? { columnId: modal.columnId } : {}),
       };
     }
@@ -944,7 +1006,7 @@ export default function App() {
     }
     if (modal.type === "invite") path = "/invitations";
     const result = await action(
-      () => api(path, { method, body: JSON.stringify(payload) }),
+      () => modalTaskApi(path, { method, body: JSON.stringify(payload) }),
       "Đã lưu thành công",
     );
     if (result) {
@@ -1234,8 +1296,10 @@ export default function App() {
           {navSections.map((section) => {
             const sectionItems = navItems
               .filter(([id]) => section.items.includes(id))
+              .filter(([id]) => me.user.memberType!=="guest" || ["tasks","projects","today","upcoming","inbox","week"].includes(id))
+              .filter(([id]) => id!=="zalo-oa" || ["owner","admin"].includes(me.user.role))
               .filter(([id]) => !appearance.preferences.hiddenNav.includes(id))
-              .filter((n) => (n[0] !== "finance" || canManage) && n[0] !== "automations" && n[0] !== "templates" && n[0] !== "account")
+              .filter((n) => (n[0] !== "finance" || canManage) && n[0] !== "account")
               .sort(([left], [right]) => appearance.preferences.navOrder.indexOf(left) - appearance.preferences.navOrder.indexOf(right));
 
             if (sectionItems.length === 0) return null;
@@ -1292,7 +1356,7 @@ export default function App() {
                     >
                       <Icon size={19} />
                       <span>{label}</span>
-                      {id === "tasks" && <b>{openTasks.length + calendarEvents.filter((event) => (event.status || "todo") !== "done").length}</b>}
+                      {id === "tasks" && <b>{taskTotals.open + (calendarMeta.summary?.open??calendarEvents.filter((event) => (event.status || "todo") !== "done").length)}</b>}
                     </button>
                   ))}
                 </div>
@@ -1329,6 +1393,7 @@ export default function App() {
       )}
       <main className={`main ${sidebarHidden ? "sidebar-collapsed" : ""}`}>
         <div className="page-content">
+          {bootstrapReadError && <div role="alert">Không thể làm mới dữ liệu: {bootstrapReadError} <button type="button" onClick={()=>refresh().catch(e=>setBootstrapReadError(e.message))}>Thử lại</button></div> }
           {page === "week" && <WeekCalendar key={me.workspace.id} api={api} me={me} refreshToken={data.tasks} onOpenTask={openTaskDetail} onOpenEvent={event => openUnifiedItem({ ...event, kind: event.service_id ? "renewal" : "event", dueAt: event.starts_at, endsAt: event.ends_at, teamId: event.team_id })} onChanged={refresh} />}
           {["inbox", "today", "upcoming"].includes(page) && <PersonalTasks key={me.workspace.id} api={api} me={me} view={page} refreshToken={data.tasks} onOpen={openTaskDetail} onChanged={refresh} />}
           {page === "appearance" && <Appearance key={`${me.workspace.id}/${appearanceTeamId}`} appearance={appearance} teams={teams} teamId={appearanceTeamId} go={go} canManage={canManage} />}
@@ -1349,12 +1414,16 @@ export default function App() {
               }
               onTaskOpen={openTaskDetail}
               selectedTaskId={selectedAiTaskId}
-              openTasks={openTasks}
+              memberTaskCounts={taskTotals.byAssignee}
               onInvite={canManage ? () => setModal({ type: "invite" }) : null}
               invitation={invitation}
             />
           )}
-          {page === "templates" && <TaskTemplates key={me.workspace.id} api={api} teams={teams} tasks={tasks} onOpen={openTaskDetail} onChanged={refresh}/>}
+          {page === "public-integrations" && <PublicIntegrations key={me.workspace.id} api={api} me={me}/> }
+          {page === "google-calendar" && <GoogleCalendar key={me.workspace.id} api={api}/> }
+          {page === "zalo-oa" && <ZaloOa key={me.workspace.id} api={api}/> }
+          {page === "projects" && <Projects key={me.workspace.id} api={api} me={me} teams={teams} onOpenTask={openTaskDetail} onChanged={refresh}/> }
+          {page === "templates" && <TaskTemplates key={me.workspace.id} api={api} teams={teams} tasks={tasks} onOpen={openTaskDetail} onChanged={refresh} readOnly={Boolean(me.workspace.suspendedAt) || ["expired", "canceled"].includes(me.subscription?.status) || Boolean(me.subscription?.currentPeriodEnd && Date.parse(me.subscription.currentPeriodEnd) <= Date.now())}/>}
           {page === "account" && <>
             <PageHeading title="Tài khoản" subtitle="Quản lý thông tin cá nhân và các phương thức đăng nhập của bạn." />
             <div className="account-sections">
@@ -1366,6 +1435,7 @@ export default function App() {
                     ? { ...member, name: user.name, email: user.email } : member),
                 }));
               }} />
+              <AssistantSettings key={`assistant-${me.workspace.id}`} api={api} user={me.user} workspaceId={me.workspace.id} />
               <WebPushSettings key={`push-${me.user.id}`} api={api} />
               <ThemeSettings disabledReason={appearance.themeDisabledReason} />
               <button className="button" onClick={() => go("appearance")}><Palette size={16} /> Cá nhân hóa toàn bộ giao diện</button>
@@ -1384,6 +1454,9 @@ export default function App() {
               customerId={page.split("/")[1]}
               customers={customers}
               tasks={tasks}
+              taskSummary={taskTotals.byCustomer.find(item=>item.id===page.split("/")[1])}
+              taskPagination={taskPagination}
+              onTaskFilterChange={setCustomerTaskFilter}
               services={data.services || []}
               transactions={data.transactions || []}
               members={members}
@@ -1442,7 +1515,7 @@ export default function App() {
                 >
                   <span>Bạn có{" "}
                   <b>
-                    {dueTodayBoard.length} việc
+                    {boardCounts.today} việc
                   </b>{" "}
                   cần hoàn thành hôm nay</span> <ArrowRight size={15} />
                 </button>
@@ -1452,15 +1525,15 @@ export default function App() {
                   icon={CheckCheck}
                   color="green"
                   title="Đang mở"
-                  value={openBoard.length}
-                  foot={`${completed.length} công việc đã hoàn thành`}
+                  value={boardCounts.open}
+                  foot={`${taskTotals.completed} công việc đã hoàn thành`}
                   onClick={() => go("tasks")}
                 />
                 <Stat
                   icon={CalendarDays}
                   color="blue"
                   title="Đến hạn hôm nay"
-                  value={dueTodayBoard.length}
+                  value={boardCounts.today}
                   foot="Sắp xếp một ngày thật hiệu quả"
                   onClick={() => {
                     go("tasks");
@@ -1471,9 +1544,9 @@ export default function App() {
                   icon={Clock3}
                   color="orange"
                   title="Công việc quá hạn"
-                  value={overdueBoard.length}
+                  value={boardCounts.overdue}
                   foot={
-                    overdueBoard.length
+                    boardCounts.overdue
                       ? "Cần bạn dành chút thời gian"
                       : "Mọi việc đang đúng tiến độ"
                   }
@@ -1522,16 +1595,17 @@ export default function App() {
                     >
                       Hôm nay{" "}
                       <span>
-                        {dueTodayBoard.length}
+                        {boardCounts.today}
                       </span>
                     </button>
                     <button
                       className={filter === "overdue" ? "active" : ""}
                       onClick={() => setFilter("overdue")}
                     >
-                      Quá hạn <span>{overdueBoard.length}</span>
+                      Quá hạn <span>{boardCounts.overdue}</span>
                     </button>
                   </div>
+                  {taskPagination}
                   <TaskBoard
                     selectedTaskId={selectedAiTaskId}
                     scopeKey={`dashboard/${me.workspace.id}/${filter}`}
@@ -1635,17 +1709,17 @@ export default function App() {
                   ) : (
                     <div className="progress-large">
                       <strong>
-                        {tasks.length
-                          ? Math.round((completed.length / tasks.length) * 100)
+                        {taskTotals.total
+                          ? Math.round((taskTotals.completed / taskTotals.total) * 100)
                           : 0}
                         %
                       </strong>
                       <p>
-                        {completed.length}/{tasks.length} công việc hoàn thành
+                        {taskTotals.completed}/{taskTotals.total} công việc hoàn thành
                       </p>
                       <progress
-                        value={completed.length}
-                        max={tasks.length || 1}
+                        value={taskTotals.completed}
+                        max={taskTotals.total || 1}
                       />
                     </div>
                   )}
@@ -1662,8 +1736,8 @@ export default function App() {
                   </div>
                   <div className="team-progress">
                     {members.slice(0, 4).map((m, i) => {
-                      const ts = tasks.filter((t) => t.assigneeId === m.id),
-                        done = ts.filter((t) => t.status === "done").length;
+                      const counts = taskTotals.byAssignee.find(item => item.id === m.id) || { total: 0, completed: 0 };
+                      const done = counts.completed;
                       return (
                         <div className="member-progress" key={m.id}>
                           <Avatar name={m.name} small index={i} />
@@ -1671,10 +1745,10 @@ export default function App() {
                             <div>
                               <strong>{m.name}</strong>
                               <span>
-                                {done}/{ts.length} việc
+                                {done}/{counts.total} việc
                               </span>
                             </div>
-                            <progress value={done} max={ts.length || 1} />
+                            <progress value={done} max={counts.total || 1} />
                           </div>
                         </div>
                       );
@@ -1686,6 +1760,11 @@ export default function App() {
                   </div>
                 </section>
               </div>
+              <div className="dashboard-reports">
+                <OperationsDashboard key={me.workspace.id} api={api} members={members} teams={teams} onOpenTask={openTaskDetail}/>
+                <WorkSettings key={me.workspace.id+":work"} api={api} me={me} members={members}/>
+                <WorkReports key={me.workspace.id+":reports"} api={api}/>
+              </div>
             </>
           )}
           {(page === "tasks" || (page.startsWith("tasks/") && (!taskReturnPage || taskReturnPage === "tasks"))) && (
@@ -1693,17 +1772,25 @@ export default function App() {
               <PageHeading
                 title="Công việc"
                 subtitle="Công việc, lịch hẹn và lịch nhắc trên cùng một bảng."
+                action={
+                  <label className="page-heading-filter">
+                    <span>Dự án</span>
+                    <select aria-label="Lọc dự án" value={projectFilter} onChange={e=>{setProjectFilter(e.target.value);setTaskTeamFilter("all");}}><option value="all">Tất cả dự án</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
+                  </label>
+                }
               />
+              {taskPagination}
               <WorkflowBoard
                 showColumnTabs
                 toolbarRight={<SearchBox value={search} setValue={setSearch} placeholder="Tìm công việc, lịch hẹn, nhóm dịch vụ…" />}
                 selectedTaskId={selectedAiTaskId}
                 api={api}
                 teamId={teams.some((team) => team.id === taskTeamFilter) ? taskTeamFilter : null}
-                scopeKey={`${me.workspace.id}/${taskTeamFilter}`}
+                projectId={projectFilter==='all'?null:projectFilter}
+                scopeKey={`${me.workspace.id}/${taskTeamFilter}/${projectFilter}`}
                 tasks={filteredItems}
                 members={members}
-                placeByStatus
+                placeByStatus={projectFilter==='all'}
                 countNoun="mục"
                 readOnly={Boolean(me.workspace.suspendedAt)}
                 onOpen={openUnifiedItem}
@@ -1764,8 +1851,7 @@ export default function App() {
                       <footer>
                         <span>
                           {
-                            openTasks.filter((t) => t.customerId === c.id)
-                              .length
+                            taskTotals.byCustomer.find(item=>item.id===c.id)?.open || 0
                           }{" "}
                           công việc đang mở
                         </span>
@@ -1903,11 +1989,7 @@ export default function App() {
                     Gói hiện tại:{" "}
                     {me.subscription?.status === "trialing"
                       ? "Dùng thử"
-                      : {
-                          starter: "Starter",
-                          team: "Team",
-                          business: "Business",
-                        }[me.subscription?.plan] || "Dùng thử"}
+                      : me.subscription?.planName || me.subscription?.plan || "Chưa có gói"}
                   </strong>
                   <p>
                     {me.subscription?.currentPeriodEnd
@@ -2129,6 +2211,7 @@ export default function App() {
               onEdit={(task) => openTeamTask({ item: task, readOnly: task.teamArchived })}
               onTrash={(task) => requestTrash("task", task)}
               onBack={closeTaskDetail}
+              onOpenTask={aiTaskId ? openAiTask : openTaskDetail}
             />
           </div>
         </div>
@@ -2160,8 +2243,9 @@ export default function App() {
                     );
                     setNoticeOpen(false);
                     if (n.serviceId || n.type === "service_renewal") {
-                      setSelectedServiceId(n.serviceId || null);
-                      go("services");
+                      const serviceId = n.serviceId || n.entityId;
+                      setSelectedServiceId(serviceId || null);
+                      go(serviceId ? `services?service=${encodeURIComponent(serviceId)}` : "services");
                     } else if (n.entityType === "calendar_event" && n.entityId) {
                       const known = calendarEvents.find((event) => String(event.id) === String(n.entityId));
                       if (known) openUnifiedItem(asBoardEvent(known));
@@ -2176,6 +2260,7 @@ export default function App() {
                     } else {
                       const t = tasks.find((t) => t.id === n.taskId);
                       if (t) openTaskDetail(t);
+                      else if (n.taskId) { try { const result = await api(`/tasks/${encodeURIComponent(n.taskId)}`); openTaskDetail(result.task); } catch(error) { notify(error.message, true); } }
                     }
                   }}
                 >
@@ -2296,7 +2381,7 @@ export default function App() {
                         name="teamId"
                         value={taskTeamId}
                         onChange={(e) => setTaskTeamId(e.target.value)}
-                        disabled={Boolean(modal.item && !canManage)}
+                        disabled={Boolean((!modal.appointment && taskProjectId) || (modal.item && !canManage))}
                       >
                         <option value="">Việc chung của doanh nghiệp</option>
                         {teams
@@ -2309,6 +2394,7 @@ export default function App() {
                           ))}
                       </select>
                     </Field>
+                    {!modal.appointment && <Field label="Dự án"><select aria-label="Dự án công việc" value={taskProjectId} onChange={e=>{setTaskProjectId(e.target.value);const p=projects.find(p=>p.id===e.target.value);if(p)setTaskTeamId(p.teamId||'');}}><option value="">Dự án mặc định của team</option>{projects.map(p=><option disabled={!p.canEdit&&p.id!==modal.item?.projectId} key={p.id} value={p.id}>{p.name}{p.readonly?' (chỉ đọc)':''}</option>)}</select></Field>}
                     <Field label="Trạng thái">
                       <select
                         name="status"
@@ -2373,7 +2459,7 @@ export default function App() {
                     {!modal.appointment && <>
                     <Field label="Người phụ trách">
                       <select
-                        key={taskTeamId}
+                        key={`${taskTeamId}/${taskProjectId}/${defaultTaskAssignee}`}
                         name="assigneeId"
                         defaultValue={defaultTaskAssignee}
                       >
@@ -2605,9 +2691,10 @@ export default function App() {
                 <aside className="customer-related-tasks" aria-label="Công việc liên quan đến khách hàng">
                   <div className="customer-tasks-heading">
                     <h3>Công việc liên quan</h3>
-                    <span className="count-pill">{customerTasks.length}</span>
+                    <span className="count-pill">{data.taskPage?.total || 0}</span>
                   </div>
                   <p className="customer-tasks-hint">Các công việc bạn có quyền xem, bao gồm việc đã hoàn thành.</p>
+                  {taskPagination}
                   {customerTasks.length ? (
                     <ul className="customer-tasks-list">
                       {customerTasks.map((task) => (

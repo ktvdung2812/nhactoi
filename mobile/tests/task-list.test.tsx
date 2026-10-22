@@ -1,3 +1,4 @@
+import type { Task } from "../src/core/types";
 import React from "react";
 import {
   render,
@@ -49,6 +50,35 @@ test('undated tasks stay out of date filters and sort after dated tasks', () => 
   expect(projectWorkItems(tasks, [], filters).map(item => item.value.id)).toEqual(['earlier', 'later', 'inbox']);
   expect(projectWorkItems([tasks[0]], [], { ...filters, due: 'overdue' })).toHaveLength(0);
   expect(projectWorkItems([tasks[0]], [], { ...filters, due: 'today' })).toHaveLength(0);
+});
+test("assignee filter includes primary and collaborating assignees once", () => {
+  const base = { title: "Task", description: "", status: "todo" as const, priority: "medium" as const, dueAt: null, remindAt: null, recurrence: "none" as const, assigneeId: "other", teamId: null };
+  const tasks = [
+    { ...base, id: "primary", assigneeId: "u" },
+    { ...base, id: "collaborator", assigneeIds: ["u"] },
+    { ...base, id: "both", assigneeId: "u", assigneeIds: ["u"] },
+    { ...base, id: "unrelated" },
+  ];
+  expect(projectWorkItems(tasks, [], { search: "", team: "all", status: "all", assignee: "u", due: "all" }).map(item => item.value.id))
+    .toEqual(["primary", "collaborator", "both"]);
+});
+test.each([
+  ["2026-10-15T16:59:59.999Z", "2026-10-15"],
+  ["2026-10-15T17:00:00.000Z", "2026-10-16"],
+  ["2026-12-31T17:00:00.000Z", "2027-01-01"],
+  ["2028-02-28T17:00:00.000Z", "2028-02-29"],
+])("today uses the Vietnam business day at %s", (now, day) => {
+  const start = Date.parse(`${day}T00:00:00+07:00`);
+  const base = { title: "Task", description: "", status: "todo" as const, priority: "medium" as const, remindAt: null, recurrence: "none" as const, assigneeId: "u", teamId: null };
+  const tasks = [
+    { ...base, id: "before", dueAt: new Date(start - 1).toISOString() },
+    { ...base, id: "start", dueAt: new Date(start).toISOString() },
+    { ...base, id: "end", dueAt: new Date(start + 86400000 - 1).toISOString() },
+    { ...base, id: "after", dueAt: new Date(start + 86400000).toISOString() },
+  ];
+  const event = { id: "appointment", title: "Appointment", description: "", starts_at: new Date(start).toISOString(), ends_at: new Date(start + 3600000).toISOString(), remind_at: null, team_id: null, canEdit: true };
+  expect(projectWorkItems(tasks, [event], { search: "", team: "all", status: "all", assignee: "all", due: "today" }, Date.parse(now)).map(item => item.value.id))
+    .toEqual(["start", "appointment", "end"]);
 });
 test("pending tasks show loading instead of an empty section shell", async () => {
   mockTaskState = { ...mockTaskState, isPending: true, data: undefined };
@@ -129,4 +159,9 @@ test("opens an appointment detail route from the mixed list", async () => {
     pathname: "/event/[id]",
     params: { id: "event-1" },
   });
+});
+
+test('project filter excludes other projects and unscoped appointments',()=>{
+ const records=[{id:'a',projectId:'private',title:'A',description:'',status:'todo',dueAt:null,teamId:null},{id:'b',projectId:'common',title:'B',description:'',status:'todo',dueAt:null,teamId:null}] as Task[];
+ expect(projectWorkItems(records,[],{search:'',team:'all',status:'all',assignee:'all',due:'all',project:'private'}).map(item=>item.value.id)).toEqual(['a']);
 });

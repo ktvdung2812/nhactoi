@@ -119,22 +119,26 @@ export function calendarDaysBetween(from, to) {
 }
 
 /** Calendar-safe month/year addition with end-of-month clamping. */
-export function nextServiceDate(value, cycle, count = 1) {
+export function nextServiceDate(value, cycle, count = 1, anchor = value) {
   const source = calendarDate(value);
   if (!source || !["month", "year"].includes(cycle) || !Number.isSafeInteger(count) || count < 1)
     return null;
-  const [year, month, day] = source.split("-").map(Number);
+  const month = Number(source.slice(5, 7));
+  const day = Number((calendarDate(anchor) || source).slice(8));
   const monthOffset = (cycle === "year" ? 12 : 1) * count;
-  const result = new Date(Date.UTC(year, month - 1 + monthOffset, 1));
-  const lastDay = new Date(Date.UTC(result.getUTCFullYear(), result.getUTCMonth() + 1, 0)).getUTCDate();
+  const result = new Date(`${source.slice(0, 7)}-01T00:00:00Z`);
+  result.setUTCMonth(month - 1 + monthOffset);
+  if (!Number.isFinite(result.getTime()) || result.getUTCFullYear() > 9999) return null;
+  const end = new Date(result); end.setUTCMonth(end.getUTCMonth() + 1); end.setUTCDate(0);
+  const lastDay = end.getUTCDate();
   result.setUTCDate(Math.min(day, lastDay));
   return result.toISOString().slice(0, 10);
 }
 
 /** Advance by whole configured cycles until the next date is after today. */
-export function nextFutureServiceDate(value, cycle, count = 1, today = vietnamDate()) {
+export function nextFutureServiceDate(value, cycle, count = 1, today = vietnamDate(), anchor = value) {
   let periods = 1;
-  let result = nextServiceDate(value, cycle, count * periods);
+  let result = nextServiceDate(value, cycle, count * periods, anchor);
   const current = calendarDate(today);
   if (!result || !current) return result;
   let guard = 0;
@@ -144,9 +148,26 @@ export function nextFutureServiceDate(value, cycle, count = 1, today = vietnamDa
     if (!Number.isSafeInteger(total)) return null;
     // Always add from the original date. This keeps January 31 anchored to
     // March 31 after February is clamped to February 28.
-    result = nextServiceDate(value, cycle, total);
+    result = nextServiceDate(value, cycle, total, anchor);
   }
-  return result;
+  return result && result > current ? result : null;
+}
+
+/** Daily sends only today's reminder; milestones catch up only the newest
+ * eligible point (the configured lead day or the expiry day), never a backlog. */
+export function serviceReminderSchedule(service, now = new Date()) {
+  if (service.archived_at || !service.enabled) return null;
+  const today = vietnamDate(now);
+  if (!['due_soon', 'expired'].includes(serviceStatus(service, today))) return null;
+  const time = service.reminder_time ?? null;
+  const localTime = new Date(new Date(now).getTime() + VIETNAM_OFFSET_MS).toISOString().slice(11, 16);
+  if (time && localTime < time) return null;
+  if (service.reminder_mode !== 'milestone') {
+    return { key: `${service.next_date}/${today}`, scheduledDate: today };
+  }
+  const points = [...new Set([addCalendarDays(service.next_date, -service.remind_days), service.next_date])].sort();
+  const scheduledDate = points.filter(day => day < today || day === today && (!time || localTime >= time)).at(-1);
+  return scheduledDate ? { key: `${service.next_date}/milestone/${scheduledDate}`, scheduledDate } : null;
 }
 
 function rowValue(row, camel, snake, fallback = undefined) {

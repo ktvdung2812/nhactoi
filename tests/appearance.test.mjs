@@ -137,3 +137,13 @@ test('personal theme stays available on load failure, while team locks and unsav
     assert.notEqual(themeDisabledReason({ ...common, [flag]: true }), '');
   }
 });
+
+test('existing menu preferences gain templates and automations without losing the saved order', () => {
+  const oldOrder = ['tasks', 'dashboard', 'today', 'upcoming', 'week', 'inbox', 'teams', 'customers', 'services', 'finance', 'transfer', 'tickets', 'trash'];
+  const preferences = validateAppearance({ navOrder: oldOrder, hiddenNav: ['tickets'] });
+  assert.deepEqual(preferences.navOrder, [...oldOrder, 'templates', 'automations']);
+  assert.deepEqual(resolveAppearance({ navOrder: oldOrder }).navOrder, preferences.navOrder);
+  assert.deepEqual(resolveAppearance(null, { preferences: { ...defaults, navOrder: oldOrder }, editableFields: [] }).navOrder, preferences.navOrder);
+  assert.deepEqual(preferences.hiddenNav, ['tickets']);
+  assert.deepEqual(validateAppearance({ hiddenNav: ['templates', 'automations'] }).hiddenNav, ['templates', 'automations']);
+});

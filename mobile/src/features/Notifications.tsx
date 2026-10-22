@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { ScrollView, RefreshControl, Pressable } from "react-native";
 import { router } from "expo-router";
-import { useResource, useSession, refreshData } from "../core/session";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { useSession, refreshData } from "../core/session";
 import type { Notice } from "../core/types";
 import { errorMessage } from "../core/api";
 import { dateLabel } from "../core/policy";
@@ -18,10 +19,32 @@ import {
   colors,
 } from "../ui/kit";
 export function Notifications({ onTask }: { onTask: (id: string) => void }) {
-  const { api, session, online } = useSession();
-  const result = useResource<{ notifications: Notice[] }>(
-    `/mobile/notifications?workspaceId=${session?.workspace.id || ""}`,
-  );
+  const { scope } = useSession();
+  return <NotificationList key={scope} onTask={onTask} />;
+}
+function NotificationList({ onTask }: { onTask: (id: string) => void }) {
+  const { api, read, scope, session, online } = useSession();
+  const queryClient = useQueryClient();
+  const path = `/mobile/notifications?workspaceId=${encodeURIComponent(session?.workspace.id || "")}`;
+  const queryKey = [scope, path, "pages"];
+  const result = useInfiniteQuery({
+    queryKey,
+    initialPageParam: 1,
+    queryFn: ({ pageParam, signal }) => read<{
+      notifications: Notice[]; page: number; hasMore: boolean;
+    }>(`${path}&page=${pageParam}`, signal),
+    getNextPageParam: (last) => last.value.hasMore ? last.value.page + 1 : undefined,
+    enabled: !!session,
+    networkMode: "always",
+  });
+  const notices = [...new Map(result.data?.pages.flatMap(page => page.value.notifications).map(n => [n.id, n])).values()];
+  async function refresh() {
+    await queryClient.cancelQueries({ queryKey, exact: true });
+    queryClient.setQueryData<typeof result.data>(queryKey, data => data && ({
+      ...data, pages: data.pages.slice(0, 1), pageParams: data.pageParams.slice(0, 1),
+    }));
+    await result.refetch();
+  }
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [status, setStatus] = useState("");
@@ -60,7 +83,7 @@ export function Notifications({ onTask }: { onTask: (id: string) => void }) {
       refreshControl={
         <RefreshControl
           refreshing={result.isRefetching}
-          onRefresh={() => void result.refetch()}
+          onRefresh={() => void refresh()}
           tintColor={colors.green}
         />
       }
@@ -77,18 +100,18 @@ export function Notifications({ onTask }: { onTask: (id: string) => void }) {
         <Text style={s.muted}>Firebase chưa được cấu hình cho bản local.</Text>
       )}
       <ErrorNotice message={error} />
+      {result.error && <ErrorNotice message={errorMessage(result.error)} />}
+      {result.data?.pages.some(page => page.cached) && <Text style={s.muted}>Đang xem thông báo đã lưu trên thiết bị.</Text>}
       {status && <Text>{status}</Text>}
       {result.isPending ? (
         <Loading />
-      ) : result.error ? (
-        <ErrorNotice message={errorMessage(result.error)} />
-      ) : !result.data?.value.notifications.length ? (
+      ) : !notices.length && !result.error ? (
         <Empty
           title="Bạn đã xem hết rồi"
           message="Lời nhắc và cập nhật mới sẽ xuất hiện tại đây."
         />
       ) : (
-        result.data.value.notifications.map((n) => (
+        notices.map((n) => (
           <Pressable
             key={n.id}
             accessibilityRole="button"
@@ -104,6 +127,14 @@ export function Notifications({ onTask }: { onTask: (id: string) => void }) {
             </Card>
           </Pressable>
         ))
+      )}
+      {result.hasNextPage && (
+        <Button
+          label={result.isFetchingNextPage ? "Đang tải…" : "Xem thêm thông báo"}
+          secondary
+          disabled={result.isFetching}
+          onPress={() => void result.fetchNextPage()}
+        />
       )}
     </ScrollView>
   );

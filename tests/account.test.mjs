@@ -14,7 +14,7 @@ test("users can update their own profile and sign in with the new email", async 
   assert.equal(updated.status, 200);
   assert.deepEqual(updated.body.user, {
     id: member.user.id, name: "Nguyễn Thị An", email: "new-email@example.test",
-    role: "member", isPlatformAdmin: false,
+    role: "member", memberType: "member", isPlatformAdmin: false,
   });
   const me = await call(server, "/me", { cookie: member.cookie });
   assert.deepEqual(me.body.user, updated.body.user);

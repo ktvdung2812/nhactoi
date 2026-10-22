@@ -37,10 +37,12 @@ export function EventForm({ id }: { id?: string }) {
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const hydrated = useRef(false);
+  const revision = useRef<string | undefined>(undefined);
   useEffect(() => {
     const e = result.data?.value.event;
     if (e && !hydrated.current) {
       hydrated.current = true;
+      revision.current = e.revision;
       setTitle(e.title);
       setDescription(e.description);
       setStartsAt(e.starts_at);
@@ -71,6 +73,7 @@ export function EventForm({ id }: { id?: string }) {
       await api(id ? `/calendar-events/${id}` : "/calendar-events", {
         method: id ? "PUT" : "POST",
         body: JSON.stringify({
+          expectedRevision: id ? revision.current : undefined,
           title,
           description,
           startsAt,

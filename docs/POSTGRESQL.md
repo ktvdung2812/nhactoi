@@ -101,6 +101,33 @@ khôi phục chỉ lưu database để việc khôi phục vẫn hoạt động 
 bị mất hoặc kho ngoài không truy cập được. Khóa mã hóa phải được sao lưu riêng. Snapshot SQLite v1
 cũ cần phục hồi với bản SQLite cũ trước khi chuyển bằng công cụ nhập.
 
+Snapshot PostgreSQL schema 1 và 2 được hỗ trợ. Bản schema 1 được kiểm đúng danh
+sách bảng/cột cũ rồi nâng nguồn lịch nhắc theo migration 002 trước khi nhập;
+nguồn thiếu hoặc không xác định duy nhất được giữ là `legacy:unknown` để không
+gửi nhầm. Nội dung snapshot gốc không bị sửa. Schema mới hơn ứng dụng, cột/bảng
+không đúng phiên bản hoặc checksum không khớp vẫn bị từ chối.
+
+Khôi phục đặt chốt `restoreSenderHold` trong database. Email nhắc việc, FCM,
+Web Push và hàng đợi xóa tệp từ xa đều dừng qua các lần khởi động; trạng thái
+pending/sent và số lần thử được giữ để đối soát. Phiên cũ hết hạn ngay nhưng
+bản ghi phiên/device được giữ trong lúc chờ để không xóa lịch sử delivery.
+Thiếu hoặc sai khóa mã hóa gốc không cho bật lại sender.
+
+Trước khi bật lại, dừng ứng dụng; xác nhận database/môi trường đích, người nhận,
+provider và khóa; kiểm tra job đã gửi, job chưa rõ kết quả ở provider và những
+job pending còn đúng thời gian/quyền. Không chạy lệnh dưới đây trên bản sao thử
+đang trỏ tới khách hàng thật. Ghi lý do đối soát và đúng mã backup vừa khôi phục:
+
+```sh
+node --env-file-if-exists=.env scripts/resume-senders.mjs backup-ID --offline-confirm-resume-senders "Đã đối soát môi trường và hàng đợi"
+```
+
+Lệnh kiểm tra cấu hình mã hóa, ghi receipt `restoreSenderResume`, rồi bỏ chốt.
+Sau đó khởi động ứng dụng; worker kiểm lại điều kiện nghiệp vụ của pending job.
+Lệnh không đổi job sent thành pending hoặc tự retry kết quả chưa rõ. Các hàng
+đợi hiện tại chưa có trạng thái unknown riêng; phải đối soát timeout tại provider
+trước khi bật lại, không coi pending là bằng chứng provider chưa nhận.
+
 Snapshot JSON hiện giữ dữ liệu trong bộ nhớ; với database lớn, dùng `pg_dump`
 / `pg_restore` cùng bản sao kho tệp và khóa mã hóa trong quy trình vận hành.
 
@@ -112,11 +139,15 @@ node --env-file=.env --input-type=module - /path/to/before-restore-ID.json <<'JS
 import { readFileSync } from 'node:fs';
 import { openDatabase } from './server/db.mjs';
 import { importSnapshot } from './server/database-snapshot.mjs';
+import { pauseRestoredSenders } from './server/restore-safety.mjs';
 const db = openDatabase(undefined, { bootstrapAdmin: false });
 try {
   importSnapshot(db, JSON.parse(readFileSync(process.argv[2], 'utf8')), {
     replace: true,
-    afterImport: db => db.exec("DELETE FROM sessions; DELETE FROM password_reset_codes; DELETE FROM google_oauth_states; DELETE FROM app_settings WHERE key='backupSchedule'"),
+    afterImport: db => {
+      db.exec("UPDATE sessions SET expires_at='1970-01-01T00:00:00.000Z'; DELETE FROM password_reset_codes; DELETE FROM google_oauth_states; DELETE FROM app_settings WHERE key='backupSchedule'");
+      pauseRestoredSenders(db, process.argv[2], new Date().toISOString());
+    },
   });
 } finally { db.close(); }
 JS

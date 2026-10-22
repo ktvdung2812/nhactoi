@@ -1,8 +1,10 @@
 import webpush from 'web-push';
+import { claimDelivery, beginDelivery, settleDelivery, deliveryFailure } from './delivery-leases.mjs';
+import { outboundSendersPaused } from './restore-safety.mjs';
 import { createECDH } from 'node:crypto';
 import { createId } from './auth.mjs';
 import { canAccessTeamTask } from './teams.mjs';
-import { reminderDeliveryAllowed, legacyReminderAllowed } from './reminder-workflow.mjs';
+import { reminderDeliveryAllowed, legacyReminderAllowed, reminderRetryAt } from './reminder-workflow.mjs';
 
 // Only browser push services are network targets. Never send to arbitrary
 // subscription URLs (including private networks or lookalike hostnames).
@@ -94,6 +96,7 @@ export function registerWebPushRoutes(app, { db, clock, requireAuth, HttpError, 
 
 const runs = new WeakMap();
 export async function processWebPush({ db, clock = () => new Date(), transport }) {
+  if (outboundSendersPaused(db)) return { sent: 0, failed: 0, skipped: 0, paused: true };
   pruneSubscriptions(db, new Date(clock()).toISOString());
   if (!transport) return { sent: 0, failed: 0, skipped: 0 };
   if (runs.has(db)) return runs.get(db);
@@ -103,37 +106,43 @@ export async function processWebPush({ db, clock = () => new Date(), transport }
     const rows = db.prepare(`SELECT d.notification_id,d.subscription_id,d.attempts FROM web_push_deliveries d
       WHERE d.status='pending' AND d.next_attempt_at<=? ORDER BY d.next_attempt_at LIMIT 100`).all(now);
     for (const row of rows) {
+      if (outboundSendersPaused(db)) return { ...stats, paused: true };
+      const claim = claimDelivery(db, 'web_push', row.notification_id, row.subscription_id, new Date(clock()).toISOString());
+      if (!claim) continue;
+      if (claim.unknown) { db.prepare("UPDATE web_push_deliveries SET status='unknown',last_error='delivery outcome unknown' WHERE notification_id=? AND subscription_id=? AND status='pending'").run(row.notification_id,row.subscription_id); stats.failed++; continue; }
       const current = db.prepare(`SELECT p.* FROM web_push_deliveries d JOIN web_push_subscriptions p ON p.id=d.subscription_id
         JOIN sessions s ON s.id=p.session_id AND s.user_id=p.user_id AND s.kind='web'
         WHERE d.notification_id=? AND d.subscription_id=? AND d.status='pending' AND s.expires_at>?`).get(row.notification_id, row.subscription_id, new Date(clock()).toISOString());
       const notice = db.prepare('SELECT * FROM notifications WHERE id=?').get(row.notification_id);
-      const update = (status, error = null) => db.prepare("UPDATE web_push_deliveries SET status=?,last_error=? WHERE notification_id=? AND subscription_id=? AND status='pending'").run(status, error, row.notification_id, row.subscription_id);
+      const update = (status, error = null) => settleDelivery(db, claim, status === 'skipped' ? 'suppressed' : status, new Date(clock()).toISOString(), () => db.prepare("UPDATE web_push_deliveries SET status=?,last_error=? WHERE notification_id=? AND subscription_id=? AND status='pending'").run(status, error, row.notification_id, row.subscription_id), { error });
       if (!current || !notice || notice.user_id !== current.user_id || notice.read_at || Date.parse(now) - Date.parse(notice.created_at) > 86400000 || !webNotificationAllowed(db, notice, new Date(clock()).toISOString())) {
         update('skipped'); stats.skipped++; continue;
       }
       if (notice.type === 'task_reminder') {
         const task = db.prepare('SELECT * FROM tasks WHERE id=?').get(notice.task_id);
         if (!legacyReminderAllowed(db, task, notice.user_id, now)) {
-          db.prepare("UPDATE web_push_deliveries SET next_attempt_at=? WHERE notification_id=? AND subscription_id=? AND status='pending'").run(new Date(Date.parse(now) + 60000).toISOString(), row.notification_id, row.subscription_id);
+          const retryAt=reminderRetryAt(db,task,notice.user_id,now);
+          settleDelivery(db,claim,'retry',new Date(clock()).toISOString(),()=>db.prepare("UPDATE web_push_deliveries SET next_attempt_at=? WHERE notification_id=? AND subscription_id=? AND status='pending'").run(retryAt, row.notification_id, row.subscription_id),{nextAttemptAt:retryAt,error:"reminder deferred by working hours or quiet policy"});
           continue;
         }
       }
+      let subscription;
+      try { subscription = validatePushSubscription({ endpoint: current.endpoint, keys: { p256dh: current.p256dh, auth: current.auth } }); }
+      catch { update('failed','invalid push subscription'); stats.failed++; continue; }
+      if(!beginDelivery(db,claim,new Date(clock()).toISOString()))continue;
       try {
-        const subscription = validatePushSubscription({ endpoint: current.endpoint, keys: { p256dh: current.p256dh, auth: current.auth } });
         await transport(subscription, { notificationId: notice.id });
-        db.prepare("UPDATE web_push_deliveries SET status='sent',attempts=attempts+1,sent_at=?,last_error=NULL WHERE notification_id=? AND subscription_id=? AND status='pending'").run(new Date(clock()).toISOString(), row.notification_id, row.subscription_id);
-        stats.sent++;
       } catch (error) {
-        const status = Number(error?.statusCode || 0);
-        if (status === 404 || status === 410) db.prepare('DELETE FROM web_push_subscriptions WHERE id=? AND endpoint=?').run(current.id, current.endpoint);
-        else {
-          const attempts = row.attempts + 1;
-          const retry = (status === 0 || status === 429 || status >= 500) && attempts < 5;
-          db.prepare("UPDATE web_push_deliveries SET status=?,attempts=?,next_attempt_at=?,last_error=? WHERE notification_id=? AND subscription_id=? AND status='pending'")
-            .run(retry ? 'pending' : 'failed', attempts, new Date(Date.parse(now) + Math.min(3600000, 60000 * 2 ** (attempts - 1))).toISOString(), status ? `HTTP ${status}` : 'Push transport failed', row.notification_id, row.subscription_id);
-        }
-        stats.failed++;
+        const failure=deliveryFailure(error,Number(row.attempts)+1,{now:new Date(clock()).toISOString()});
+        settleDelivery(db,claim,failure.status==='pending'?'retry':failure.status,new Date(clock()).toISOString(),()=>{
+          db.prepare("UPDATE web_push_deliveries SET status=?,attempts=attempts+1,next_attempt_at=?,last_error=? WHERE notification_id=? AND subscription_id=? AND status IN ('pending','unknown')")
+            .run(failure.status,failure.nextAttemptAt,failure.error,row.notification_id,row.subscription_id);
+          if([404,410].includes(Number(error?.statusCode)))db.prepare('DELETE FROM web_push_subscriptions WHERE id=? AND endpoint=?').run(current.id,current.endpoint);
+        },{error:failure.error,nextAttemptAt:failure.nextAttemptAt});
+        stats.failed++;continue;
       }
+      settleDelivery(db,claim,'sent',new Date(clock()).toISOString(),()=>db.prepare("UPDATE web_push_deliveries SET status='sent',attempts=attempts+1,sent_at=?,last_error=NULL WHERE notification_id=? AND subscription_id=? AND status IN ('pending','unknown')").run(new Date(clock()).toISOString(),row.notification_id,row.subscription_id));
+      stats.sent++;
     }
     return stats;
   })();

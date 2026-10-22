@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  AppState,
   Modal,
   Pressable,
   RefreshControl,
@@ -39,6 +38,7 @@ export type WorkItem =
   | { kind: "event"; value: CalendarEvent };
 
 export type WorkFilters = {
+  project?: string;
   search: string;
   team: string;
   status: string;
@@ -72,12 +72,9 @@ export function projectWorkItems(
   nowMs = Date.now(),
 ): WorkItem[] {
   const query = filters.search.toLocaleLowerCase("vi");
-  const now = new Date(nowMs);
-  const dayStart = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-  ).getTime();
+  // The business day is UTC+7, independently of the device timezone.
+  const day = new Date(nowMs + 7 * 3600000).toISOString().slice(0, 10);
+  const dayStart = Date.parse(`${day}T00:00:00+07:00`);
   const dayEnd = dayStart + 86400000;
   const source: WorkItem[] = [
     ...tasks.map((value) => ({ kind: "task" as const, value })),
@@ -99,12 +96,15 @@ export function projectWorkItems(
         (filters.due === "overdue" && end < nowMs && status !== "done") ||
         (filters.due === "today" && start >= dayStart && start < dayEnd);
       return (
+        (!filters.project || filters.project==='all' || (item.kind==='task'&&item.value.projectId===filters.project)) &&
         (!query || text.includes(query)) &&
         (filters.team === "all" ||
           (filters.team === "common" ? !teamId : teamId === filters.team)) &&
         (filters.status === "all" || status === filters.status) &&
         (filters.assignee === "all" ||
-          (item.kind === "task" && item.value.assigneeId === filters.assignee)) &&
+          (item.kind === "task" &&
+            (item.value.assigneeId === filters.assignee ||
+              item.value.assigneeIds?.includes(filters.assignee)))) &&
         matchesDue
       );
     })
@@ -172,11 +172,14 @@ export function TaskList({
   selectedId?: string;
   onSelect: (id: string) => void;
 }) {
-  const { session, writable, online } = useSession();
+  const { session, writable, taskWritable=writable, online } = useSession();
   const tasks = useResource<{ tasks: Task[] }>("/tasks");
-  const events = useResource<{ events: CalendarEvent[] }>("/calendar-events");
-  const teams = useResource<{ teams: Team[] }>("/teams");
-  const members = useResource<{ members: Member[] }>("/members");
+  const guest=session?.user.memberType==='guest';
+  const [project,setProject]=useState('all');
+  const projects=useResource<{projects:{id:string;name:string}[]}>('/projects');
+  const events = useResource<{ events: CalendarEvent[] }>("/calendar-events",!guest);
+  const teams = useResource<{ teams: Team[] }>("/teams",!guest);
+  const members = useResource<{ members: Member[] }>("/members",!guest);
   const [search, setSearch] = useState(""),
     [team, setTeam] = useState("all"),
     [status, setStatus] = useState("all"),
@@ -185,7 +188,6 @@ export function TaskList({
     [filtersOpen, setFiltersOpen] = useState(false),
     [createOpen, setCreateOpen] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const workspaceId = session?.workspace.id;
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 60000);
     return () => clearInterval(timer);
@@ -196,41 +198,27 @@ export function TaskList({
     void refetchTasks();
     void refetchEvents();
   }, [refetchEvents, refetchTasks]);
-  useEffect(() => {
-    if (!online || !workspaceId) return;
-    const refreshWhenActive = () => {
-      if (AppState.currentState === "active") refreshWork();
-    };
-    const interval = setInterval(refreshWhenActive, 30000);
-    const listener = AppState.addEventListener("change", (state) => {
-      if (state === "active") refreshWork();
-    });
-    return () => {
-      clearInterval(interval);
-      listener.remove();
-    };
-  }, [online, refreshWork, workspaceId]);
   const items = useMemo(
     () =>
       projectWorkItems(
         tasks.data?.value.tasks || [],
         events.data?.value.events || [],
-        { search, team, status, assignee, due },
+        { search, team, status, assignee, due, project },
         nowMs,
       ),
-    [tasks.data, events.data, search, team, status, assignee, due, nowMs],
+    [tasks.data, events.data, search, team, status, assignee, due, project, nowMs],
   );
   const groups = workGroups(items);
-  const openCreate = () => setCreateOpen(true);
+  const openCreate = () => guest ? router.push("/task/new") : setCreateOpen(true);
   const chooseCreate = (path?: "/task/new" | "/event/new") => {
     setCreateOpen(false);
     if (path) router.push(path);
   };
-  const loading = tasks.isPending || events.isPending;
+  const loading = tasks.isPending || (!guest&&events.isPending);
   const hasData = Boolean(
     tasks.data?.value.tasks || events.data?.value.events,
   );
-  const error = tasks.error || events.error;
+  const error = tasks.error || (!guest&&events.error);
   const refresh = (
     <RefreshControl
       refreshing={tasks.isRefetching || events.isRefetching}
@@ -251,7 +239,7 @@ export function TaskList({
         <Text style={s.muted}>{session?.workspace.name}</Text>
       </View>
       <Row>
-        <Button label="＋ Tạo mới" disabled={!writable} onPress={openCreate} />
+        <Button label="＋ Tạo mới" disabled={!taskWritable} onPress={()=>online===false?router.push("/task/new"):openCreate()} />
         <Button
           label={filtersOpen ? "Ẩn bộ lọc" : "Bộ lọc"}
           secondary
@@ -264,6 +252,7 @@ export function TaskList({
         value={search}
         onChangeText={setSearch}
       />
+      <Select label="Lọc dự án" value={project} onChange={setProject} options={[{value:'all',label:'Tất cả dự án'},...(projects.data?.value.projects||[]).map(p=>({value:p.id,label:p.name}))]}/>
       {filtersOpen && (
         <>
           <Select

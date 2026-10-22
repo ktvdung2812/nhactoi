@@ -1,9 +1,13 @@
+import { isTaskMutation, useTaskMutation } from './useTaskMutation.js';
 import { recurrenceLabel } from "../shared/task-recurrence.mjs";
 import TaskReminders from "./ReminderSettings.jsx";
 import TaskChecklists from "./TaskChecklists.jsx";
+import TaskExtras from "./TaskExtras.jsx";
+import {TaskTime} from "./WorkManagement.jsx";
 import React, { useEffect, useId, useRef, useState } from "react";
-import { filterMentionMembers, mentionToken } from "./mention-query.js";
-import { ArrowLeft, CheckCheck, MessageSquare, Activity, Link2, Plus, Pencil, Trash2, Copy, RefreshCw, ExternalLink, CalendarDays, UserRound, Bell, Repeat2, Send, ShieldCheck, Upload, Download, FileText, Paperclip, X } from "lucide-react";
+import { assistantMention, filterMentionMembers, mentionToken } from "./mention-query.js";
+import { ArrowLeft, CheckCheck, MessageSquare, Activity, Link2, Plus, Pencil, Trash2, Copy, RefreshCw, ExternalLink, CalendarDays, UserRound, Bell, Repeat2, Send, ShieldCheck, Upload, Download, FileText, Paperclip, Bot, X } from "lucide-react";
+import AssistantMarkdown from "./AssistantMarkdown.js";
 import ActionMenu from "./ActionMenu.jsx";
 import CommentActions from "./CommentActions.jsx";
 import "./task-detail.css";
@@ -15,10 +19,23 @@ const initials = value => (value || "?").trim().split(/\s+/).slice(-2).map(s => 
 const fileSize = bytes => bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / (1024 * 1024)).toLocaleString("vi-VN", { maximumFractionDigits: 1 })} MB`;
 const safeUrl = value => { try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) ? url.href : null; } catch { return null; } };
 
-export default function TaskDetail({ taskId, api, me, members = [], customers = [], onEdit, onTrash, onBack, onChanged, revision = 0 }) {
+const sourceHref = source => source.kind === "task" && source.taskId ? `/tasks/${encodeURIComponent(source.taskId)}` : /^\/api\/tasks\/[^/?#]+\/attachments\/[^/?#]+\/download$/.test(source.url || "") ? source.url : safeUrl(source.url);
+const taskReferences = sources => (sources || []).filter(source => source.kind === "task" && source.taskId).map(source => ({ id: source.taskId, title: source.title || source.taskId }));
+const sourceStatus = { read: "Đã đọc", partial: "Đọc một phần", failed: "Chưa đọc được", unread: "Chưa đọc", unsupported: "Chưa hỗ trợ", summarized: "Đã đọc và tóm tắt" };
+function AiEvidence({ sources = [], actions = [], onOpenTask }) {
+  return <>
+    {sources.length > 0 && <details className="td-ai-sources"><summary>Nguồn tham chiếu ({sources.length})</summary><ul>{sources.map((source, index) => <li key={source.id || index}>{sourceHref(source) ? <a href={sourceHref(source)} target={source.kind === "task" ? undefined : "_blank"} rel="noopener noreferrer" download={source.kind === "file" || undefined} onClick={source.kind === "task" && source.taskId && onOpenTask ? event => { event.preventDefault(); onOpenTask({ id: source.taskId, title: source.title }); } : undefined}>{source.title || source.url}</a> : <span>{source.title || source.id || "Ngữ cảnh công việc"}</span>}<small>{sourceStatus[source.status] || source.status}{(source.detail || source.note || source.error) ? ` · ${source.detail || source.note || source.error}` : ""}</small></li>)}</ul></details>}
+    {actions.length > 0 && <ul className="td-ai-actions" aria-label="Kết quả thao tác">{actions.map((action, index) => <li key={action.id || index}>{action.summary || action.name}{action.status ? ` · ${{ completed: "Hoàn tất", failed: "Chưa thực hiện" }[action.status] || action.status}` : ""}{action.error ? ` · ${action.error}` : ""}</li>)}</ul>}
+  </>;
+}
+
+export default function TaskDetail({ taskId, api: request, me, members = [], customers = [], onEdit, onTrash, onBack, onChanged, onOpenTask, revision = 0 }) {
+  const api = useTaskMutation(request, taskId);
   const [data, setData] = useState(null), [loading, setLoading] = useState(true), [loadError, setLoadError] = useState(false);
   const [error, setError] = useState(""), [notice, setNotice] = useState(""), [busy, setBusy] = useState(false), [reload, setReload] = useState(0);
   const [description, setDescription] = useState(null), [remove, setRemove] = useState(null);
+  const descriptionRevision = useRef();
+  const [scalarDrafts, setScalarDrafts] = useState({});
   const [attachment, setAttachment] = useState({ title: "", url: "" }), [comment, setComment] = useState("");
   const [mentionIds, setMentionIds] = useState([]);
   const [uploadFile, setUploadFile] = useState(null), [uploading, setUploading] = useState(false);
@@ -27,6 +44,8 @@ export default function TaskDetail({ taskId, api, me, members = [], customers = 
   const commentRef = useRef(null), mentionRef = useRef(null), activeMentionRef = useRef(null), pickingMention = useRef(false);
   const [mention, setMention] = useState(null), [mentionIndex, setMentionIndex] = useState(0);
   const mentionListId = useId();
+  const commentOperation = useRef(null);
+  const [aiRuns, setAiRuns] = useState([]), [aiError, setAiError] = useState("");
   const pending = useRef(false), sequence = useRef(0), alive = useRef(true), removeRef = useRef(null);
   useEffect(() => {
     if (!remove) return;
@@ -40,7 +59,7 @@ export default function TaskDetail({ taskId, api, me, members = [], customers = 
   useEffect(() => {
     const request = ++sequence.current;
     setLoading(true); setLoadError(false); setError("");
-    Promise.all([api(`${base}/detail`), api(`${base}/upload-policy`).catch(err => ({ enabled: false, error: err.message })), api(`${base}/collaboration`).catch(() => null)]).then(([detail, uploadPolicy, collaboration]) => ({ ...detail, uploadPolicy, collaboration })).then(result => { if (alive.current && sequence.current === request) setData(result); })
+    Promise.all([api(`${base}/detail`), api(`${base}/upload-policy`).catch(err => ({ enabled: false, error: err.message })), api(`${base}/collaboration`).catch(() => null), api("/ai/config").catch(() => null)]).then(([detail, uploadPolicy, collaboration, aiConfig]) => ({ ...detail, uploadPolicy, collaboration, aiConfig })).then(result => { if (alive.current && sequence.current === request) setData(result); })
       .catch(err => { if (alive.current && sequence.current === request) {
         setLoadError(true); setError(err.message);
         if ([401, 403, 404].includes(err.status)) {
@@ -51,17 +70,63 @@ export default function TaskDetail({ taskId, api, me, members = [], customers = 
   }, [api, base, revision, reload]);
   const task = data?.task;
   const writable = Boolean(data?.canWrite && !loadError && !loading && !me?.workspace?.suspendedAt);
+  const canComment = Boolean((data?.canComment ?? data?.canWrite) && !loadError && !loading && !me?.workspace?.suspendedAt);
+  const commentDisabled = !canComment || busy;
   const disabled = !writable || busy;
+  useEffect(() => {
+    let stopped = false, timer, previous = null;
+    setAiRuns([]); setAiError("");
+    async function poll() {
+      if (document.hidden) { timer = setTimeout(poll, 3000); return; }
+      try {
+        const result = await api(`${base}/ai-runs`);
+        if (stopped) return;
+        const signature = JSON.stringify(result.runs || []);
+        setAiRuns(result.runs || []); setAiError("");
+        if (previous !== null && previous !== signature) {
+          const [detail, collaboration] = await Promise.all([api(`${base}/detail`), api(`${base}/collaboration`)]);
+          if (!stopped) {
+            setData(current => current ? { ...current, ...detail, collaboration } : current);
+            const earlier = JSON.parse(previous);
+            if ((result.runs || []).some(run => ["completed", "failed", "cancelled"].includes(run.status) && !earlier.some(old => old.id === run.id && old.status === run.status))) await onChanged?.();
+          }
+        }
+        previous = signature;
+      } catch (err) {
+        if (!stopped) setAiError(err.message);
+        if ([401, 403, 404].includes(err.status)) return;
+      }
+      if (!stopped) timer = setTimeout(poll, 3000);
+    }
+    poll();
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [api, base]);
+  async function retryAi(run) {
+    if (pending.current || !canComment) return;
+    pending.current = true; setBusy(true); setAiError("");
+    try {
+      const result = await api(`${base}/ai-runs/${encodeURIComponent(run.id)}/retry`, { method: "POST" });
+      if (alive.current && result.run) setAiRuns(current => current.map(value => value.id === run.id ? result.run : value));
+    } catch (err) { if (alive.current) setAiError(err.message); }
+    finally { pending.current = false; if (alive.current) setBusy(false); }
+  }
   async function mutate(path, method, body, success, after, changedTask = false) {
     if (pending.current || !writable) return;
     pending.current = true; setBusy(true); setError(""); setNotice("");
     try {
-      await api(path, { method, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+      if (isTaskMutation(path, method)) body = { expectedRevision: task.revision, ...body };
+      const result = await api(path, { method, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+      if (result.taskRevision) setData(current => current ? { ...current, task: { ...current.task, revision: result.taskRevision } } : current);
     } catch (err) { if (alive.current) setError(err.message); pending.current = false; if (alive.current) setBusy(false); return; }
     if (!alive.current) return;
     after?.(); setNotice(success); setReload(value => value + 1);
     if (changedTask) { try { await onChanged?.(); } catch { if (alive.current) setNotice(`${success} Hãy làm mới để cập nhật danh sách liên quan.`); } }
     pending.current = false; if (alive.current) setBusy(false);
+  }
+  function saveScalar(field, value) {
+    const draft = scalarDrafts[field] || { revision: task.revision };
+    setScalarDrafts(current => ({ ...current, [field]: { ...draft, value } }));
+    return mutate(base, "PATCH", { [field]: value, expectedRevision: draft.revision }, "Đã cập nhật công việc.", () => setScalarDrafts(current => { const next = { ...current }; delete next[field]; return next; }), true);
   }
   async function upload(event) {
     event.preventDefault();
@@ -93,7 +158,7 @@ export default function TaskDetail({ taskId, api, me, members = [], customers = 
   }
   async function sendComment(event) {
     event.preventDefault();
-    if (pending.current || !writable || (!comment.trim() && !commentFiles.length)) return;
+    if (pending.current || !canComment || (!comment.trim() && !commentFiles.length)) return;
     if (commentFiles.some(item => !item.uploaded) && !data.uploadPolicy?.enabled) {
       setCommentError("Tải tệp đang được tắt. Bỏ tệp chưa tải để gửi bình luận bằng văn bản."); return;
     }
@@ -113,7 +178,12 @@ export default function TaskDetail({ taskId, api, me, members = [], customers = 
         attachmentIds.push(uploaded.id);
       }
       setCommentSending("Đang gửi bình luận…");
-      await api(`${base}/comments`, { method: "POST", body: JSON.stringify({ body: comment.trim(), attachmentIds, ...(data.collaboration ? { mentionIds } : {}) }), signal: controller.signal });
+      const payload = { body: comment.trim(), attachmentIds, ...(data.collaboration ? { mentionIds } : {}) };
+      const fingerprint = JSON.stringify(payload);
+      if (commentOperation.current?.fingerprint !== fingerprint) commentOperation.current = { fingerprint, operationId: crypto.randomUUID() };
+      const result = await api(`${base}/comments`, { method: "POST", body: JSON.stringify({ ...payload, operationId: commentOperation.current.operationId }), signal: controller.signal });
+      commentOperation.current = null;
+      if (alive.current && result.aiRun) setAiRuns(current => [...current.filter(run => run.id !== result.aiRun.id), result.aiRun]);
       if (alive.current) { setComment(""); setCommentFiles([]); setMentionIds([]); mentionRef.current = null; setMention(null); setNotice("Đã gửi bình luận."); setReload(value => value + 1); }
     } catch (err) {
       if (alive.current) {
@@ -132,8 +202,9 @@ export default function TaskDetail({ taskId, api, me, members = [], customers = 
   const assignee = task?.assigneeName || members.find(member => member.id === task?.assigneeId)?.name;
   const customer = task?.customerName || customers.find(value => value.id === task?.customerId)?.name;
   const checklists = data?.checklists || [], attachments = data?.attachments || [], comments = data?.comments || [], activity = data?.activity || [];
-  const mentionMembers = data?.collaboration?.members || [];
-  const mentionOpen = Boolean(mention && data?.collaboration && writable);
+  const assistant = assistantMention(data?.aiConfig?.assistant);
+  const mentionMembers = [...(assistant ? [assistant] : []), ...(data?.collaboration?.members || [])];
+  const mentionOpen = Boolean(mention && mentionMembers.length && canComment);
   const mentionMatches = mentionOpen ? filterMentionMembers(mentionMembers, mention.query) : [];
   const activeMention = mentionMatches.length ? Math.min(mentionIndex, mentionMatches.length - 1) : 0;
   const mentionLabel = task?.teamName ? `Thành viên team ${task.teamName}` : "Thành viên việc chung của doanh nghiệp";
@@ -156,7 +227,7 @@ export default function TaskDetail({ taskId, api, me, members = [], customers = 
     const el = commentRef.current;
     const token = mentionRef.current;
     if (!el || !member || !token) return;
-    const insert = `@${member.name} `;
+    const insert = `@${member.assistant ? member.handle : member.name} `;
     const tokenEnd = token.start + 1 + token.query.length;
     const caret = Math.max(el.selectionStart, el.selectionEnd);
     const replaceEnd = caret >= token.start && caret <= tokenEnd ? caret : tokenEnd;
@@ -165,7 +236,7 @@ export default function TaskDetail({ taskId, api, me, members = [], customers = 
     const pos = token.start + insert.length;
     pickingMention.current = true;
     setComment(next);
-    setMentionIds(ids => ids.includes(member.id) ? ids : [...ids, member.id]);
+    if (!member.assistant) setMentionIds(ids => ids.includes(member.id) ? ids : [...ids, member.id]);
     closeMention();
     requestAnimationFrame(() => {
       el.focus();
@@ -254,19 +325,23 @@ export default function TaskDetail({ taskId, api, me, members = [], customers = 
         <div className="td-layout">
           <div className="td-main">
             <section className="td-panel td-properties" aria-label="Thông tin công việc">
-              <label><span>Trạng thái</span><select aria-label="Trạng thái công việc" value={task.status} disabled={disabled} onChange={e => mutate(base, "PATCH", { status: e.target.value }, "Đã cập nhật trạng thái.", undefined, true)}>{Object.entries(statuses).map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
-              <label><span>Độ ưu tiên</span><select aria-label="Độ ưu tiên công việc" value={task.priority} disabled={disabled} onChange={e => mutate(base, "PATCH", { priority: e.target.value }, "Đã cập nhật ưu tiên.", undefined, true)}>{Object.entries(priorities).map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
+              <label><span>Trạng thái</span><select aria-label="Trạng thái công việc" value={scalarDrafts.status?.value ?? task.status} disabled={disabled} onChange={e => saveScalar("status", e.target.value)}>{Object.entries(statuses).map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
+              <label><span>Độ ưu tiên</span><select aria-label="Độ ưu tiên công việc" value={scalarDrafts.priority?.value ?? task.priority} disabled={disabled} onChange={e => saveScalar("priority", e.target.value)}>{Object.entries(priorities).map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
+              {Object.entries(scalarDrafts).map(([field, draft]) => <div key={field}><button type="button" className="button secondary" disabled={disabled} onClick={() => saveScalar(field, draft.value)}>Thử lưu {field === 'status' ? 'trạng thái' : 'ưu tiên'}</button><button type="button" className="button secondary" disabled={busy} onClick={() => setScalarDrafts(current => { const next = { ...current }; delete next[field]; return next; })}>Bỏ thay đổi {field === 'status' ? 'trạng thái' : 'ưu tiên'}</button></div>)}
               <div><span><UserRound size={14} />Người phụ trách</span><strong>{assignee || "Chưa giao"}</strong></div>
+              <div><span><CalendarDays size={14} />Ngày bắt đầu chung</span><strong>{date(task.startAt)}</strong></div>
               <div><span><CalendarDays size={14} />Hạn hoàn thành</span><strong>{date(task.dueAt)}</strong></div>
               <div><span><Bell size={14} />Lịch nhắc</span><strong>{date(task.remindAt)}</strong></div>
               <div><span><Repeat2 size={14} />Lặp lại</span><strong>{recurrenceLabel(task.recurrence, task.recurrenceOptions)}</strong></div>
               {customer && <div className="td-customer"><span>Khách hàng liên quan</span><strong>{customer}</strong></div>}
             </section>
-            <section className="td-panel"><div className="td-section-heading"><h2><Pencil size={17} />Mô tả</h2>{description === null && writable && <button type="button" className="td-text-button" disabled={busy} onClick={() => setDescription(task.description || "")}>Chỉnh sửa</button>}</div>
-              {description !== null ? <form onSubmit={e => { e.preventDefault(); mutate(base, "PATCH", { description }, "Đã lưu mô tả.", () => setDescription(null), true); }}><textarea aria-label="Mô tả công việc" value={description} maxLength={5000} rows={6} disabled={disabled} onChange={e => setDescription(e.target.value)} /><div className="td-form-actions"><button type="button" className="button secondary" disabled={busy} onClick={() => setDescription(null)}>Hủy</button><button className="button" disabled={disabled}>Lưu mô tả</button></div></form> : <p className={`td-description ${!task.description ? "td-muted" : ""}`}>{task.description || "Chưa có mô tả. Thêm hướng dẫn để mọi người cùng nắm rõ công việc."}</p>}
+            <section className="td-panel"><div className="td-section-heading"><h2><Pencil size={17} />Mô tả</h2>{description === null && writable && <button type="button" className="td-text-button" disabled={busy} onClick={() => { descriptionRevision.current = task.revision; setDescription(task.description || ""); }}>Chỉnh sửa</button>}</div>
+              {description !== null ? <form onSubmit={e => { e.preventDefault(); mutate(base, "PATCH", { description, expectedRevision: descriptionRevision.current }, "Đã lưu mô tả.", () => setDescription(null), true); }}><textarea aria-label="Mô tả công việc" value={description} maxLength={5000} rows={6} disabled={disabled} onChange={e => setDescription(e.target.value)} /><div className="td-form-actions"><button type="button" className="button secondary" disabled={busy} onClick={() => setDescription(null)}>Hủy</button><button className="button" disabled={disabled}>Lưu mô tả</button></div></form> : <p className={`td-description ${!task.description ? "td-muted" : ""}`}>{task.description || "Chưa có mô tả. Thêm hướng dẫn để mọi người cùng nắm rõ công việc."}</p>}
             </section>
-            <TaskReminders key={taskId} api={api} task={task} readOnly={!writable} revision={reload} onChanged={()=>setReload(v=>v+1)} />
-            <TaskChecklists base={base} checklists={checklists} members={data.checklistMembers || []} writable={writable} disabled={disabled} mutate={mutate} />
+            <TaskTime key={taskId+":time"} api={api} task={task} readOnly={!writable||busy} userId={me?.user?.id}/>
+            <TaskExtras key={taskId+":extras"} api={api} task={task} readOnly={!writable || busy} canManageLabels={["owner", "admin"].includes(me?.user?.role)} refreshToken={`${revision}:${reload}`} onChanged={async () => { setReload(value => value + 1); await onChanged?.(); }} />
+            <TaskReminders key={taskId+":reminders"} api={api} task={task} readOnly={!writable} revision={reload} onChanged={()=>setReload(v=>v+1)} />
+            <TaskChecklists base={base} taskRevision={task.revision} checklists={checklists} members={data.checklistMembers || []} writable={writable} disabled={disabled} mutate={mutate} />
             <section className="td-panel"><div className="td-section-heading"><h2><Link2 size={18} />Tệp & liên kết đính kèm<span className="td-count">{attachments.length}</span></h2></div>
               {!attachments.length && <p className="td-empty">Tải tài liệu, bản thiết kế hoặc gắn liên kết dùng chung cho công việc.</p>}
               <div className="td-attachments">{attachments.map(item => <article key={item.id}><div className="td-attachment-icon">{item.kind === "file" ? <FileText size={20} /> : <Link2 size={20} />}</div><div>{item.kind === "file" ? <a href={`/api${base}/attachments/${encodeURIComponent(item.id)}/download`} download={item.originalName || item.title}>{item.originalName || item.title}<Download size={14} /></a> : safeUrl(item.url) ? <a href={safeUrl(item.url)} target="_blank" rel="noopener noreferrer">{item.title}<ExternalLink size={13} /></a> : <strong>{item.title}</strong>}<small>{item.kind === "file" && `${fileSize(item.sizeBytes || 0)} · `}{item.createdByName || "Thành viên"} · {date(item.createdAt)}</small></div><ActionMenu label={`Thao tác đính kèm ${item.title}`} disabled={disabled} items={[{ label: item.kind === "file" ? "Xóa tệp" : "Gỡ liên kết", icon: Trash2, danger: true, onSelect: () => setRemove({ path: `${base}/attachments/${encodeURIComponent(item.id)}`, title: item.title, kind: "attachment" }) }]} /></article>)}</div>
@@ -278,26 +353,30 @@ export default function TaskDetail({ taskId, api, me, members = [], customers = 
           </div>
           <aside className="td-discussion">
             <section className="td-panel"><div className="td-section-heading"><h2><MessageSquare size={18} />Bình luận<span className="td-count">{comments.length}</span></h2></div>
-              {writable && <form className="td-comment-form" onSubmit={sendComment}>
+              {canComment && <form className="td-comment-form" onSubmit={sendComment}>
                 {commentError && <p className="td-comment-error" role="alert">{commentError}</p>}
                 <div className="td-mention-field">
-                  <textarea ref={commentRef} aria-label="Bình luận công việc" placeholder="Trao đổi, cập nhật tiến độ với cả team…" rows={3} maxLength={5000} required={!commentFiles.length} value={comment} disabled={disabled} aria-autocomplete="list" aria-expanded={mentionOpen} aria-controls={mentionOpen ? mentionListId : undefined} aria-activedescendant={mentionOpen && mentionMatches[activeMention] ? `${mentionListId}-${mentionMatches[activeMention].id}` : undefined} onChange={e => { setComment(e.target.value); updateMention(e.target.value, e.target.selectionStart); }} onClick={e => updateMention(e.target.value, e.target.selectionStart)} onSelect={e => updateMention(e.target.value, e.target.selectionStart)} onKeyDown={onCommentKeyDown} onKeyUp={onCommentKeyUp} onBlur={e => { if (!e.relatedTarget?.closest?.(".td-mention-list")) closeMention(); }} />
-                  {mentionOpen && <ul id={mentionListId} className="td-mention-list" role="listbox" aria-label={mentionLabel} onMouseDown={e => e.preventDefault()}>\
-                    <li className="td-mention-caption" role="presentation">{task.teamName || "Việc chung của doanh nghiệp"}</li>
-                    {mentionMatches.length ? mentionMatches.map((member, index) => <li key={member.id} role="presentation"><button type="button" role="option" id={`${mentionListId}-${member.id}`} aria-selected={index === activeMention} className={index === activeMention ? "is-active" : ""} ref={index === activeMention ? activeMentionRef : undefined} onMouseEnter={() => setMentionIndex(index)} onMouseDown={event => { event.preventDefault(); pickMention(member); }}><span className="td-avatar" aria-hidden="true">{initials(member.name)}</span><span><strong>{member.name}</strong>{member.email && <small>{member.email}</small>}</span></button></li>) : <li className="td-mention-empty" role="presentation">Không có thành viên phù hợp</li>}
+                  <textarea ref={commentRef} aria-label="Bình luận công việc" placeholder="Trao đổi, cập nhật tiến độ với cả team…" rows={3} maxLength={5000} required={!commentFiles.length} value={comment} disabled={commentDisabled} aria-autocomplete="list" aria-expanded={mentionOpen} aria-controls={mentionOpen ? mentionListId : undefined} aria-activedescendant={mentionOpen && mentionMatches[activeMention] ? `${mentionListId}-${mentionMatches[activeMention].id}` : undefined} onChange={e => { setComment(e.target.value); updateMention(e.target.value, e.target.selectionStart); }} onClick={e => updateMention(e.target.value, e.target.selectionStart)} onSelect={e => updateMention(e.target.value, e.target.selectionStart)} onKeyDown={onCommentKeyDown} onKeyUp={onCommentKeyUp} onBlur={e => { if (!e.relatedTarget?.closest?.(".td-mention-list")) closeMention(); }} />
+                  {mentionOpen && <ul id={mentionListId} className="td-mention-list" role="listbox" aria-label={mentionLabel} onMouseDown={e => e.preventDefault()}>
+                    <li className="td-mention-caption" role="presentation">Trợ lý và thành viên</li>
+                    {mentionMatches.length ? mentionMatches.map((member, index) => <li key={member.id} role="presentation"><button type="button" role="option" id={`${mentionListId}-${member.id}`} aria-selected={index === activeMention} className={index === activeMention ? "is-active" : ""} ref={index === activeMention ? activeMentionRef : undefined} onMouseEnter={() => setMentionIndex(index)} onMouseDown={event => { event.preventDefault(); pickMention(member); }}><span className="td-avatar" aria-hidden="true">{member.assistant ? <Bot size={17} /> : initials(member.name)}</span><span><strong>{member.name}</strong>{member.email && <small>{member.email}</small>}</span></button></li>) : <li className="td-mention-empty" role="presentation">Không có thành viên phù hợp</li>}
                   </ul>}
                 </div>
-                {commentFiles.length > 0 && <ul className="td-comment-pending">{commentFiles.map(item => <li key={item.key}><FileText size={16} /><div><span>{item.file.name}</span><small>{fileSize(item.file.size)}{item.uploaded ? " · Đã tải lên" : " · Chờ gửi"}</small></div><button type="button" aria-label={`Bỏ ${item.file.name} khỏi bình luận`} disabled={disabled} onClick={() => { setCommentFiles(current => current.filter(value => value.key !== item.key)); setCommentError(""); }}><X size={15} /></button></li>)}</ul>}
+                {assistant && <small className="td-comment-hint">Gọi @{assistant.handle} để đọc ngữ cảnh và thực hiện yêu cầu. Phản hồi được chia sẻ trong công việc này.</small>}
+                {commentFiles.length > 0 && <ul className="td-comment-pending">{commentFiles.map(item => <li key={item.key}><FileText size={16} /><div><span>{item.file.name}</span><small>{fileSize(item.file.size)}{item.uploaded ? " · Đã tải lên" : " · Chờ gửi"}</small></div><button type="button" aria-label={`Bỏ ${item.file.name} khỏi bình luận`} disabled={commentDisabled} onClick={() => { setCommentFiles(current => current.filter(value => value.key !== item.key)); setCommentError(""); }}><X size={15} /></button></li>)}</ul>}
                 {commentFiles.some(item => item.uploaded) && <small className="td-comment-hint">Tệp đã tải lên được giữ trong đính kèm của task. Bạn có thể thử gửi lại bình luận.</small>}
-                {data.collaboration && mentionIds.length > 0 && <div className="td-mentions">{mentionIds.map(id => <button type="button" key={id} disabled={disabled} onClick={() => setMentionIds(ids => ids.filter(v => v !== id))}>@{data.collaboration.members.find(m => m.id === id)?.name} ×</button>)}</div>}
+                {data.collaboration && mentionIds.length > 0 && <div className="td-mentions">{mentionIds.map(id => <button type="button" key={id} disabled={commentDisabled} onClick={() => setMentionIds(ids => ids.filter(v => v !== id))}>@{data.collaboration.members.find(m => m.id === id)?.name} ×</button>)}</div>}
                 <div className="td-comment-toolbar">
-                  {data.uploadPolicy?.enabled && <><input ref={commentFileInput} className="td-comment-file-input" type="file" multiple aria-label="Chọn tệp cho bình luận" disabled={disabled} onChange={selectCommentFiles} /><button type="button" className="button secondary" disabled={disabled || commentFiles.length >= 10} onClick={() => commentFileInput.current?.click()}><Paperclip size={15} />Đính kèm tệp</button></>}
-                  <button className="button" disabled={disabled || (!comment.trim() && !commentFiles.length)}><Send size={15} />{commentSending || "Gửi bình luận"}</button>
+                  {data.uploadPolicy?.enabled && <><input ref={commentFileInput} className="td-comment-file-input" type="file" multiple aria-label="Chọn tệp cho bình luận" disabled={commentDisabled} onChange={selectCommentFiles} /><button type="button" className="button secondary" disabled={commentDisabled || commentFiles.length >= 10} onClick={() => commentFileInput.current?.click()}><Paperclip size={15} />Đính kèm tệp</button></>}
+                  <button className="button" disabled={commentDisabled || (!comment.trim() && !commentFiles.length)}><Send size={15} />{commentSending || "Gửi bình luận"}</button>
                 </div>
                 <small className="td-comment-hint">{data.uploadPolicy?.enabled ? `Tối đa ${data.uploadPolicy.maxFileSizeMb} MB/tệp · 10 tệp/bình luận. Tệp được tải lên khi gửi.` : (data.uploadPolicy?.error || "Admin đã tắt tải tệp. Bạn vẫn có thể gửi bình luận văn bản.")}</small>
               </form>}
               {!comments.length && <p className="td-empty">Chưa có trao đổi nào. Cùng cập nhật để công việc luôn rõ ràng.</p>}
-              <div className="td-comments">{comments.map(item => <article key={item.id}><span className="td-avatar">{initials(item.authorName)}</span><div><strong>{item.authorName || "Thành viên"}</strong><time dateTime={item.createdAt}>{date(item.createdAt)}</time>{item.body && <p>{item.body}</p>}{item.attachments?.length > 0 && <ul className="td-comment-attachments">{item.attachments.map(file => <li key={file.id}><a href={`/api${base}/attachments/${encodeURIComponent(file.id)}/download`} download={file.originalName || file.title}><FileText size={16} /><span>{file.originalName || file.title}<small>{fileSize(file.sizeBytes || 0)}</small></span><Download size={14} /></a></li>)}</ul>}<CommentActions item={item} meta={data.collaboration?.comments.find(c => c.id === item.id)} api={api} base={base} disabled={disabled} onChanged={() => setReload(v => v + 1)} /></div></article>)}</div>
+              {aiError && <p className="td-comment-error" role="alert">Chưa cập nhật được trạng thái trợ lý: {aiError}</p>}
+              {aiRuns.length > 0 && <ul className="td-ai-runs" aria-label="Yêu cầu trợ lý" aria-live="polite">{aiRuns.map(run => <li key={run.id}><a href={`#comment-${run.commentId}`}>{data.aiConfig?.assistant?.name || "Trợ lý AI"}</a><span>{({ queued: "Đang chờ", reading: "Đang đọc ngữ cảnh", executing: "Đang thực hiện", completed: "Hoàn tất", failed: "Có lỗi", cancelled: "Đã dừng" })[run.status] || run.status}</span>{run.error && <small>{run.error}</small>}{run.status !== "completed" && <AiEvidence sources={run.sources} actions={run.actions} onOpenTask={onOpenTask} />}{run.canRetry && <button className="button secondary" type="button" disabled={commentDisabled} onClick={() => retryAi(run)}>Thử lại</button>}</li>)}</ul>}
+              <div className="td-comments">{comments.map(item => <article key={item.id} id={`comment-${item.id}`} className={item.authorType === "assistant" ? "td-ai-comment" : undefined}><span className="td-avatar">{item.authorType === "assistant" ? <Bot size={18} /> : initials(item.authorName)}</span><div><strong>{item.authorName || "Thành viên"}</strong>{item.authorType === "assistant" && <span className="td-ai-badge">AI</span>}<time dateTime={item.createdAt}>{date(item.createdAt)}</time>{item.replyToCommentId && <a className="td-ai-reply" href={`#comment-${item.replyToCommentId}`}>Trả lời bình luận gốc</a>}{item.body && (item.authorType === "assistant" ? <AssistantMarkdown content={item.body} references={taskReferences(item.sources)} onOpenTask={onOpenTask} selectedTaskId={taskId} /> : <p>{item.body}</p>)}
+                <AiEvidence sources={item.sources} actions={item.actions} onOpenTask={onOpenTask} />{item.attachments?.length > 0 && <ul className="td-comment-attachments">{item.attachments.map(file => <li key={file.id}><a href={`/api${base}/attachments/${encodeURIComponent(file.id)}/download`} download={file.originalName || file.title}><FileText size={16} /><span>{file.originalName || file.title}<small>{fileSize(file.sizeBytes || 0)}</small></span><Download size={14} /></a></li>)}</ul>}<CommentActions item={item} meta={data.collaboration?.comments.find(c => c.id === item.id)} api={api} base={base} disabled={commentDisabled} onChanged={() => setReload(v => v + 1)} /></div></article>)}</div>
             </section>
             <section className="td-panel"><div className="td-section-heading"><h2><Activity size={18} />Lịch sử công việc</h2></div>
               {!activity.length && <p className="td-empty">Các thao tác mới sẽ được ghi lại tại đây.</p>}

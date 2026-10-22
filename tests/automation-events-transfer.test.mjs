@@ -22,3 +22,54 @@ test('board transfer preserves checklist order and rejects unsupported recurrenc
  assert.equal((await call(s,'/board-transfer',{method:'POST',cookie:owner.cookie,body:{data:invalid}})).status,400);
  assert.equal(s.db.prepare('SELECT count(*) n FROM tasks WHERE workspace_id=?').get(owner.workspace.id).n,2);
 });
+
+test('automation uses project access, revalidates removed assignees and reconciles extra assignments', async t => {
+ const s=await boot(t),owner=await user(s,'roster-owner@test.local'),member=await user(s,'roster-member@test.local');
+ addMember(s,owner,member);
+ const team=(await call(s,'/teams',{method:'POST',cookie:owner.cookie,body:{name:'Roster',color:'blue',members:[{userId:member.user.id,role:'lead'}]}})).body.team;
+ const outside=await user(s,'roster-no-grant@test.local');addMember(s,owner,outside);
+ const createRule=value=>call(s,'/automations',{method:'POST',cookie:owner.cookie,body:{name:'Assign',teamId:team.id,trigger:'manual',actions:[{type:'assignee',value}]}});
+ assert.equal((await createRule(outside.user.id)).status,400);
+ assert.equal((await createRule(owner.user.id)).status,201);
+ const rule=await createRule(member.user.id);assert.equal(rule.status,201);
+ const card=(await call(s,'/tasks',{method:'POST',cookie:owner.cookie,body:{title:'Valid card',teamId:team.id}})).body.task;
+ await call(s,`/tasks/${card.id}/extras`,{method:'PUT',cookie:owner.cookie,body:{assigneeIds:[member.user.id],labelIds:[]}});
+ const run=()=>call(s,`/automations/${rule.body.id}/run`,{method:'POST',cookie:owner.cookie,body:{taskId:card.id}});
+ assert.equal((await run()).body.ok,true);
+ assert.equal(s.db.prepare('SELECT assignee_id FROM tasks WHERE id=?').get(card.id).assignee_id,member.user.id);
+ assert.equal(s.db.prepare('SELECT count(*) n FROM task_assignees WHERE task_id=? AND user_id=?').get(card.id,member.user.id).n,0);
+ assert.equal((await call(s,`/tasks/${card.id}`,{method:'PATCH',cookie:owner.cookie,body:{title:'Still editable'}})).status,200);
+ s.db.prepare('DELETE FROM team_members WHERE team_id=? AND user_id=?').run(team.id,member.user.id);
+ assert.equal((await run()).body.ok,false);
+});
+
+test('board transfer preserves duplicate-name column identities and colors on repeated imports',async t=>{
+ const s=await boot(t),owner=await user(s,'column-owner@test.local'),target=await user(s,'column-target@test.local');
+ const ids=[];
+ for(const tone of ['blue','rose','rose']){
+  const r=await call(s,'/boards/columns',{method:'POST',cookie:owner.cookie,body:{name:'Review',status:'doing',tone}});assert.equal(r.status,201);ids.push(r.body.column.id);
+ }
+ for(const [i,columnId] of ids.entries())assert.equal((await call(s,'/tasks',{method:'POST',cookie:owner.cookie,body:{title:`Review ${i}`,status:'doing',columnId}})).status,201);
+ const data=(await call(s,'/board-transfer',{cookie:owner.cookie})).body;
+ assert.deepEqual(data.tasks.map(task=>task.columnId).sort(),[...ids].sort());
+ for(let i=0;i<2;i++)assert.equal((await call(s,'/board-transfer',{method:'POST',cookie:target.cookie,body:{data}})).status,201);
+ const cols=s.db.prepare("SELECT id,tone FROM board_columns WHERE workspace_id=? AND name='Review' ORDER BY position").all(target.workspace.id);
+ assert.deepEqual(cols.map(c=>c.tone),['blue','rose','rose']);
+ for(const [i,c] of cols.entries())assert.equal(s.db.prepare('SELECT count(*) n FROM tasks WHERE workspace_id=? AND title=? AND column_id=?').get(target.workspace.id,`Review ${i}`,c.id).n,2);
+ const bad=structuredClone(data);bad.tasks[0].columnId='unknown';
+ assert.equal((await call(s,'/board-transfer',{method:'POST',cookie:target.cookie,body:{data:bad}})).status,400);
+});
+
+test('legacy board imports reject impossible checklist dates atomically and accept real leap days',async t=>{
+ const s=await boot(t),owner=await user(s,'calendar-import@test.local');
+ const data={format:'nhactoi-board',version:1,columns:[{name:'Legacy',status:'todo',tone:'green'}],tasks:[{title:'Imported',column:'Legacy',status:'todo',priority:'medium',checklists:[{title:'Steps',items:[{title:'Step',dueAt:'2026-02-31'}]}]}]};
+ for(const invalid of ['2026-02-31','2026-02-29','2026-04-31']){
+  data.tasks[0].checklists[0].items[0].dueAt=invalid;
+  assert.equal((await call(s,'/board-transfer',{method:'POST',cookie:owner.cookie,body:{data}})).status,400);
+ }
+ assert.equal(s.db.prepare('SELECT count(*) n FROM tasks WHERE workspace_id=?').get(owner.workspace.id).n,0);
+ data.tasks[0].checklists[0].items[0].dueAt='2028-02-29';
+ assert.equal((await call(s,'/board-transfer',{method:'POST',cookie:owner.cookie,body:{data}})).status,201);
+ assert.equal(s.db.prepare('SELECT due_at FROM task_checklist_items').get().due_at,'2028-02-29');
+ assert.equal(s.db.prepare('SELECT c.name FROM tasks t JOIN board_columns c ON c.id=t.column_id WHERE t.workspace_id=?').get(owner.workspace.id).name,'Legacy');
+});

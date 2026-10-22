@@ -1,3 +1,6 @@
+import { completion } from "./ai-provider.mjs";
+import { registerCommentAssistant } from './ai-comments.mjs';
+import { canAccessTask } from './task-access.mjs';
 import { createId } from "./auth.mjs";
 import { canAccessTeamTask } from "./teams.mjs";
 import { isValidCalendarDate } from "../shared/service-renewal.mjs";
@@ -31,72 +34,8 @@ const toolDefinitions = [
   },
 ];
 
-// Provider URLs are fixed; neither users nor model tool arguments can select a network destination.
-async function completion(settings, system, messages, fetchImpl, signal, HttpError) {
-  const anthropic = settings.provider === "anthropic";
-  const url = anthropic ? "https://api.anthropic.com/v1/messages" : "https://openrouter.ai/api/v1/chat/completions";
-  const body = anthropic ? {
-    model: settings.model, max_tokens: 3000, system, messages,
-    tools: toolDefinitions.map(t => ({ name: t.name, description: t.description, input_schema: t.parameters })),
-  } : {
-    model: settings.model, max_tokens: 3000, messages: [{ role: "system", content: system }, ...messages],
-    tools: toolDefinitions.map(t => ({ type: "function", function: t })),
-  };
-  try {
-    const response = await fetchImpl(url, {
-      method: "POST", signal, redirect: "error",
-      headers: { "Content-Type": "application/json", ...(anthropic
-        ? { "x-api-key": settings.apiKey, "anthropic-version": "2023-06-01" }
-        : { Authorization: `Bearer ${settings.apiKey}` }) },
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw new HttpError(response.status === 429 ? 429 : 502, response.status === 429
-        ? "Nhà cung cấp AI đang giới hạn yêu cầu. Hãy thử lại sau ít phút."
-        : "Không kết nối được mô hình AI. Quản trị viên cần kiểm tra khóa API, mã mô hình và số dư.");
-    }
-    let text = "";
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let size = 0;
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        size += value.byteLength;
-        if (size > 512_000) { await reader.cancel(); throw new Error("response too large"); }
-        text += decoder.decode(value, { stream: true });
-      }
-      text += decoder.decode();
-    } finally { reader.releaseLock(); }
-    const data = JSON.parse(text);
-    if (anthropic) {
-      if (!Array.isArray(data.content)) throw new Error("invalid content");
-      const content = data.content.filter(p => p.type === "text").map(p => p.text).join("\n");
-      const calls = data.content.filter(p => p.type === "tool_use").map(p => ({ id: p.id, name: p.name, args: p.input }));
-      return { content, calls, replay: { role: "assistant", content: data.content } };
-    }
-    const message = data.choices?.[0]?.message;
-    if (!message || (message.content != null && typeof message.content !== "string")) throw new Error("invalid message");
-    const calls = (message.tool_calls || []).map(call => {
-      let args;
-      try { args = JSON.parse(call.function.arguments); } catch { args = null; }
-      return { id: call.id, name: call.function?.name, args };
-    });
-    return { content: message.content || "", calls, replay: {
-      role: "assistant", content: message.content || null,
-      ...(calls.length ? { tool_calls: message.tool_calls } : {}),
-      ...(message.reasoning_details ? { reasoning_details: message.reasoning_details } : {}),
-    } };
-  } catch (error) {
-    if (error instanceof HttpError) throw error;
-    if (signal.aborted) throw new HttpError(504, "AI phản hồi quá lâu. Tin nhắn chưa được lưu; bạn có thể gửi lại.");
-    throw new HttpError(502, "Không nhận được phản hồi hợp lệ từ AI. Vui lòng thử lại.");
-  }
-}
 
-export function registerAiAssistantRoutes(app, { db, clock, config, requireAuth, requirePlatformAdmin, ensureWritable, HttpError, withTransaction, writeStoredSetting, loadStoredSettings, settingsKey, writeAdminAudit, taskRowsFiltered, refreshAuth, fetchImpl = fetch }) {
+export function registerAiAssistantRoutes(app, { db, clock, config, requireAuth, requirePlatformAdmin, ensureWritable, HttpError, withTransaction, writeStoredSetting, loadStoredSettings, settingsKey, writeAdminAudit, taskRowsFiltered, refreshAuth, fetchImpl = fetch, startWorker = false, sourceReader, sourceOptions }) {
   const inFlight = new Set();
   const modelCatalog = createAiModelCatalog(fetchImpl);
   // One server process owns the database connection and its worker. Use a shared limiter if deployment becomes multi-process.
@@ -111,6 +50,18 @@ export function registerAiAssistantRoutes(app, { db, clock, config, requireAuth,
   };
   const ready = s => Boolean(s.enabled && s.apiKey && s.model && ["openrouter", "anthropic"].includes(s.provider));
   const publicSettings = s => ({ enabled: s.enabled, provider: s.provider, model: s.model, hasApiKey: Boolean(s.apiKey) });
+  const capabilities = async s => {
+    if (!ready(s)) return { images: null, pdf: null, formats: ['DOCX','XLSX','CSV','TXT','Markdown'] };
+    const catalog = await modelCatalog(s.provider, s.apiKey);
+    const model = catalog.models.find(item => item.id === s.model);
+    return { images: s.provider === 'anthropic' ? true : model?.images ?? null,
+      pdf: s.provider === 'anthropic' ? true : model?.nativePdf ?? null,
+      nativePdf: s.provider === 'anthropic' ? true : model?.nativePdf ?? null,
+      contextLength: model?.contextLength || null,
+      formats: ['PDF','DOCX','XLSX','CSV','TXT','Markdown','PNG','JPEG','WebP'] };
+  };
+  registerCommentAssistant(app, { db, clock, config, requireAuth, ensureWritable, HttpError, withTransaction,
+    settings, ready, capabilities, fetchImpl, startWorker, sourceReader, sourceOptions });
   const fail = (message, status = 400) => { throw new HttpError(status, message); };
   function keys(body, allowed) {
     if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some(k => !allowed.includes(k))) fail("Thông tin gửi lên không hợp lệ.");
@@ -125,8 +76,8 @@ export function registerAiAssistantRoutes(app, { db, clock, config, requireAuth,
     return row;
   }
   function visible(req, id) {
-    const task = db.prepare("SELECT team_id FROM tasks WHERE id=? AND workspace_id=? AND deleted_at IS NULL").get(id, req.auth.workspaceId);
-    return Boolean(task && canAccessTeamTask(db, req.auth.workspaceId, req.auth.userId, task.team_id));
+    const task = db.prepare("SELECT * FROM tasks WHERE id=? AND workspace_id=? AND deleted_at IS NULL").get(id, req.auth.workspaceId);
+    return Boolean(task && canAccessTask(db, req.auth.workspaceId, req.auth.userId, task));
   }
   function messagesFor(req, id) {
     return db.prepare("SELECT * FROM ai_messages WHERE conversation_id=? ORDER BY id").all(id).map(row => {
@@ -149,7 +100,7 @@ export function registerAiAssistantRoutes(app, { db, clock, config, requireAuth,
     if (!ready(current) || JSON.stringify(current) !== JSON.stringify(expectedSettings)) fail("Cấu hình AI đã thay đổi. Hãy gửi lại tin nhắn.", 409);
   }
   function accessKey(req) {
-    return JSON.stringify([req.auth.role, db.prepare("SELECT tm.team_id,tm.role,t.archived_at FROM team_members tm JOIN teams t ON t.id=tm.team_id WHERE tm.workspace_id=? AND tm.user_id=? ORDER BY tm.team_id").all(req.auth.workspaceId, req.auth.userId)]);
+    return JSON.stringify([req.auth.role, db.dialect === 'postgres' ? db.prepare('SELECT p.id,p.access_mode,p.archived_at,pm.role FROM projects p LEFT JOIN project_members pm ON pm.project_id=p.id AND pm.user_id=? WHERE p.workspace_id=? ORDER BY p.id').all(req.auth.userId, req.auth.workspaceId) : [], db.prepare("SELECT tm.team_id,tm.role,t.archived_at FROM team_members tm JOIN teams t ON t.id=tm.team_id WHERE tm.workspace_id=? AND tm.user_id=? ORDER BY tm.team_id").all(req.auth.workspaceId, req.auth.userId)]);
   }
 
   app.get("/api/admin/ai-settings", requirePlatformAdmin, (req, res) => res.json(publicSettings(settings())));
@@ -181,9 +132,11 @@ export function registerAiAssistantRoutes(app, { db, clock, config, requireAuth,
     });
     res.json(publicSettings(value));
   });
-  app.get("/api/ai/config", requireAuth, (req, res) => {
+  app.get("/api/ai/config", requireAuth, async (req, res) => {
     const s = settings();
-    res.json({ enabled: s.enabled, ready: ready(s), provider: s.provider, model: s.model });
+    const assistant = app.locals.publicAssistant(req.auth);
+    res.json({ enabled: s.enabled, ready: ready(s), provider: s.provider, model: s.model,
+      assistant, canManageAssistant: assistant.canManage, capabilities: await capabilities(s) });
   });
   app.get("/api/ai/conversations", requireAuth, (req, res) => {
     const conversations = db.prepare("SELECT id,title,updated_at AS \"updatedAt\" FROM ai_conversations WHERE workspace_id=? AND user_id=? ORDER BY updated_at DESC,id DESC LIMIT 100").all(req.auth.workspaceId, req.auth.userId);
@@ -229,7 +182,7 @@ export function registerAiAssistantRoutes(app, { db, clock, config, requireAuth,
       let answer = "";
       for (let round = 0; round < 6; round++) {
         revalidate(req, identity, s);
-        const result = await completion(s, system, replay, fetchImpl, signal, HttpError);
+        const result = await completion(s, system, replay, fetchImpl, signal, HttpError, toolDefinitions);
         revalidate(req, identity, s);
         if (typeof result.content !== "string" || result.content.length > 20_000 || !Array.isArray(result.calls) || result.calls.length > 4) fail("Phản hồi AI vượt quá giới hạn. Hãy thu hẹp yêu cầu và thử lại.", 502);
         if (!result.calls.length) { answer = result.content.trim(); break; }

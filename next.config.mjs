@@ -9,7 +9,7 @@ const nextConfig = {
     return [{ source: '/sw.js', headers: [{ key: 'Cache-Control', value: 'no-cache' }, { key: 'Service-Worker-Allowed', value: '/' }] }];
   },
   allowedDevOrigins: ["nhactoi.test"],
-  serverExternalPackages: ["pg", "synckit", "express", "nodemailer", "google-auth-library", "web-push", "@aws-sdk/client-s3"],
+  serverExternalPackages: ["pg", "synckit", "express", "nodemailer", "google-auth-library", "web-push", "@aws-sdk/client-s3", "mammoth", "exceljs", "html-to-text"],
   ...(lowMemoryBuild
     ? {
         experimental: {

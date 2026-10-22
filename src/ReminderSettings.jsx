@@ -1,7 +1,8 @@
+import { useTaskMutation } from './useTaskMutation.js';
 import React, {useEffect,useState,useRef} from 'react';
 import './reminders.css';
 const date=value=>value?new Date(value).toLocaleString('vi-VN'):'Chưa nhận';
-const delivery={pending:'Đang chờ',sent:'Đã gửi',failed:'Gửi lỗi',skipped:'Đã bỏ qua'};
+const delivery={accepted:'Nhà cung cấp đã chấp nhận',delivered:'Đã chuyển tới người nhận',read:'Người nhận đã đọc',retry:'Chờ thử lại',sending:'Đang gửi',suppressed:'Đã chặn',pending:'Đang chờ',sent:'Nhà cung cấp đã chấp nhận',failed:'Gửi lỗi',skipped:'Đã bỏ qua',unknown:'Chưa rõ kết quả — cần đối soát'};
 function Steps({value,onChange,disabled}) {
  return <div className="reminder-steps">{value.map((step,index)=><fieldset key={index} disabled={disabled} className="reminder-step"><legend>Mốc {index+1}</legend>
   <label>Số phút so với hạn<input aria-label={`Số phút mốc ${index+1}`} type="number" min={-43200} max={43200} required value={step.offsetMinutes} onChange={e=>onChange(value.map((s,i)=>i===index?{...s,offsetMinutes:e.target.value===''?'':Number(e.target.value)}:s))}/></label>
@@ -29,15 +30,16 @@ export function ReminderPolicy({api,teamId=null,readOnly=false,onSaved}) {
  </fieldset>{data.canManage&&!readOnly&&<button className="button" disabled={busy}>{busy?'Đang lưu…':'Lưu chính sách nhắc'}</button>}
  </form>}</details>;
 }
-export default function TaskReminders({api,task,readOnly=false,revision=0,onChanged}) {
+export default function TaskReminders({api:request,task,readOnly=false,revision=0,onChanged}) {
  const [data,setData]=useState(null),[draft,setDraft]=useState(null),[error,setError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[minutes,setMinutes]=useState(60),[reload,setReload]=useState(0);
+ const api=useTaskMutation(request,task.id);
  const pending=useRef(false);
  const base=`/tasks/${encodeURIComponent(task.id)}/reminders`;
  useEffect(()=>{let alive=true;setData(null);api(base).then(r=>{if(alive){setData(r);setDraft({enabled:r.effectivePolicy.enabled,steps:r.effectivePolicy.steps});setError('');}}).catch(e=>alive&&setError(e.message));return()=>{alive=false};},[api,base,reload,revision]);
  async function act(path,body,method='POST'){
   if(pending.current||readOnly||task.status==='done')return;
   pending.current=true;setBusy(true);setError('');setNotice('');
-  try{await api(path,{method,body:JSON.stringify(body)});setNotice('Đã lưu.');setReload(v=>v+1);await onChanged?.();}catch(e){setError(e.message)}finally{pending.current=false;setBusy(false);}
+  try{await api(path,{method,body:JSON.stringify({...body,...(/\/(acknowledge|snooze)$/.test(path)?{expectedRevision:task.revision}:{})})});setNotice('Đã lưu.');setReload(v=>v+1);await onChanged?.();}catch(e){setError(e.message)}finally{pending.current=false;setBusy(false);}
  }
  const disabled=readOnly||busy||task.status==='done'||!data;
  return <section className="td-panel reminder-panel"><h2>Nhận việc & nhắc lại</h2>
@@ -49,6 +51,6 @@ export default function TaskReminders({api,task,readOnly=false,revision=0,onChan
  <details><summary>Các mốc nhắc nâng cao</summary><p>{data.effectivePolicy.enabled?'Đang bật':'Đang tắt'}. Quản lý cấu hình chính sách tại trang Teams. Với việc chung, cấu hình ở bên dưới.</p>
  {draft&&<form onSubmit={e=>{e.preventDefault();act(base,draft,'PUT')}}><label className="reminder-check"><input type="checkbox" checked={draft.enabled} disabled={disabled||!data.canConfigure} onChange={e=>setDraft({...draft,enabled:e.target.checked})}/>Bật cho công việc này</label><Steps value={draft.steps} onChange={steps=>setDraft({...draft,steps})} disabled={disabled||!data.canConfigure}/>{data.canConfigure&&<div className="reminder-actions"><button className="button" disabled={disabled}>Lưu mốc riêng</button><button type="button" className="button secondary" disabled={disabled} onClick={()=>act(base,{inherit:true},'PUT')}>Dùng chính sách chung</button></div>}</form>}</details>
  {data.canRespond&&<button className="button secondary" disabled={disabled} onClick={()=>act(base+'/test',{})}>Gửi nhắc thử cho tôi</button>}
- <details><summary>Lịch sử gửi gần nhất ({data.history.length})</summary><p>“Đã gửi” là nhà cung cấp đã chấp nhận, không phải đã đọc. Push “đã bỏ qua” có thể do chưa đăng ký thiết bị. Email chờ cần SMTP được cấu hình.</p>{data.history.length?<ul>{data.history.map(h=><li key={h.id}>{date(h.created_at)} · {h.name} · {h.title}<br/>Trong ứng dụng: {h.read_at?'đã đọc':'chưa đọc'} · Email: {delivery[h.email_status]||'Không có'} · Push: {delivery[h.push_status]||'Không có'}{h.email_error&&<span> · {h.email_error}</span>}</li>)}</ul>:<p>Chưa gửi lời nhắc cho công việc này.</p>}<button className="button secondary" disabled={disabled} onClick={()=>act(base+'/retry-email',{})}>Thử lại email bị lỗi của tôi</button></details>
+ <details><summary>Lịch sử gửi gần nhất ({data.history.length})</summary><p>Nhà cung cấp chấp nhận không đồng nghĩa đã đọc hoặc đã xác nhận nhận việc. FCM “đã bỏ qua” có thể do chưa đăng ký thiết bị. Web Push ghi trạng thái theo từng trình duyệt. Email chờ cần SMTP được cấu hình.</p>{data.history.length?<ul>{data.history.map(h=><li key={h.id}>{date(h.created_at)} · {h.name} · {h.title}<br/>Trong ứng dụng: {h.read_at?'đã đọc':'chưa đọc'} · Email: {delivery[h.email_status]||'Không có'} · FCM: {delivery[h.push_status]||'Không có'} · Web Push: {Object.entries(h.web_push_statuses||{}).map(([status,count])=>`${delivery[status]||status}: ${count}`).join('; ')||'Không có'}{h.email_error&&<span> · {h.email_error}</span>}</li>)}</ul>:<p>Chưa gửi lời nhắc cho công việc này.</p>}{(data.zaloHistory||[]).length>0&&<><h3>Zalo OA</h3><ul>{data.zaloHistory.map(h=><li key={h.id}>{date(h.created_at)} · {h.name||'Người nhận'} · {delivery[h.status]||h.status} · {h.attempts} lượt{h.error&&<span> · {h.error}</span>}</li>)}</ul></>}<button className="button secondary" disabled={disabled} onClick={()=>act(base+'/retry-email',{})}>Thử lại email bị lỗi của tôi</button></details>
  </>}{!task.teamId&&<ReminderPolicy key={task.id} api={api} readOnly={readOnly} onSaved={()=>setReload(v=>v+1)}/>}</section>;
 }

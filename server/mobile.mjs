@@ -1,4 +1,8 @@
-import { reminderDeliveryAllowed, legacyReminderAllowed } from "./reminder-workflow.mjs";
+import { taskAccessSql, guestNotificationAccessSql } from './task-access.mjs';
+import { claimDelivery, beginDelivery, settleDelivery, deliveryFailure } from './delivery-leases.mjs';
+import { subscriptionJson } from './subscription-json.mjs';
+import { outboundSendersPaused, invalidateSessions } from './restore-safety.mjs';
+import { reminderDeliveryAllowed, legacyReminderAllowed, reminderRetryAt } from "./reminder-workflow.mjs";
 import {
   createId,
   createToken,
@@ -32,6 +36,25 @@ function addMilliseconds(iso, milliseconds) {
   return new Date(new Date(iso).getTime() + milliseconds).toISOString();
 }
 
+function calendarEventReminderAllowed(db, notice, now) {
+  if (!notice || notice.type !== "calendar_event") return false;
+  const event = db
+    .prepare(
+      `SELECT * FROM calendar_events
+       WHERE id = ? AND workspace_id = ?`,
+    )
+    .get(notice.entity_id, notice.workspace_id);
+  return Boolean(
+    event &&
+      event.status !== "done" &&
+      event.remind_at && event.remind_at <= now &&
+      event.ends_at > now &&
+      canAccessTeamTask(db, notice.workspace_id, notice.user_id, event.team_id, {
+        write: true,
+      }),
+  );
+}
+
 function clean(value, max, field) {
   const text = String(value ?? "").trim();
   if (!text || text.length > max) {
@@ -58,6 +81,7 @@ function userJson(row) {
     name: row.name,
     email: row.email,
     role: row.role,
+    memberType: row.member_type || 'member',
     isPlatformAdmin: Boolean(row.is_platform_admin ?? row.isPlatformAdmin),
   };
 }
@@ -68,20 +92,6 @@ function workspaceJson(row) {
     name: row.name,
     industry: row.industry,
     suspendedAt: row.suspended_at ?? row.suspendedAt ?? null,
-  };
-}
-
-function subscriptionJson(row, clock) {
-  if (!row) return null;
-  const now = new Date(nowIso(clock));
-  const expired =
-    row.status !== "canceled" &&
-    new Date(row.current_period_end).getTime() <= now.getTime();
-  return {
-    plan: row.plan,
-    cycle: row.cycle,
-    status: expired ? "expired" : row.status,
-    currentPeriodEnd: row.current_period_end,
   };
 }
 
@@ -171,6 +181,7 @@ function notificationAccessSql(includeServices = false) {
     : "";
   return `
     n.user_id = ?
+    AND ${guestNotificationAccessSql()}
     AND EXISTS (
       SELECT 1 FROM workspace_members wm
       WHERE wm.workspace_id = n.workspace_id AND wm.user_id = n.user_id
@@ -179,22 +190,8 @@ function notificationAccessSql(includeServices = false) {
       n.task_id IS NULL
       OR EXISTS (
         SELECT 1 FROM tasks t
-        WHERE t.id = n.task_id AND t.deleted_at IS NULL
-          AND (
-            t.team_id IS NULL
-            OR EXISTS (
-              SELECT 1 FROM workspace_members admin_member
-              WHERE admin_member.workspace_id = n.workspace_id
-                AND admin_member.user_id = n.user_id
-                AND admin_member.role IN ('owner', 'admin')
-            )
-            OR EXISTS (
-              SELECT 1 FROM team_members visible_member
-              WHERE visible_member.team_id = t.team_id
-                AND visible_member.workspace_id = n.workspace_id
-                AND visible_member.user_id = n.user_id
-            )
-        )
+        WHERE t.id = n.task_id AND t.deleted_at IS NULL AND t.workspace_id=n.workspace_id AND ${taskAccessSql("t", "n.user_id")}
+
       )
     )
     AND (
@@ -281,11 +278,11 @@ function notificationRows(db, userId, query) {
   return { rows, total: Number(total), offset };
 }
 
-function mobilePayload(db, auth, clock, token, expiresAt) {
+function mobilePayload(db, auth, clock, token, expiresAt, config) {
   const user = db
     .prepare(
       `SELECT u.id, u.name, u.email, u.is_platform_admin,
-              wm.role, w.name AS workspace_name, w.industry AS workspace_industry,
+              wm.role, wm.member_type, w.name AS workspace_name, w.industry AS workspace_industry,
               w.suspended_at AS workspace_suspended_at
        FROM users u
        JOIN workspace_members wm ON wm.user_id = u.id AND wm.workspace_id = ?
@@ -307,6 +304,7 @@ function mobilePayload(db, auth, clock, token, expiresAt) {
         name: user.name,
         email: user.email,
         role: user.role,
+        member_type: user.member_type,
         is_platform_admin: user.is_platform_admin,
       })
     : auth.user;
@@ -318,6 +316,7 @@ function mobilePayload(db, auth, clock, token, expiresAt) {
     subscription: subscriptionJson(
       db.prepare("SELECT * FROM subscriptions WHERE workspace_id = ?").get(auth.workspaceId),
       clock,
+      config.plans,
     ),
   };
 }
@@ -358,6 +357,7 @@ export async function processNotificationOutbox({
   limit = 100,
 } = {}) {
   if (!db) throw new Error("processNotificationOutbox requires a database");
+  if (outboundSendersPaused(db)) return { processed: 0, sent: 0, failed: 0, skipped: 0, paused: true };
   const send = typeof transport === "function"
     ? transport
     : typeof transport?.send === "function"
@@ -372,6 +372,7 @@ export async function processNotificationOutbox({
   notificationOutboxLocks.set(db, thisRun);
   if (previousRun) await previousRun;
   try {
+    if (outboundSendersPaused(db)) return { processed: 0, sent: 0, failed: 0, skipped: 0, paused: true };
     const now = nowIso(clock);
     removeInvalidDevices(db, clock);
     const rows = db
@@ -381,13 +382,14 @@ export async function processNotificationOutbox({
        JOIN notifications n ON n.id = o.notification_id
        JOIN users u ON u.id = o.user_id AND u.disabled_at IS NULL
        WHERE o.status = 'pending' AND o.next_attempt_at <= ?
-       ORDER BY o.created_at, o.id LIMIT ?`,
+       ORDER BY o.next_attempt_at, o.created_at, o.id LIMIT ?`,
     )
       .all(now, Math.max(1, Math.min(Number(limit) || 100, 500)));
     let sent = 0;
     let failed = 0;
     let skipped = 0;
     for (const outbox of rows) {
+    if (outboundSendersPaused(db)) return { processed: sent + failed + skipped, sent, failed, skipped, paused: true };
     if (!MOBILE_TYPES.has(outbox.type)) {
       db.prepare("UPDATE notification_outbox SET status='skipped', sent_at=? WHERE id=?").run(now, outbox.id);
       skipped++;
@@ -431,7 +433,12 @@ export async function processNotificationOutbox({
        ORDER BY d.installation_id`,
     ).all(outbox.id, now);
     let lastError = "";
+    let attempted = false;
     for (const delivery of dueDeliveries) {
+      if (outboundSendersPaused(db)) return { processed: sent + failed + skipped, sent, failed, skipped, paused: true };
+      const deliveryNow=nowIso(clock), claim=claimDelivery(db,'fcm',outbox.notification_id,delivery.installation_id,deliveryNow);
+      if(!claim)continue;
+      if(claim.unknown){db.prepare("UPDATE notification_outbox_deliveries SET status='unknown',last_error='delivery outcome unknown' WHERE outbox_id=? AND installation_id=? AND status='pending'").run(outbox.id,delivery.installation_id);continue;}
       // Recheck authorization after materializing delivery rows. A workspace
       // membership, session, or account can be revoked between selecting the
       // recipients and the actual network call.
@@ -447,66 +454,61 @@ export async function processNotificationOutbox({
         delivery.installation_id,
         outbox.user_id,
         delivery.session_id,
-        now,
+        deliveryNow,
       );
-      if (db.prepare('SELECT status FROM notification_outbox WHERE id=?').get(outbox.id)?.status !== 'pending') break;
+      if (db.prepare('SELECT status FROM notification_outbox WHERE id=?').get(outbox.id)?.status !== 'pending') { settleDelivery(db,claim,'suppressed',deliveryNow,()=>{}); break; }
       const notice = db.prepare('SELECT * FROM notifications WHERE id=?').get(outbox.notification_id);
       const access = db.prepare(`SELECT 1 FROM notifications n WHERE n.id=? AND ${notificationAccessSql(true)}`).get(outbox.notification_id,outbox.user_id);
-      const reminder = ['task_reminder','service_renewal'].includes(outbox.type);
-      if (!authorized || !access || (reminder && !reminderDeliveryAllowed(db,notice,now))) {
-        db.prepare(
+      const reminder = ['task_reminder','task_update','service_renewal'].includes(outbox.type);
+      if (
+        !authorized ||
+        !access ||
+        (outbox.type === 'calendar_event' && !calendarEventReminderAllowed(db, notice, deliveryNow)) ||
+        (reminder && !reminderDeliveryAllowed(db,notice,deliveryNow))
+      ) {
+        settleDelivery(db,claim,'suppressed',deliveryNow,()=>db.prepare(
           `UPDATE notification_outbox_deliveries
            SET status='skipped', last_error='authorization revoked'
-           WHERE outbox_id=? AND installation_id=?`,
-        ).run(outbox.id, delivery.installation_id);
+           WHERE outbox_id=? AND installation_id=? AND status='pending'`,
+        ).run(outbox.id, delivery.installation_id),{error:'authorization revoked'});
         continue;
       }
       if (outbox.type === 'task_reminder') {
         const task = db.prepare('SELECT * FROM tasks WHERE id=?').get(notice.task_id);
-        if (task && !legacyReminderAllowed(db,task,outbox.user_id,now)) continue;
+        if (task && !legacyReminderAllowed(db,task,outbox.user_id,deliveryNow)) {
+          const retryAt=reminderRetryAt(db,task,outbox.user_id,deliveryNow);
+          settleDelivery(db,claim,'retry',deliveryNow,()=>db.prepare("UPDATE notification_outbox_deliveries SET next_attempt_at=? WHERE outbox_id=? AND installation_id=? AND status='pending'")
+            .run(retryAt, outbox.id, delivery.installation_id),{nextAttemptAt:retryAt,error:"reminder deferred by working hours or quiet policy"});
+          continue;
+        }
       }
+      if(!beginDelivery(db,claim,nowIso(clock)))continue;
+      let result;
       try {
-        const result = await send({
-          token: delivery.fcm_token,
-          device: delivery,
-          outbox,
-          notification: payload,
-        });
+        attempted = true;
+        result = await send({ token:delivery.fcm_token, device:delivery, outbox, notification:payload });
         if (result && result.ok === false) {
-          const error = new Error(result.error || "FCM transport rejected message");
+          const error = new Error('FCM transport rejected message');
           error.permanent = Boolean(result.permanent);
+          error.statusCode = result.statusCode;
+          error.deliveryUnknown = result.deliveryUnknown;
           throw error;
         }
-        db.prepare(
-          `UPDATE notification_outbox_deliveries
-           SET status='sent', attempts=attempts+1, sent_at=?, last_error=NULL
-           WHERE outbox_id=? AND installation_id=?`,
-        ).run(now, outbox.id, delivery.installation_id);
       } catch (error) {
-        lastError = String(error?.message || error || "push delivery failed").slice(0, 1000);
-        const permanent = Boolean(
-          error?.permanent ||
-            [400, 404, 410].includes(Number(error?.status || error?.statusCode)) ||
-            /UNREGISTERED|INVALID_ARGUMENT|not.?registered|invalid.?token/i.test(lastError),
-        );
-        if (permanent) {
-          db.prepare(
-            `UPDATE notification_outbox_deliveries
-             SET status='failed', attempts=attempts+1, sent_at=NULL, last_error=?
-             WHERE outbox_id=? AND installation_id=?`,
-          ).run(lastError, outbox.id, delivery.installation_id);
-          db.prepare("DELETE FROM mobile_devices WHERE installation_id=? AND user_id=?").run(delivery.installation_id, outbox.user_id);
-        } else {
-          const attempt = Number(delivery.attempts || 0) + 1;
-          const status = attempt >= FCM_MAX_ATTEMPTS ? "failed" : "pending";
-          const delay = Math.min(60 * 60 * 1000, 1000 * 2 ** Math.min(attempt, 10));
-          db.prepare(
-            `UPDATE notification_outbox_deliveries
-             SET status=?, attempts=?, next_attempt_at=?, last_error=?
-             WHERE outbox_id=? AND installation_id=?`,
-          ).run(status, attempt, addMilliseconds(now, delay), lastError, outbox.id, delivery.installation_id);
-        }
+        const attempt=Number(delivery.attempts||0)+1;
+        const failure=deliveryFailure(error,attempt,{now:nowIso(clock),maxAttempts:FCM_MAX_ATTEMPTS,baseDelay:2000});
+        lastError=failure.error;
+        settleDelivery(db,claim,failure.status==='pending'?'retry':failure.status,nowIso(clock),()=>{
+          db.prepare(`UPDATE notification_outbox_deliveries SET status=?,attempts=?,next_attempt_at=?,last_error=?
+            WHERE outbox_id=? AND installation_id=? AND status IN ('pending','unknown')`)
+            .run(failure.status,attempt,failure.nextAttemptAt,failure.error,outbox.id,delivery.installation_id);
+          if(error?.invalidRecipient===true)db.prepare('DELETE FROM mobile_devices WHERE installation_id=? AND user_id=?').run(delivery.installation_id,outbox.user_id);
+        },{error:failure.error,nextAttemptAt:failure.nextAttemptAt});
+        continue;
       }
+      settleDelivery(db,claim,'sent',nowIso(clock),()=>db.prepare(`UPDATE notification_outbox_deliveries
+        SET status='sent',attempts=attempts+1,sent_at=?,last_error=NULL
+        WHERE outbox_id=? AND installation_id=? AND status IN ('pending','unknown')`).run(nowIso(clock),outbox.id,delivery.installation_id),{reference:result?.messageId});
     }
     if (db.prepare('SELECT status FROM notification_outbox WHERE id=?').get(outbox.id)?.status !== 'pending') { skipped++; continue; }
     const state = db.prepare(
@@ -514,10 +516,14 @@ export async function processNotificationOutbox({
          SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending,
          SUM(CASE WHEN status='sent' THEN 1 ELSE 0 END) AS sent,
          SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed,
+         SUM(CASE WHEN status='unknown' THEN 1 ELSE 0 END) AS unknown,
          MIN(CASE WHEN status='pending' THEN next_attempt_at END) AS next_attempt_at
        FROM notification_outbox_deliveries WHERE outbox_id=?`,
     ).get(outbox.id);
-    if (!state || Number(state.pending || 0) + Number(state.sent || 0) + Number(state.failed || 0) === 0) {
+    if (Number(state?.unknown || 0) > 0 && Number(state?.pending || 0) === 0) {
+      db.prepare("UPDATE notification_outbox SET status='unknown',last_error='delivery outcome unknown' WHERE id=? AND status='pending'").run(outbox.id);
+      failed++;
+    } else if (!state || Number(state.pending || 0) + Number(state.sent || 0) + Number(state.failed || 0) === 0) {
       db.prepare("UPDATE notification_outbox SET status='skipped', sent_at=? WHERE id=?").run(now, outbox.id);
       skipped++;
     } else if (Number(state.pending || 0) === 0 && Number(state.sent || 0) === 0 && Number(state.failed || 0) > 0) {
@@ -535,13 +541,13 @@ export async function processNotificationOutbox({
       ).run(now, outbox.id);
       sent++;
     } else {
-      const attempt = Number(outbox.attempts || 0) + 1;
+      const attempt = Number(outbox.attempts || 0) + (attempted ? 1 : 0);
       db.prepare(
         `UPDATE notification_outbox
          SET status='pending', attempts=?, next_attempt_at=?, last_error=?
          WHERE id=?`,
-      ).run(attempt, state.next_attempt_at || addMilliseconds(now, 2000), lastError || "push delivery failed", outbox.id);
-      failed++;
+      ).run(attempt, state.next_attempt_at || addMilliseconds(now, 2000), lastError || outbox.last_error || null, outbox.id);
+      if (attempted && lastError) failed++;
     }
     }
     return { processed: rows.length, sent, failed, skipped };
@@ -600,6 +606,7 @@ export function createFcmTransport(config = {}) {
     const { createSign } = await import("node:crypto");
     const signature = createSign("RSA-SHA256").update(`${header}.${claim}`).sign(account.privateKey, "base64url");
     const response = await fetch("https://oauth2.googleapis.com/token", {
+      signal: AbortSignal.timeout(10000),
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${encodeURIComponent(`${header}.${claim}.${signature}`)}`,
@@ -612,10 +619,14 @@ export function createFcmTransport(config = {}) {
     return accessToken;
   }
   return async ({ token: deviceToken, notification }) => {
-    const response = await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(account.projectId)}/messages:send`, {
+    let bearer;
+    try { bearer=await token(); } catch(error) { error.requestNotSent=true; throw error; }
+    let response;
+    try { response = await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(account.projectId)}/messages:send`, {
       method: "POST",
+      signal: AbortSignal.timeout(10000),
       headers: {
-        authorization: `Bearer ${await token()}`,
+        authorization: `Bearer ${bearer}`,
         "content-type": "application/json",
       },
       body: JSON.stringify({
@@ -633,12 +644,16 @@ export function createFcmTransport(config = {}) {
         },
       }),
     });
-    if (response.ok) return { ok: true };
+    } catch(error) { error.deliveryUnknown=true; throw error; }
+    if (response.ok) { let body; try { body=await response.json(); } catch {} return { ok:true,messageId:body?.name }; }
     let body = "";
     try { body = await response.text(); } catch {}
     const permanent = response.status === 404 || /UNREGISTERED|INVALID_ARGUMENT/.test(body);
     const error = new Error(`FCM send failed (${response.status})`);
     error.permanent = permanent;
+    error.invalidRecipient = permanent;
+    error.statusCode = response.status;
+    error.retryAfterSeconds = response.headers.get('retry-after');
     throw error;
   };
 }
@@ -656,7 +671,7 @@ export function registerMobileRoutes(app, {
 }) {
   const requireMobile = mobileAuth(requireAuth, db, clock, HttpError);
   const authPayload = (req, token = req.mobileToken, expiresAt = req.auth.expiresAt) =>
-    mobilePayload(db, req.auth, clock, token, expiresAt);
+    mobilePayload(db, req.auth, clock, token, expiresAt, config);
 
   app.post(
     "/api/mobile/auth/login",
@@ -698,7 +713,7 @@ export function registerMobileRoutes(app, {
           expiresAt: session.expiresAt,
           user: auth.user,
           workspace: auth.workspace,
-          subscription: subscriptionJson(db.prepare("SELECT * FROM subscriptions WHERE workspace_id=?").get(membership.id), clock),
+          subscription: subscriptionJson(db.prepare("SELECT * FROM subscriptions WHERE workspace_id=?").get(membership.id), clock, config.plans),
         });
       } catch (error) {
         return next(error);
@@ -708,7 +723,7 @@ export function registerMobileRoutes(app, {
 
   app.post("/api/mobile/auth/logout", requireMobile, (req, res, next) => {
     try {
-      db.prepare("DELETE FROM sessions WHERE id=? AND user_id=? AND kind='mobile'").run(req.auth.sessionId, req.auth.userId);
+      invalidateSessions(db, { id: req.auth.sessionId, userId: req.auth.userId });
       return res.json({ ok: true });
     } catch (error) {
       return next(error);

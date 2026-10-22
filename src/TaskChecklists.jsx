@@ -48,7 +48,7 @@ function assigneeLabel(item, members) {
   return ids.length === 1 ? name : `${name}, +${ids.length - 1}`;
 }
 
-export default function TaskChecklists({ base, checklists = [], members = [], writable, disabled, mutate }) {
+export default function TaskChecklists({ base, taskRevision, checklists = [], members = [], writable, disabled, mutate }) {
   const [itemDrafts, setItemDrafts] = useState({});
   const [newTitle, setNewTitle] = useState("");
   const [editingList, setEditingList] = useState(null);
@@ -56,7 +56,7 @@ export default function TaskChecklists({ base, checklists = [], members = [], wr
   const [panel, setPanel] = useState(null);
   const [confirm, setConfirm] = useState(null);
   const [dropBefore, setDropBefore] = useState(null);
-  const draggedRef = useRef(null);
+  const draggedRef = useRef(null), newTitleRevision = useRef(), itemDraftRevisions = useRef({});
   const count = checklists.reduce((sum, list) => sum + list.items.length, 0);
   const complete = checklists.reduce((sum, list) => sum + list.items.filter((item) => item.completed).length, 0);
 
@@ -84,10 +84,10 @@ export default function TaskChecklists({ base, checklists = [], members = [], wr
     mutate(`${base}/checklists/order`, "PUT", { ids }, "Đã sắp xếp checklist.");
   }
 
-  function moveItems(list, fromId, beforeId) {
+  function moveItems(list, fromId, beforeId, expectedRevision = taskRevision) {
     const ids = reorderIds(list.items, fromId, beforeId);
     if (!ids) return;
-    mutate(`${base}/checklists/${encodeURIComponent(list.id)}/order`, "PUT", { ids }, "Đã sắp xếp mục checklist.");
+    mutate(`${base}/checklists/${encodeURIComponent(list.id)}/order`, "PUT", { ids, expectedRevision }, "Đã sắp xếp mục checklist.");
   }
 
   return (
@@ -107,25 +107,25 @@ export default function TaskChecklists({ base, checklists = [], members = [], wr
                 {editingList?.id === list.id ? (
                   <form className="td-tasklist-rename" onSubmit={(event) => {
                     event.preventDefault();
-                    mutate(listPath, "PATCH", { title: editingList.title }, "Đã đổi tên checklist.", () => setEditingList(null));
+                    mutate(listPath, "PATCH", { title: editingList.title, expectedRevision: editingList.revision }, "Đã đổi tên checklist.", () => setEditingList(null));
                   }}>
-                    <input aria-label="Tên checklist mới" autoFocus required maxLength={240} value={editingList.title} disabled={disabled} onChange={(event) => setEditingList({ id: list.id, title: event.target.value })} onKeyDown={(event) => { if (event.key === "Escape") setEditingList(null); }} />
+                    <input aria-label="Tên checklist mới" autoFocus required maxLength={240} value={editingList.title} disabled={disabled} onChange={(event) => setEditingList({ ...editingList, title: event.target.value })} onKeyDown={(event) => { if (event.key === "Escape") setEditingList(null); }} />
                   </form>
                 ) : <h3>{list.title}</h3>}
                 <span>{done}/{list.items.length}</span>
                 {writable && <>
                   <button type="button" className="td-tasklist-icon" aria-label={`Đưa checklist ${list.title} lên trên`} disabled={disabled || index === 0} onClick={() => moveLists(index, -1)}><ChevronUp size={15} /></button>
                   <button type="button" className="td-tasklist-icon" aria-label={`Đưa checklist ${list.title} xuống dưới`} disabled={disabled || index === checklists.length - 1} onClick={() => moveLists(index, 1)}><ChevronDown size={15} /></button>
-                  <button type="button" className="td-tasklist-icon" aria-label={`Đổi tên checklist ${list.title}`} disabled={disabled} onClick={() => setEditingList({ id: list.id, title: list.title })}><Pencil size={14} /></button>
+                  <button type="button" className="td-tasklist-icon" aria-label={`Đổi tên checklist ${list.title}`} disabled={disabled} onClick={() => setEditingList({ id: list.id, title: list.title, revision: taskRevision })}><Pencil size={14} /></button>
                   <button type="button" className="td-tasklist-icon" aria-label={`Sao chép checklist ${list.title}`} disabled={disabled} onClick={() => mutate(`${listPath}/copy`, "POST", {}, "Đã sao chép checklist.")}><Copy size={14} /></button>
-                  <button type="button" className="td-tasklist-icon danger" aria-label={`Xóa checklist ${list.title}`} disabled={disabled} onClick={() => setConfirm({ id: list.id, title: list.title })}><Trash2 size={14} /></button>
+                  <button type="button" className="td-tasklist-icon danger" aria-label={`Xóa checklist ${list.title}`} disabled={disabled} onClick={() => setConfirm({ id: list.id, title: list.title, revision: taskRevision })}><Trash2 size={14} /></button>
                 </>}
               </div>
               {confirm?.id === list.id && (
                 <div className="td-tasklist-confirm" role="region" aria-label="Xác nhận xóa checklist">
                   <p>Xóa checklist “{confirm.title}” và các mục bên trong?</p>
                   <button type="button" className="button secondary" disabled={disabled} onClick={() => setConfirm(null)}>Hủy</button>
-                  <button type="button" className="button td-danger" disabled={disabled} onClick={() => mutate(listPath, "DELETE", undefined, "Đã xóa checklist.", () => setConfirm(null))}>Xóa</button>
+                  <button type="button" className="button td-danger" disabled={disabled} onClick={() => mutate(listPath, "DELETE", { expectedRevision: confirm.revision }, "Đã xóa checklist.", () => setConfirm(null))}>Xóa</button>
                 </div>
               )}
               {list.items.length > 0 && (
@@ -156,7 +156,7 @@ export default function TaskChecklists({ base, checklists = [], members = [], wr
                         draggedRef.current = null;
                         setDropBefore(null);
                         if (!active || active.listId !== list.id) return;
-                        moveItems(list, active.itemId, item.id);
+                        moveItems(list, active.itemId, item.id, active.revision);
                       }}
                     >
                       <div className="td-tasklist-main">
@@ -171,7 +171,7 @@ export default function TaskChecklists({ base, checklists = [], members = [], wr
                             if (!writable || disabled) { event.preventDefault(); return; }
                             event.stopPropagation();
                             event.dataTransfer.effectAllowed = "move";
-                            draggedRef.current = { listId: list.id, itemId: item.id };
+                            draggedRef.current = { listId: list.id, itemId: item.id, revision: taskRevision };
                           }}
                           onDragEnd={() => { draggedRef.current = null; setDropBefore(null); }}
                           onKeyDown={(event) => {
@@ -184,11 +184,11 @@ export default function TaskChecklists({ base, checklists = [], members = [], wr
                         </span>
                         <input type="checkbox" aria-label={`Hoàn thành ${item.title}`} checked={Boolean(item.completed)} disabled={disabled} onChange={(event) => mutate(itemPath, "PATCH", { completed: event.target.checked }, event.target.checked ? "Đã hoàn thành mục checklist." : "Đã mở lại mục checklist.")} />
                         {editingItem?.id === item.id ? (
-                          <form className="td-tasklist-rename" onSubmit={(event) => { event.preventDefault(); mutate(itemPath, "PATCH", { title: editingItem.title }, "Đã đổi tên mục checklist.", () => setEditingItem(null)); }}>
-                            <input aria-label="Tên mục checklist mới" autoFocus required maxLength={240} value={editingItem.title} disabled={disabled} onChange={(event) => setEditingItem({ id: item.id, title: event.target.value })} onKeyDown={(event) => { if (event.key === "Escape") setEditingItem(null); }} />
+                          <form className="td-tasklist-rename" onSubmit={(event) => { event.preventDefault(); mutate(itemPath, "PATCH", { title: editingItem.title, expectedRevision: editingItem.revision }, "Đã đổi tên mục checklist.", () => setEditingItem(null)); }}>
+                            <input aria-label="Tên mục checklist mới" autoFocus required maxLength={240} value={editingItem.title} disabled={disabled} onChange={(event) => setEditingItem({ ...editingItem, title: event.target.value })} onKeyDown={(event) => { if (event.key === "Escape") setEditingItem(null); }} />
                           </form>
                         ) : writable ? (
-                          <button type="button" className="td-tasklist-title" disabled={disabled} onClick={() => setEditingItem({ id: item.id, title: item.title })}>{item.title}</button>
+                          <button type="button" className="td-tasklist-title" disabled={disabled} onClick={() => setEditingItem({ id: item.id, title: item.title, revision: taskRevision })}>{item.title}</button>
                         ) : <span className="td-tasklist-title">{item.title}</span>}
                       </div>
                       <div className="td-tasklist-meta">
@@ -266,9 +266,9 @@ export default function TaskChecklists({ base, checklists = [], members = [], wr
               {writable && (
                 <form className="td-tasklist-add" onSubmit={(event) => {
                   event.preventDefault();
-                  mutate(`${listPath}/items`, "POST", { title: itemDrafts[list.id] || "" }, "Đã thêm mục checklist.", () => setItemDrafts((current) => ({ ...current, [list.id]: "" })));
+                  mutate(`${listPath}/items`, "POST", { title: itemDrafts[list.id] || "", expectedRevision: itemDraftRevisions.current[list.id] ?? taskRevision }, "Đã thêm mục checklist.", () => setItemDrafts((current) => ({ ...current, [list.id]: "" })));
                 }}>
-                  <input aria-label={`Mục mới trong ${list.title}`} placeholder="Thêm một mục..." required maxLength={240} disabled={disabled} value={itemDrafts[list.id] || ""} onChange={(event) => setItemDrafts({ ...itemDrafts, [list.id]: event.target.value })} />
+                  <input aria-label={`Mục mới trong ${list.title}`} placeholder="Thêm một mục..." required maxLength={240} disabled={disabled} value={itemDrafts[list.id] || ""} onChange={(event) => { if (!itemDrafts[list.id]) itemDraftRevisions.current[list.id] = taskRevision; setItemDrafts({ ...itemDrafts, [list.id]: event.target.value }); }} />
                   <button className="button secondary" disabled={disabled || !itemDrafts[list.id]?.trim()}>Thêm</button>
                 </form>
               )}
@@ -279,9 +279,9 @@ export default function TaskChecklists({ base, checklists = [], members = [], wr
       {writable && (
         <form className="td-tasklist-add td-tasklist-new" onSubmit={(event) => {
           event.preventDefault();
-          mutate(`${base}/checklists`, "POST", { title: newTitle }, "Đã thêm checklist.", () => setNewTitle(""));
+          mutate(`${base}/checklists`, "POST", { title: newTitle, expectedRevision: newTitleRevision.current ?? taskRevision }, "Đã thêm checklist.", () => setNewTitle(""));
         }}>
-          <input aria-label="Tên checklist mới" placeholder="Tên checklist mới..." required maxLength={240} disabled={disabled} value={newTitle} onChange={(event) => setNewTitle(event.target.value)} />
+          <input aria-label="Tên checklist mới" placeholder="Tên checklist mới..." required maxLength={240} disabled={disabled} value={newTitle} onChange={(event) => { if (!newTitle) newTitleRevision.current = taskRevision; setNewTitle(event.target.value); }} />
           <button className="button secondary" disabled={disabled || !newTitle.trim()}><Plus size={15} />Thêm checklist</button>
         </form>
       )}

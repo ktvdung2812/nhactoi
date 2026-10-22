@@ -1,5 +1,6 @@
 import { createHmac, randomInt } from "node:crypto";
 import { hashPassword, safeEqualText } from "./auth.mjs";
+import { invalidateSessions } from './restore-safety.mjs';
 
 // Persist limits so restarting the server or changing IP cannot reset the
 // per-address send limit or the number of guesses for a recovery code.
@@ -18,16 +19,17 @@ export function authRequestLimiter({ db, clock, settingsKey, withTransaction, Ht
       withTransaction(db, () => {
         db.prepare("DELETE FROM auth_request_limits WHERE expires_at <= ?").run(now);
         for (const bucket of buckets) {
-          const current = db.prepare("SELECT * FROM auth_request_limits WHERE bucket = ?").get(bucket.key);
-          if (current && current.count >= bucket.limit) {
+          // Claim the attempt atomically across API processes. A rejected
+          // bucket rolls back every earlier claim in this transaction.
+          const claimed = db.prepare(`INSERT INTO auth_request_limits(bucket, expires_at, count) VALUES (?, ?, 1)
+            ON CONFLICT(bucket) DO UPDATE SET count = auth_request_limits.count + 1
+              WHERE auth_request_limits.count < ?
+            RETURNING expires_at`).get(bucket.key, now + bucket.windowMs, bucket.limit);
+          if (!claimed) {
+            const current = db.prepare("SELECT expires_at FROM auth_request_limits WHERE bucket = ?").get(bucket.key);
             res.set("Retry-After", String(Math.ceil((current.expires_at - now) / 1000)));
             throw new HttpError(429, "Bạn đã thử quá nhiều lần. Vui lòng chờ rồi thử lại.");
           }
-        }
-        for (const bucket of buckets) {
-          db.prepare(`INSERT INTO auth_request_limits(bucket, expires_at, count) VALUES (?, ?, 1)
-            ON CONFLICT(bucket) DO UPDATE SET count = auth_request_limits.count + 1`)
-            .run(bucket.key, now + bucket.windowMs);
         }
       });
       next();
@@ -107,7 +109,11 @@ export function registerPasswordResetRoutes(app, {
         }
         db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(password), row.user_id);
         db.prepare("DELETE FROM password_reset_codes WHERE user_id = ?").run(row.user_id);
-        db.prepare("DELETE FROM sessions WHERE user_id = ?").run(row.user_id);
+        invalidateSessions(db, { userId: row.user_id });
+        // Recovery proves mailbox ownership, unlike registration or a prior
+        // password session. Revoke any Google identity linked before recovery.
+        db.prepare("DELETE FROM google_identities WHERE user_id = ?").run(row.user_id);
+        db.prepare("DELETE FROM google_oauth_states WHERE user_id = ?").run(row.user_id);
         return true;
       });
       if (!changed) throw new HttpError(400, invalid);

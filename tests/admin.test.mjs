@@ -46,6 +46,9 @@ async function request(base, path, { method = "GET", body, cookie } = {}) {
   const response = await fetch(`${base}${path}`, {
     method,
     headers: {
+      // Synchronous fixture seeding blocks this same client/server event loop;
+      // do not reuse an idle socket whose keep-alive timer expired meanwhile.
+      connection: "close",
       ...(body === undefined ? {} : { "content-type": "application/json" }),
       ...(cookie ? { cookie } : {}),
     },

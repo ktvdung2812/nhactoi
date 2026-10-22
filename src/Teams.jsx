@@ -1,3 +1,4 @@
+import { useGuardedApi, staleRequest } from './useGuardedApi.js';
 import { ReminderPolicy } from "./ReminderSettings.jsx";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -465,7 +466,7 @@ function ArchiveDialog({ team, pending, error, onConfirm, onClose }) {
 }
 
 export default function Teams({
-  api,
+  api: request,
   go,
   me,
   members = [],
@@ -477,7 +478,7 @@ export default function Teams({
   selectedTaskId = null,
   onTaskMove,
   onTaskTrash,
-  openTasks = [],
+  memberTaskCounts = [],
   onInvite,
   invitation,
 }) {
@@ -490,11 +491,14 @@ export default function Teams({
   const [filter, setFilter] = useState("active");
   const [detailTab, setDetailTab] = useState("board");
   const [taskView, setTaskView] = useState("board");
+  const [taskPaging,setTaskPaging] = useState({teamId,page:1});
+  const taskPage=taskPaging.teamId===teamId?taskPaging.page:1;
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState(EMPTY_TEAM_FORM);
   const [roster, setRoster] = useState([]);
   const [formError, setFormError] = useState("");
   const [pending, setPending] = useState(false);
+  const [api,isCurrent]=useGuardedApi(request,error=>{setDetail(null);setTeams([]);setModal(null);setRoster([]);setForm(EMPTY_TEAM_FORM);setError(error.message);},`${me?.workspace?.id}:${teamId||''}`);
   const dialogRef = useRef(null);
   const focusReturnRef = useRef(null);
   const pendingRef = useRef(false);
@@ -521,31 +525,12 @@ export default function Teams({
     return [...byId.values()].sort((left, right) => memberName(left).localeCompare(memberName(right), "vi"));
   }, [members, detail?.members, currentUserId, me?.user, workspaceRole]);
 
-  const loadData = async () => {
-    setLoading(true);
-    setError("");
-    setDetail(null);
-    try {
-      if (teamId) {
-        const result = await api(`/teams/${encodeURIComponent(teamId)}`);
-        setDetail(result);
-      } else {
-        const result = await api("/teams");
-        setTeams(Array.isArray(result?.teams) ? result.teams : []);
-      }
-    } catch (loadError) {
-      setError(loadError?.message || "Không thể tải dữ liệu team.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  useEffect(()=>{setDetail(null);setModal(null);setRoster([]);setPending(false);},[api]);
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError("");
-    setDetail(null);
-    const path = teamId ? `/teams/${encodeURIComponent(teamId)}` : "/teams";
+    const path = teamId ? `/teams/${encodeURIComponent(teamId)}?page=${taskPage}&pageSize=50` : "/teams";
     api(path)
       .then(result => {
         if (cancelled) return;
@@ -553,7 +538,7 @@ export default function Teams({
         else setTeams(Array.isArray(result?.teams) ? result.teams : []);
       })
       .catch(loadError => {
-        if (!cancelled) setError(loadError?.message || "Không thể tải dữ liệu team.");
+        if (!cancelled&&!staleRequest(loadError)) { setError(loadError?.message || "Không thể tải dữ liệu team."); if(teamId)setDetail(null);else setTeams([]); }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -561,7 +546,7 @@ export default function Teams({
     return () => {
       cancelled = true;
     };
-  }, [api, teamId, revision, retryCount]);
+  }, [api, teamId, revision, retryCount, taskPage]);
 
   useEffect(() => {
     if (!modal) return undefined;
@@ -636,6 +621,7 @@ export default function Teams({
         // The local reload below still gives this surface a consistent state.
       }
     }
+    if(!isCurrent())return;
     setModal(null);
     setFormError("");
     setRetryCount(value => value + 1);
@@ -663,17 +649,19 @@ export default function Teams({
       if (modal.kind === "create") {
         payload.members = roster.map(row => ({ userId: row.userId, role: normalizeRole(row.role) }));
       }
-      const result = await api(modal.kind === "create" ? "/teams" : `/teams/${encodeURIComponent(detail?.team?.id || teamId)}`, {
+      const result = await api(modal.kind === "create" ? "/teams?tasks=none" : `/teams/${encodeURIComponent(detail?.team?.id || teamId)}?tasks=none`, {
         method: modal.kind === "create" ? "POST" : "PATCH",
         body: JSON.stringify(payload),
       });
       const createdId = result?.team?.id || result?.id;
       await finishMutation();
+      if(!isCurrent())return;
       if (modal.kind === "create" && createdId) go(`teams/${encodeURIComponent(createdId)}`);
     } catch (mutationError) {
+      if(staleRequest(mutationError))return;
       setFormError(mutationError?.message || "Không thể lưu team.");
     } finally {
-      setPending(false);
+      if(isCurrent())setPending(false);
     }
   }
 
@@ -700,15 +688,16 @@ export default function Teams({
     setPending(true);
     setFormError("");
     try {
-      await api(`/teams/${encodeURIComponent(detail.team.id)}/members`, {
+      await api(`/teams/${encodeURIComponent(detail.team.id)}/members?tasks=none`, {
         method: "PUT",
         body: JSON.stringify({ members: roster.map(row => ({ userId: row.userId, role: normalizeRole(row.role) })) }),
       });
       await finishMutation();
     } catch (mutationError) {
+      if(staleRequest(mutationError))return;
       setFormError(mutationError?.message || "Không thể cập nhật thành viên team.");
     } finally {
-      setPending(false);
+      if(isCurrent())setPending(false);
     }
   }
 
@@ -717,15 +706,16 @@ export default function Teams({
     setPending(true);
     setFormError("");
     try {
-      await api(`/teams/${encodeURIComponent(detail.team.id)}`, {
+      await api(`/teams/${encodeURIComponent(detail.team.id)}?tasks=none`, {
         method: "PATCH",
         body: JSON.stringify({ archived }),
       });
       await finishMutation();
     } catch (mutationError) {
+      if(staleRequest(mutationError))return;
       setFormError(mutationError?.message || "Không thể cập nhật trạng thái team.");
     } finally {
-      setPending(false);
+      if(isCurrent())setPending(false);
     }
   }
 
@@ -836,7 +826,7 @@ export default function Teams({
     );
   }
 
-  if (loading) {
+  if (loading && (!teamId || detail?.team?.id!==teamId)) {
     return <div className="teams-page"><div className="teams-loading"><LoaderCircle className="teams-spin" size={22} /><span>Đang tải dữ liệu team…</span></div></div>;
   }
 
@@ -854,9 +844,9 @@ export default function Teams({
   }
 
   if (teamId) {
-    if (!activeTeam) return null;
-    const openTaskCount = detailTasks.filter(task => task.status !== "done").length;
-    const completedTaskCount = detailTasks.filter(task => task.status === "done").length;
+    if (!activeTeam || activeTeam.id!==teamId) return null;
+    const openTaskCount = activeTeam.openTaskCount;
+    const completedTaskCount = activeTeam.completedTaskCount;
     const activeModalKind = modal?.kind;
     const dialog = activeModalKind === "edit" ? (
       <ModalShell title="Chỉnh sửa thông tin team" description="Cập nhật tên, mô tả và màu nhận diện." onClose={closeDialog} dialogRef={dialogRef}>
@@ -897,14 +887,16 @@ export default function Teams({
         </div>
         <ReminderPolicy key={activeTeam.id} api={api} teamId={activeTeam.id} readOnly={Boolean(activeTeam.archivedAt || me?.workspace?.suspendedAt)} />
         <div className="teams-detail-tabs" role="tablist" aria-label="Nội dung team">
-          <button type="button" role="tab" aria-selected={detailTab === "board"} className={detailTab === "board" ? "active" : ""} onClick={() => setDetailTab("board")}><LayoutGrid size={16} /> Bảng công việc <span>{detailTasks.length}</span></button>
+          <button type="button" role="tab" aria-selected={detailTab === "board"} className={detailTab === "board" ? "active" : ""} onClick={() => setDetailTab("board")}><LayoutGrid size={16} /> Bảng công việc <span>{activeTeam.taskCount}</span></button>
           <button type="button" role="tab" aria-selected={detailTab === "members"} className={detailTab === "members" ? "active" : ""} onClick={() => setDetailTab("members")}><UsersRound size={16} /> Thành viên <span>{detailMembers.length}</span></button>
         </div>
         {detailTab === "board" ? (
           <section className="teams-board-section" aria-label="Bảng công việc">
             <div className="teams-section-toolbar"><div><span className="teams-eyebrow">TIẾN ĐỘ TEAM</span><h2>Công việc của {activeTeam.name}</h2></div><div className="teams-toolbar-actions"><div className="teams-view-toggle" role="group" aria-label="Kiểu hiển thị"><button type="button" className={taskView === "board" ? "active" : ""} onClick={() => setTaskView("board")} aria-label="Hiển thị Kanban"><LayoutGrid size={16} /></button><button type="button" className={taskView === "list" ? "active" : ""} onClick={() => setTaskView("list")} aria-label="Hiển thị danh sách"><List size={16} /></button></div>{!activeTeam.archivedAt && <button type="button" className="teams-button primary" onClick={() => onTaskCreate?.(activeTeam.id, "todo")}><Plus size={16} /> Tạo công việc</button>}</div></div>
             {activeTeam.archivedAt && <div className="teams-readonly-banner"><Archive size={16} /><span>Team đã lưu trữ. Bạn vẫn có thể xem lịch sử công việc; khôi phục team để tiếp tục cập nhật.</span></div>}
+            {error && <p role="alert">{error} <button onClick={()=>setRetryCount(n=>n+1)}>Thử lại</button></p>}
             {taskView === "board" ? renderBoard() : renderTaskList()}
+            {detail.taskPage && <nav className="task-pagination" aria-label="Phân trang công việc team"><button disabled={loading||taskPage===1} onClick={()=>setTaskPaging({teamId,page:taskPage-1})}>Trang trước</button><span role="status">{loading?"Đang tải…":`Trang ${detail.taskPage.page} · ${detail.taskPage.total} công việc. Bảng chỉ hiển thị trang này.`}</span><button disabled={loading||!detail.taskPage.hasMore} onClick={()=>setTaskPaging({teamId,page:taskPage+1})}>Trang tiếp</button></nav>}
           </section>
         ) : (
           <section className="teams-members-section"><div className="teams-section-toolbar"><div><span className="teams-eyebrow">CỘNG TÁC</span><h2>Những người trong team</h2></div>{canEditTeam && !activeTeam.archivedAt && <button type="button" className="teams-button primary" onClick={event => openDialog("members", {}, event)}><UserPlus size={16} /> Quản lý thành viên</button>}</div><div className="teams-members-grid">{detailMembers.length ? detailMembers.map(member => <article className="teams-member-card" key={member.id}><TeamAvatar member={member} size="large" /><div><strong>{memberName(member)}</strong><span>{member.email || "Thành viên doanh nghiệp"}</span></div><RoleBadge role={member.role} /></article>) : <EmptyState icon={UsersRound} title="Chưa có thành viên" description="Thêm thành viên để team có thể cùng cộng tác." />}</div></section>
@@ -940,7 +932,7 @@ export default function Teams({
               <div>
                 <strong>{member.name}{member.id === me?.user?.id ? " (Bạn)" : ""}</strong>
                 <span>{member.email}</span>
-                <span>{openTasks.filter(task => task.assigneeId === member.id).length} việc đang mở</span>
+                <span>{memberTaskCounts.find(item => item.id === member.id)?.open || 0} việc đang mở</span>
                 <span>Vai trò: {member.role === "owner" ? "Chủ không gian" : member.role === "admin" ? "Quản trị viên" : "Thành viên"}</span>
               </div>
             </article>

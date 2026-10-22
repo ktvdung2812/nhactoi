@@ -1,3 +1,5 @@
+import { validAssigneeId, taskScopeLinkConflict } from './task-extras.mjs';
+import { canAccessTask } from './task-access.mjs';
 import { createId } from "./auth.mjs";
 import {
   cleanupAttachmentRows,
@@ -110,19 +112,7 @@ function sourceRow(db, item) {
 }
 
 function taskVisibleToMember(db, task, userId) {
-  if (!task) return false;
-  if (!task.team_id) return true;
-  if (task.team_archived) return false;
-  return Boolean(
-    db
-      .prepare(
-        `
-          SELECT 1 FROM team_members
-          WHERE team_id = ? AND workspace_id = ? AND user_id = ?
-        `,
-      )
-      .get(task.team_id, task.workspace_id, userId),
-  );
+  return Boolean(task && canAccessTask(db, task.workspace_id, userId, task, { action: 'delete' }));
 }
 
 function isWorkspaceAdmin(auth) {
@@ -154,12 +144,36 @@ function customerAvailable(db, workspaceId, customerId, pendingCustomerIds) {
   );
 }
 
+function taskAssigneeIds(db, task) {
+  const ids = new Set();
+  if (task.assignee_id) ids.add(task.assignee_id);
+  for (const row of db
+    .prepare(
+      `SELECT user_id FROM task_assignees
+       WHERE task_id = ?
+       UNION
+       SELECT a.user_id FROM task_checklist_assignees a
+       JOIN task_checklist_items i ON i.id = a.item_id
+       JOIN task_checklists c ON c.id = i.checklist_id
+       WHERE c.task_id = ? AND i.completed = 0`,
+    )
+    .all(task.id, task.id)) {
+    if (row.user_id) ids.add(row.user_id);
+  }
+  return ids;
+}
+
 function restoreBlockedReason(db, item, source, { pendingCustomerIds = new Set() } = {}) {
   if (!source) return "bản ghi không còn tồn tại";
   if (source.deleted_at === null || source.deleted_at === undefined)
     return "bản ghi đã được khôi phục";
 
   if (item.entity_type === "task") {
+    if (db.dialect === 'postgres') {
+      const project = db.prepare('SELECT archived_at FROM projects WHERE id=? AND workspace_id=?').get(source.project_id, source.workspace_id);
+      if (!project) return "dự án không còn tồn tại";
+      if (project.archived_at) return "dự án đã lưu trữ";
+    }
     if (source.team_id) {
       const team = db
         .prepare(
@@ -171,30 +185,15 @@ function restoreBlockedReason(db, item, source, { pendingCustomerIds = new Set()
     }
 
     // Completed tasks are historical records. Open tasks must still point to
-    // a current workspace member and, when assigned to a team, a current team
-    // member so the restored task is actionable.
-    if (source.status !== "done" && source.assignee_id) {
-      const workspaceMember = db
-        .prepare(
-          `
-            SELECT 1 FROM workspace_members
-            WHERE workspace_id = ? AND user_id = ?
-          `,
-        )
-        .get(source.workspace_id, source.assignee_id);
-      if (!workspaceMember) return "người được giao không còn là thành viên workspace";
-      if (
-        source.team_id &&
-        !db
-          .prepare(
-            `
-              SELECT 1 FROM team_members
-              WHERE team_id = ? AND workspace_id = ? AND user_id = ?
-            `,
-          )
-          .get(source.team_id, source.workspace_id, source.assignee_id)
-      )
-        return "người được giao không còn thuộc đội nhóm";
+    // a current workspace member with project access (or legacy team access)
+    // so the restored task is actionable.
+    if (source.status !== "done") {
+      const linkConflict = taskScopeLinkConflict(db, source, source.project_id, { completedChecklistIsHistory: true });
+      if (linkConflict) return linkConflict;
+      for (const assigneeId of taskAssigneeIds(db, source)) {
+        if (!validAssigneeId(db, source.workspace_id, source.team_id, assigneeId, source.project_id))
+          return "người được giao không còn có quyền trong phạm vi công việc";
+      }
     }
     if (
       source.customer_id &&

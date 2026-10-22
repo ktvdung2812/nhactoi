@@ -6,6 +6,7 @@ import "../src/styles.css";
 // Keep the legacy entrypoint's cascade order: design-system.css was imported
 // after the application stylesheet from src/main.jsx.
 import "../src/design-system.css";
+import "../src/feature-kit.css";
 import ClientApp from "./client-app.jsx";
 
 export const metadata = {

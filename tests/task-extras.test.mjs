@@ -153,3 +153,25 @@ test("task copy omits attachments, comments, and the source activity history", a
     1,
   );
 });
+
+// TC-W0-T03-B: copy keeps recurrence and checklist relationships under new IDs.
+test("task copy preserves checklist order and recurrence without sharing source identities", async t => {
+  const server = await boot(t), owner = await user(server, "copy-recurring@example.test"), outsider = await user(server, "copy-outsider@example.test");
+  const source = await task(server, owner, "Recurring checklist");
+  const options = { interval: 2, weekdays: [1, 5], basis: "due" };
+  assert.equal((await call(server, `/tasks/${source.id}`, { cookie: owner.cookie, method: "PATCH", body: { recurrence: "weekly", recurrenceOptions: options } })).status, 200);
+  const list = await call(server, `/tasks/${source.id}/checklists`, { cookie: owner.cookie, method: "POST", body: { title: "Ordered checklist" } });
+  const first = await call(server, `/tasks/${source.id}/checklists/${list.body.checklist.id}/items`, { cookie: owner.cookie, method: "POST", body: { title: "First" } });
+  const second = await call(server, `/tasks/${source.id}/checklists/${list.body.checklist.id}/items`, { cookie: owner.cookie, method: "POST", body: { title: "Second" } });
+  assert.equal((await call(server, `/tasks/${source.id}/copy`, { cookie: outsider.cookie, method: "POST", body: { dueAt: source.dueAt } })).status, 404);
+  const copied = await call(server, `/tasks/${source.id}/copy`, { cookie: owner.cookie, method: "POST", body: { dueAt: "2030-05-01T10:00:00Z" } });
+  assert.equal(copied.status, 201, JSON.stringify(copied.body));
+  assert.notEqual(copied.body.task.id, source.id);
+  const detail = (await call(server, `/tasks/${copied.body.task.id}/detail`, { cookie: owner.cookie })).body;
+  assert.equal(detail.task.recurrence, "weekly");
+  assert.deepEqual(detail.task.recurrenceOptions, options);
+  assert.equal(detail.checklists.length, 1);
+  assert.notEqual(detail.checklists[0].id, list.body.checklist.id);
+  assert.deepEqual(detail.checklists[0].items.map(item => item.title), ["First", "Second"]);
+  assert.ok(detail.checklists[0].items.every(item => ![first.body.item.id, second.body.item.id].includes(item.id)));
+});

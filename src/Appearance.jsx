@@ -19,6 +19,8 @@ const NAV_LABELS = {
   customers: 'Khách hàng',
   services: 'Quản lý gia hạn',
   finance: 'Thu & chi',
+  templates: 'Mẫu công việc',
+  automations: 'Tự động hóa',
   transfer: 'Nhập / xuất bảng',
   tickets: 'Hỗ trợ',
   trash: 'Thùng rác',

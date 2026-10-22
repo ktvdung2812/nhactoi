@@ -36,10 +36,10 @@ export async function pickFiles(maxMb: number, multiple = false) {
       await FileSystem.deleteAsync(f.uri, { idempotent: true });
     throw new ApiError(499, "Phiên làm việc đã thay đổi.");
   }
-  if (result.assets.length > 10)
-    throw new Error("Mỗi bình luận tối đa 10 tệp.");
-  if (result.assets.some((f) => !f.size || f.size > maxMb * 1024 * 1024))
-    throw new Error(`Chọn tệp có dữ liệu, tối đa ${maxMb} MB/tệp.`);
+  if (result.assets.length > 10 || result.assets.some((f) => !f.size || f.size > maxMb * 1024 * 1024)) {
+    await Promise.all(result.assets.map(f => FileSystem.deleteAsync(f.uri, { idempotent: true })));
+    throw new Error(result.assets.length > 10 ? 'Mỗi lần tối đa 10 tệp.' : `Chọn tệp có dữ liệu, tối đa ${maxMb} MB/tệp.`);
+  }
   return result.assets;
 }
 export async function uploadFile(
@@ -124,5 +124,35 @@ export async function openAttachment(
   } finally {
     transfers.delete(transfer);
     await FileSystem.deleteAsync(destination, { idempotent: true });
+  }
+}
+
+// Reuse the authenticated session's temporary-file lifecycle for user exports.
+export async function shareGeneratedText(name: string, content: string, mimeType = 'text/csv') {
+  const version = generation;
+  await cleanup;
+  if (version !== generation) throw new ApiError(499, 'Phiên làm việc đã thay đổi.');
+  const directory = `${FileSystem.cacheDirectory}nhactoi-downloads/`;
+  const destination = directory + Date.now() + '-' + name.replace(/[^\p{L}\p{N}._ -]/gu, '_').slice(0, 120);
+  try {
+    await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
+    await FileSystem.writeAsStringAsync(destination, content);
+    if (version !== generation) throw new ApiError(499, 'Phiên làm việc đã thay đổi.');
+    await Sharing.shareAsync(destination, { mimeType, dialogTitle: name });
+  } finally {
+    await FileSystem.deleteAsync(destination, { idempotent: true });
+  }
+}
+
+export async function pickTextFile(maxBytes: number): Promise<{ name: string; content: string } | null> {
+  const version = generation;
+  const [file] = await pickFiles(maxBytes / (1024 * 1024));
+  if (!file) return null;
+  try {
+    const content = await FileSystem.readAsStringAsync(file.uri, { encoding: FileSystem.EncodingType.UTF8 });
+    if (version !== generation) throw new ApiError(499, 'Phiên làm việc đã thay đổi.');
+    return { name: file.name, content };
+  } finally {
+    await FileSystem.deleteAsync(file.uri, { idempotent: true });
   }
 }

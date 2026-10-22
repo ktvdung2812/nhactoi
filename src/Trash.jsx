@@ -1,3 +1,4 @@
+import { useTaskMutation } from './useTaskMutation.js';
 import React, { useEffect, useId, useRef, useState } from "react";
 import { Trash2, RotateCcw, Search, RefreshCw, Eye, X, ChevronLeft, ChevronRight, ShieldCheck, Inbox } from "lucide-react";
 import ActionMenu from "./ActionMenu.jsx";
@@ -41,14 +42,15 @@ function TrashDialog({ title, busy, onClose, children }) {
   </div>;
 }
 
-export function MoveToTrashDialog({ target, api, onClose, onMoved }) {
+export function MoveToTrashDialog({ target, api: request, onClose, onMoved }) {
+  const api = useTaskMutation(request, target);
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
   const pending = useRef(false);
   async function submit() {
     if (pending.current) return;
     pending.current = true; setBusy(true); setError("");
     try {
-      await api(`/${paths[target.entityType]}/${encodeURIComponent(target.item.id)}`, { method: "DELETE" });
+      await api(`/${paths[target.entityType]}/${encodeURIComponent(target.item.id)}`, { method: "DELETE", ...(target.entityType === "task" ? { body: JSON.stringify({ expectedRevision: target.item.revision }) } : {}) });
     } catch (err) { setError(err.message); pending.current = false; setBusy(false); return; }
     pending.current = false; setBusy(false); onMoved();
   }

@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { inspectBackup } from '../server/backups.mjs';
 import { openDatabase } from '../server/db.mjs';
 import { importSnapshot, exportSnapshot } from '../server/database-snapshot.mjs';
+import { pauseRestoredSenders } from '../server/restore-safety.mjs';
 
 export async function restoreBackup({ db, dataDir, backupId }) {
   const storagePath = join(resolve(dataDir), 'storage');
@@ -29,7 +30,10 @@ export async function restoreBackup({ db, dataDir, backupId }) {
         const result = target.prepare("UPDATE task_attachments SET storage_root=?,storage_key=? WHERE id=? AND kind='file'").run(fileRoot, entry.file.slice(6), entry.id);
         if (result.changes !== 1) throw new Error('Bản sao không khớp tệp đính kèm');
       }
-      target.exec("DELETE FROM sessions; DELETE FROM password_reset_codes; DELETE FROM google_oauth_states; DELETE FROM app_settings WHERE key='backupSchedule'");
+      // Expire sessions without cascading away device delivery history before
+      // operators have reconciled it. Restored session tokens cannot log in.
+      target.exec("UPDATE sessions SET expires_at='1970-01-01T00:00:00.000Z'; DELETE FROM password_reset_codes; DELETE FROM google_oauth_states; DELETE FROM app_settings WHERE key='backupSchedule'");
+      pauseRestoredSenders(target, backupId, new Date().toISOString());
     } });
     return previous;
   } catch (error) { rmSync(fileRoot, { recursive: true, force: true }); throw error; }
@@ -44,7 +48,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     const db = openDatabase(undefined, { bootstrapAdmin: false });
     try {
       const previous = await restoreBackup({ db, dataDir: process.env.NHACTOI_DATA_DIR || 'data', backupId });
-      console.log(`Khôi phục hoàn tất. Bản trước khi khôi phục: ${previous}. Mọi tài khoản cần đăng nhập lại.`);
+      console.log(`Khôi phục hoàn tất. Bản trước khi khôi phục: ${previous}. Mọi tài khoản cần đăng nhập lại. Sender đang dừng; đối soát hàng đợi, khóa và môi trường đích trước khi chạy scripts/resume-senders.mjs.`);
     } finally { db.close(); }
   }
 }
