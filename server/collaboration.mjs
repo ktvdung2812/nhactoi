@@ -75,7 +75,9 @@ export function registerCollaborationRoutes(app, {db,clock,requireAuth,ensureWri
     const row=task(req);
     const reactions=db.prepare('SELECT r.comment_id,r.emoji,r.user_id FROM comment_reactions r JOIN task_comments c ON c.id=r.comment_id WHERE c.task_id=?').all(row.id);
     const comments=db.prepare('SELECT * FROM task_comments WHERE task_id=?').all(row.id).map(c=>({id:c.id,canEdit:c.author_type!=='assistant'&&editable(req,c),canDelete:editable(req,c),editedAt:c.edited_at,reactions:['👍','❤️','🎉','👀'].map(emoji=>({emoji,count:reactions.filter(r=>r.comment_id===c.id&&r.emoji===emoji).length,mine:reactions.some(r=>r.comment_id===c.id&&r.emoji===emoji&&r.user_id===req.auth.userId)}))}));
-    const members=boardMentionMembers(db,req.auth.workspaceId,row.project_id ? null : row.team_id).filter(member=>canAccessTask(db,req.auth.workspaceId,member.id,row));
+    // Guests only need names to mention someone; emails stay with members.
+    const guest=req.auth.memberType==='guest';
+    const members=boardMentionMembers(db,req.auth.workspaceId,row.project_id ? null : row.team_id).filter(member=>canAccessTask(db,req.auth.workspaceId,member.id,row)).map(member=>guest?{id:member.id,name:member.name}:member);
     res.json({watching:!!db.prepare('SELECT 1 FROM task_watchers WHERE task_id=? AND user_id=?').get(row.id,req.auth.userId),comments,members});
   }catch(e){next(e)}});
   app.put('/api/tasks/:id/watch',requireAuth,(req,res,next)=>{try{

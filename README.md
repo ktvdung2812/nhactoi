@@ -23,6 +23,8 @@ Tài khoản dữ liệu mẫu sau khi chạy `npm run seed`:
 | Quản trị viên | `an@nhactoi.local` | `NhacToi2026!` |
 | Thành viên | `minh@nhactoi.local` | `NhacToi2026!` |
 
+Nút đăng nhập nhanh bằng ba tài khoản mẫu (`/api/auth/dev-login`) chỉ bật khi `.env` có `NHACTOI_DEV_LOGIN=true` và `NODE_ENV` khác `production`; không đặt biến này trên máy chủ dùng chung hoặc công khai.
+
 Dữ liệu mẫu được tạo **chỉ khi chạy lệnh seed**, không tự tạo khi khởi động server. Seed không xóa dữ liệu có sẵn. Có thể đăng ký tài khoản riêng từ màn hình đăng nhập để tạo không gian trống, dùng thử 14 ngày. Không đưa dữ liệu mẫu lên môi trường phục vụ khách hàng thật.
 
 ## Chạy trực tiếp bằng Node

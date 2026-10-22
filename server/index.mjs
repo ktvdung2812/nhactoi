@@ -16,7 +16,7 @@ import { RECURRENCES as RECURRENCE_VALUES, nextTaskOccurrence } from "../shared/
 import { validateRecurrenceOptions, storedRecurrenceOptions } from "./recurrence.mjs";
 import { registerReminderRoutes, processWorkflowReminders, legacyReminderAllowed, processReminderEmails } from "./reminder-workflow.mjs";
 import { registerAppearanceRoutes } from "./appearance.mjs";
-import { seedDemo } from "./seed.mjs";
+import { DEMO_EMAILS, seedDemo } from "./seed.mjs";
 import { registerPersonalTaskRoutes } from "./personal-tasks.mjs";
 import { registerAiAssistantRoutes } from "./ai-assistant.mjs";
 import {registerTaskExtrasRoutes,extraAssigneeIds,reconcileTaskAssignees,copyRecurringExtras,taskScopeLinkConflict} from "./task-extras.mjs";
@@ -201,6 +201,10 @@ function configFrom(options = {}) {
     port: Number(env.PORT || 3000),
     host: String(env.HOST || "127.0.0.1"),
     nodeEnv: String(env.NODE_ENV || "development"),
+    // Passwordless demo login must be switched on explicitly, never in production.
+    devLoginEnabled:
+      String(env.NODE_ENV || "development") !== "production" &&
+      String(env.NHACTOI_DEV_LOGIN || "").toLowerCase() === "true",
     gatewayUrl,
     gatewayApiUrl,
     gatewayApiKey,
@@ -2643,6 +2647,7 @@ function createApp(options = {}) {
   // that hop so public clients cannot spoof IPs and all users do not share
   // the proxy's address for registration/recovery throttling.
   app.set("trust proxy", "loopback");
+  app.disable("x-powered-by");
   const mobilePushTransport =
     options.mobilePushTransport ||
     options.fcmTransport ||
@@ -2877,7 +2882,9 @@ function createApp(options = {}) {
 
   const limitAuthRequests = authRequestLimiter({ db, clock, settingsKey, withTransaction, HttpError });
   const limitLogin = [
-    limitAuthRequests("login", { ipLimit: 30, windowMs: 60_000 }),
+    // The per-email bucket spans IPs, so a distributed guesser gets at most
+    // 20 attempts per account every 15 minutes.
+    limitAuthRequests("login", { ipLimit: 30, windowMs: 60_000, emailLimits: [{ limit: 20, windowMs: 15 * 60_000 }] }),
     authRateLimiter({ db, clock, settingsKey }),
   ];
   registerMobileRoutes(app, {
@@ -3063,7 +3070,7 @@ function createApp(options = {}) {
 
   app.get("/api/auth/dev-accounts", (req, res, next) => {
     try {
-      if (config.nodeEnv === "production") {
+      if (!config.devLoginEnabled) {
         return res.json({ enabled: false, accounts: [] });
       }
       try {
@@ -3072,21 +3079,21 @@ function createApp(options = {}) {
       const accounts = [
         {
           name: "Lê Dũng",
-          email: "demo@nhactoi.local",
+          email: DEMO_EMAILS[0],
           role: "Chủ không gian",
           roleKey: "owner",
           badge: "Owner",
         },
         {
           name: "Nguyễn An",
-          email: "an@nhactoi.local",
+          email: DEMO_EMAILS[1],
           role: "Quản trị viên",
           roleKey: "admin",
           badge: "Admin",
         },
         {
           name: "Trần Minh",
-          email: "minh@nhactoi.local",
+          email: DEMO_EMAILS[2],
           role: "Thành viên",
           roleKey: "member",
           badge: "Member",
@@ -3103,10 +3110,13 @@ function createApp(options = {}) {
 
   app.post("/api/auth/dev-login", (req, res, next) => {
     try {
-      if (config.nodeEnv === "production") {
+      if (!config.devLoginEnabled) {
         return fail(res, 404, "not found");
       }
-      const email = emailValue(req.body?.email || "demo@nhactoi.local");
+      const email = emailValue(req.body?.email || DEMO_EMAILS[0]);
+      if (!DEMO_EMAILS.includes(email)) {
+        return fail(res, 404, "dev user not found");
+      }
       try {
         seedDemo({ db, clock });
       } catch {}
@@ -3555,6 +3565,8 @@ function createApp(options = {}) {
             .prepare("SELECT * FROM users WHERE id = ?")
             .get(req.params.id);
           if (!current) throw new HttpError(404, "Không tìm thấy người dùng");
+          if (Boolean(current.is_platform_admin) && current.id !== req.auth.userId)
+            throw new HttpError(403, "Không thể sửa hồ sơ admin SaaS khác; dùng CLI admin");
           const name =
             req.body?.name === undefined
               ? current.name
@@ -3582,6 +3594,13 @@ function createApp(options = {}) {
             email,
             current.id,
           );
+          // The old address may belong to someone else now; sign the account
+          // out everywhere except the admin's own current session.
+          if (email !== current.email)
+            invalidateSessions(db, {
+              userId: current.id,
+              ...(current.id === req.auth.userId ? { exceptId: req.auth.sessionId } : {}),
+            });
           writeAdminAudit(db, {
             actorUserId: req.auth.userId,
             action: "user.profile.update",

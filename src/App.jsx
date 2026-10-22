@@ -74,7 +74,7 @@ import ActionMenu from "./ActionMenu.jsx";
 import Trash, { MoveToTrashDialog } from "./Trash.jsx";
 import TaskDetail from "./TaskDetail.jsx";
 import CustomerDetail from "./CustomerDetail.jsx";
-import { readRoute } from "./routes.js";
+import { legacyHashTarget, readRoute } from "./routes.js";
 import { planningDay } from "../shared/personal-planning.mjs";
 import { useNow } from "./PlannerDashboard.jsx";
 import OperationsDashboard from "./OperationsDashboard.jsx";
@@ -140,11 +140,8 @@ const navSections = [
   },
 ];
 function migrateLegacyHashRoute() {
-  if (!["/", "/index.html"].includes(location.pathname)) return;
-  const legacy = location.hash.match(/^#\/(.+)$/)?.[1];
-  if (!legacy) return null;
-  const search = legacy.includes("?") ? "" : location.search;
-  return `/${legacy}${search}`;
+  if (!["/", "/index.html"].includes(location.pathname)) return null;
+  return legacyHashTarget(location.hash, location.search);
 }
 async function api(path, options = {}) {
   const r = await fetch(`/api${path}`, {

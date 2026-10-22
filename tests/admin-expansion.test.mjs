@@ -306,6 +306,49 @@ test("admin detail endpoints expose support and billing data without tenant oper
   );
 });
 
+test("admin profile edits cannot take over another SaaS admin and revoke changed-email sessions", async (t) => {
+  const server = await boot();
+  t.after(() => server.close());
+  const admin = await register(server, "profile-admin-a@example.test", "Admin A");
+  const other = await register(server, "profile-admin-b@example.test", "Admin B");
+  const member = await register(server, "profile-member@example.test", "Thành viên");
+  makePlatformAdmin(server, admin.json.user.id);
+  makePlatformAdmin(server, other.json.user.id);
+
+  const takeover = await request(server.base, `/api/admin/users/${other.json.user.id}/profile`, {
+    method: "PATCH",
+    cookie: admin.cookie,
+    body: { email: "attacker@example.test", reason: "Chiếm tài khoản" },
+  });
+  assert.equal(takeover.response.status, 403);
+  assert.equal(server.db.prepare("SELECT email FROM users WHERE id = ?").get(other.json.user.id).email, "profile-admin-b@example.test");
+  assert.equal((await request(server.base, "/api/me", { cookie: other.cookie })).response.status, 200);
+
+  const renameOnly = await request(server.base, `/api/admin/users/${member.json.user.id}/profile`, {
+    method: "PATCH",
+    cookie: admin.cookie,
+    body: { name: "Tên mới", reason: "Sửa tên" },
+  });
+  assert.equal(renameOnly.response.status, 200);
+  assert.equal((await request(server.base, "/api/me", { cookie: member.cookie })).response.status, 200);
+
+  const emailChange = await request(server.base, `/api/admin/users/${member.json.user.id}/profile`, {
+    method: "PATCH",
+    cookie: admin.cookie,
+    body: { email: "profile-member-new@example.test", reason: "Khách yêu cầu đổi email" },
+  });
+  assert.equal(emailChange.response.status, 200);
+  assert.equal((await request(server.base, "/api/me", { cookie: member.cookie })).response.status, 401);
+
+  const self = await request(server.base, `/api/admin/users/${admin.json.user.id}/profile`, {
+    method: "PATCH",
+    cookie: admin.cookie,
+    body: { email: "profile-admin-a2@example.test", reason: "Đổi email của chính mình" },
+  });
+  assert.equal(self.response.status, 200);
+  assert.equal((await request(server.base, "/api/me", { cookie: admin.cookie })).response.status, 200);
+});
+
 test("admin settings persist encrypted secrets, preserve quotes, and guard seats", async (t) => {
   const settingsKey = "admin-expansion-test-key";
   const server = await boot({

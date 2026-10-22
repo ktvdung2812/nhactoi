@@ -19,12 +19,35 @@ test("web/mobile logins share an IP limit across rotating emails and expire old 
   assert.equal((await login(s, "new-web@example.test")).status, 429);
   assert.equal((await login(s, "new-mobile@example.test", true)).status, 429);
   const buckets = s.db.prepare("SELECT bucket FROM auth_request_limits WHERE bucket LIKE 'login:%'").all();
-  assert.equal(buckets.length, 31);
+  // One IP bucket plus a per-email quota and a failure counter for each email.
+  assert.equal(buckets.length, 61);
   assert.ok(buckets.every(row => row.bucket.length < 100 && !row.bucket.includes("@")));
 
   now += 60_001;
   assert.equal((await login(s, "after-expiry@example.test", true)).status, 401);
-  assert.equal(s.db.prepare("SELECT COUNT(*) n FROM auth_request_limits WHERE bucket LIKE 'login:%'").get().n, 2);
+  // Minute buckets expired; the 15-minute per-email quotas remain.
+  assert.equal(s.db.prepare("SELECT COUNT(*) n FROM auth_request_limits WHERE bucket LIKE 'login:%'").get().n, 33);
+});
+
+test("one account accepts at most 20 login attempts per 15 minutes across rotating IPs", async t => {
+  let now = Date.parse("2026-10-01T00:00:00Z");
+  const s = await boot(t, { clock: () => new Date(now) });
+  const actor = await user(s, "spray-target@example.test");
+  // The test client is on loopback, the only trusted proxy hop.
+  const from = (ip, email, password, mobile = false) => fetch(`${s.base}/api${mobile ? "/mobile/auth/login" : "/auth/login"}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-forwarded-for": ip },
+    body: JSON.stringify({ email, password }),
+  });
+  for (let index = 0; index < 20; index++)
+    assert.equal((await from(`198.51.100.${index + 1}`, actor.user.email, "wrong-password", index % 2 === 1)).status, 401);
+  const blocked = await from("203.0.113.9", actor.user.email.toUpperCase(), "Password123!");
+  assert.equal(blocked.status, 429);
+  assert.ok(Number(blocked.headers.get("retry-after")) > 60);
+  assert.equal((await from("203.0.113.9", actor.user.email, "Password123!", true)).status, 429);
+  assert.equal((await from("203.0.113.9", "someone-else@example.test", "wrong-password")).status, 401);
+  now += 15 * 60_000 + 1;
+  assert.equal((await from("203.0.113.10", actor.user.email, "Password123!")).status, 200);
 });
 
 test("successful login resets account failures but does not reset the shared IP quota", async t => {

@@ -3,6 +3,8 @@ import { openDatabase, withTransaction } from "./db.mjs";
 import { createId, hashPassword } from "./auth.mjs";
 
 const DEMO_EMAIL = "demo@nhactoi.local";
+// Owner, admin and member of the demo workspace; the only dev-login accounts.
+export const DEMO_EMAILS = [DEMO_EMAIL, "an@nhactoi.local", "minh@nhactoi.local"];
 const DEMO_PASSWORD = "NhacToi2026!";
 
 function dateAt(base, days, hour = 9) {
@@ -50,7 +52,7 @@ export function seedDemo({
     ).run(
       adminId,
       "Nguyễn An",
-      "an@nhactoi.local",
+      DEMO_EMAILS[1],
       hashPassword("NhacToi2026!"),
       nowIso,
     );
@@ -59,7 +61,7 @@ export function seedDemo({
     ).run(
       memberId,
       "Trần Minh",
-      "minh@nhactoi.local",
+      DEMO_EMAILS[2],
       hashPassword("NhacToi2026!"),
       nowIso,
     );

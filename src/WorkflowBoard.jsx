@@ -178,6 +178,8 @@ export default function WorkflowBoard({
       });
   }, [taskSnapshot, activeIds, activeColumns, placeByStatus, teamId]);
   const canWrite = Boolean(!readOnly && board && board.canWrite !== false);
+  // Adding, renaming, reordering and archiving columns is for board managers.
+  const canManage = Boolean(canWrite && board.canManage !== false);
 
   async function notifyChanged() {
     if (!onChanged) return;
@@ -257,7 +259,7 @@ export default function WorkflowBoard({
   }
 
   async function restoreColumn(column) {
-    if (!canWrite || mutation) return;
+    if (!canManage || mutation) return;
     setMutation(`restore:${column.id}`);
     setError("");
     try {
@@ -272,7 +274,7 @@ export default function WorkflowBoard({
   }
 
   async function reorderColumns(ids) {
-    if (!canWrite) return;
+    if (!canManage) return;
     const activeIds = new Set(activeColumns.map(column => String(column.id)));
     let activeIndex = 0;
     const orderedIds = allColumns.map(column => activeIds.has(String(column.id)) ? ids[activeIndex++] : column.id);
@@ -348,7 +350,7 @@ export default function WorkflowBoard({
   }
 
   function columnActions(column, { cards }) {
-    if (!canWrite) return [];
+    if (!canManage) return [];
     return [
       { label: "Đổi tên và màu", icon: Pencil, onSelect: () => openEdit(column) },
       { label: "Lưu trữ cột", icon: Archive, danger: true, onSelect: () => openArchive(column) },
@@ -373,12 +375,12 @@ export default function WorkflowBoard({
           {toolbarRight}
         </div>
       )}
-      {(archivedColumns.length > 0 || canWrite) && (
+      {(archivedColumns.length > 0 || canManage) && (
         <div className="workflow-board-toolbar">
           <div>
             {archivedColumns.length > 0 && <span className="workflow-board-archived-count">{archivedColumns.length} cột đã lưu trữ</span>}
           </div>
-          {canWrite && <button type="button" className="workflow-board-add-column" onClick={openCreate}><Plus size={16} /> Thêm cột</button>}
+          {canManage && <button type="button" className="workflow-board-add-column" onClick={openCreate}><Plus size={16} /> Thêm cột</button>}
         </div>
       )}
       <ErrorMessage>{error}</ErrorMessage>
@@ -394,7 +396,7 @@ export default function WorkflowBoard({
         preferences={canWrite ? board?.preferences : null}
         onPreferencesChange={canWrite ? persistPreferences : undefined}
         onColumnReorder={reorderColumns}
-        canReorderColumns={canWrite}
+        canReorderColumns={canManage}
         columnActions={columnActions}
         onOpen={onOpen}
         onCreate={(status, columnId) => onCreate?.(status, columnId)}
@@ -416,7 +418,7 @@ export default function WorkflowBoard({
               return <article className="workflow-board-archived-row" key={column.id}>
                 <span className={`task-board-dot tone-${column.tone}`} aria-hidden="true" />
                 <div><strong>{column.label}</strong><span>{cards.length} công việc</span></div>
-                {canWrite && <ActionMenu label={`Thao tác cột ${column.label}`} items={[{ label: "Khôi phục cột", icon: ArchiveRestore, onSelect: () => restoreColumn(column) }]} disabled={mutation === `restore:${column.id}`} />}
+                {canManage && <ActionMenu label={`Thao tác cột ${column.label}`} items={[{ label: "Khôi phục cột", icon: ArchiveRestore, onSelect: () => restoreColumn(column) }]} disabled={mutation === `restore:${column.id}`} />}
               </article>;
             })}
           </div>

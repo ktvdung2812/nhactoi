@@ -340,8 +340,9 @@ function accessFor(db, auth, teamId, clock, projectId = null) {
 function requireAccess(db, auth, teamId, clock, HttpError, { manage = false, write = false, projectId = null } = {}) {
   const access = accessFor(db, auth, teamId, clock, projectId);
   if (!access) throw errorOf(HttpError, 404, "board was not found");
-  if (manage && !access.canManage) throw errorOf(HttpError, 403, "you do not have permission to manage this board");
+  // A read-only board stays 409 for everyone; only then is the role checked.
   if (write && !access.canWrite) throw errorOf(HttpError, 409, "board is read-only");
+  if (manage && !access.canManage) throw errorOf(HttpError, 403, "you do not have permission to manage this board");
   return access;
 }
 
@@ -443,7 +444,7 @@ export function registerBoardRoutes(
       ensureWritable(req);
       assertKeys(req.body, new Set(["projectId", "teamId", "name", "status", "tone"]), HttpError);
       const { teamId, projectId } = scopeFor(req, req.body);
-      requireAccess(db, req.auth, teamId, clock, HttpError, { write: true, projectId });
+      requireAccess(db, req.auth, teamId, clock, HttpError, { manage: true, write: true, projectId });
       if (!teamExists(db, req.auth.workspaceId, teamId)) throw errorOf(HttpError, 404, "team was not found");
       const name = text(req.body?.name, "name", HttpError, { required: true, max: 120 });
       const status = statusValue(req.body?.status, HttpError);
@@ -479,7 +480,7 @@ export function registerBoardRoutes(
         .prepare("SELECT * FROM board_columns WHERE id = ? AND workspace_id = ?")
         .get(req.params.id, req.auth.workspaceId);
       if (!current) return fail(res, 404, "column was not found");
-      const access = requireAccess(db, req.auth, current.team_id, clock, HttpError, { write: true, projectId: current.project_id });
+      const access = requireAccess(db, req.auth, current.team_id, clock, HttpError, { manage: true, write: true, projectId: current.project_id });
       if (current.archived_at) throw errorOf(HttpError, 409, "column is archived; restore it before editing");
       const values = [];
       const fields = [];
@@ -523,7 +524,7 @@ export function registerBoardRoutes(
       ensureWritable(req);
       assertKeys(req.body, new Set(["projectId", "teamId", "ids"]), HttpError);
       const { teamId, projectId } = scopeFor(req, req.body);
-      requireAccess(db, req.auth, teamId, clock, HttpError, { write: true, projectId });
+      requireAccess(db, req.auth, teamId, clock, HttpError, { manage: true, write: true, projectId });
       if (!Array.isArray(req.body?.ids) || !req.body.ids.length)
         throw errorOf(HttpError, 400, "ids must be a non-empty array");
       const ids = req.body.ids.map((id) => text(id, "ids", HttpError, { required: true, max: 160 }));
@@ -550,7 +551,7 @@ export function registerBoardRoutes(
         .prepare("SELECT * FROM board_columns WHERE id = ? AND workspace_id = ?")
         .get(req.params.id, req.auth.workspaceId);
       if (!current) return fail(res, 404, "column was not found");
-      requireAccess(db, req.auth, current.team_id, clock, HttpError, { write: true, projectId: current.project_id });
+      requireAccess(db, req.auth, current.team_id, clock, HttpError, { manage: true, write: true, projectId: current.project_id });
       if (current.archived_at) throw errorOf(HttpError, 409, "column is already archived");
       const activeCount = boardRows(db, req.auth.workspaceId, current.team_id, current.project_id).filter(row => !row.archived_at).length;
       if (Number(activeCount) <= 1) throw errorOf(HttpError, 409, "board must keep at least one active column");
@@ -629,7 +630,7 @@ export function registerBoardRoutes(
         .prepare("SELECT * FROM board_columns WHERE id = ? AND workspace_id = ?")
         .get(req.params.id, req.auth.workspaceId);
       if (!current) return fail(res, 404, "column was not found");
-      requireAccess(db, req.auth, current.team_id, clock, HttpError, { write: true, projectId: current.project_id });
+      requireAccess(db, req.auth, current.team_id, clock, HttpError, { manage: true, write: true, projectId: current.project_id });
       if (!current.archived_at) throw errorOf(HttpError, 409, "column is already active");
       const now = nowIso(clock);
       withTransaction(db, () => {

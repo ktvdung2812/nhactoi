@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 test("dev-accounts and dev-login endpoints operate properly in dev and are disabled in production", async (t) => {
-  const devApp = createApp({ dbPath: ":memory:", env: { NODE_ENV: "development" } });
+  const devApp = createApp({ dbPath: ":memory:", env: { NODE_ENV: "development", NHACTOI_DEV_LOGIN: "true" } });
   const devServer = await new Promise((res) => {
     const s = devApp.listen(0, "127.0.0.1", () => res(s));
   });
@@ -57,8 +57,24 @@ test("dev-accounts and dev-login endpoints operate properly in dev and are disab
   });
   assert.equal(unknownRes.status, 404);
 
+  // 3b. A real account outside the demo allow-list cannot be opened without a password.
+  const register = await fetch(`${devBase}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "Real admin", email: "real-admin@example.com", password: "Password123!", workspaceName: "Real" }),
+  });
+  assert.equal(register.status, 201);
+  devApp.locals.db.prepare("UPDATE users SET is_platform_admin = 1 WHERE email = ?").run("real-admin@example.com");
+  const realRes = await fetch(`${devBase}/api/auth/dev-login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "real-admin@example.com" }),
+  });
+  assert.equal(realRes.status, 404);
+  assert.equal(realRes.headers.get("set-cookie"), null);
+
   // 4. Production mode disables dev-accounts and dev-login
-  const prodApp = createApp({ dbPath: ":memory:", env: { NODE_ENV: "production" } });
+  const prodApp = createApp({ dbPath: ":memory:", env: { NODE_ENV: "production", NHACTOI_DEV_LOGIN: "true" } });
   const prodServer = await new Promise((res) => {
     const s = prodApp.listen(0, "127.0.0.1", () => res(s));
   });
@@ -81,6 +97,28 @@ test("dev-accounts and dev-login endpoints operate properly in dev and are disab
     body: JSON.stringify({ email: "demo@nhactoi.local" }),
   });
   assert.equal(prodLoginRes.status, 404);
+});
+
+test("development without NHACTOI_DEV_LOGIN keeps passwordless login closed", async (t) => {
+  const app = createApp({ dbPath: ":memory:", env: { NODE_ENV: "development" } });
+  const server = await new Promise((res) => {
+    const s = app.listen(0, "127.0.0.1", () => res(s));
+  });
+  t.after(() => {
+    server.close();
+    app.locals.close();
+  });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const accounts = await fetch(`${base}/api/auth/dev-accounts`);
+  assert.deepEqual(await accounts.json(), { enabled: false, accounts: [] });
+  const login = await fetch(`${base}/api/auth/dev-login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "demo@nhactoi.local" }),
+  });
+  assert.equal(login.status, 404);
+  assert.equal(login.headers.get("x-powered-by"), null);
+  assert.equal(app.locals.db.prepare("SELECT COUNT(*) AS count FROM users WHERE email = ?").get("demo@nhactoi.local").count, 0);
 });
 
 test("dev quick login CSS classes and Dark mode rules are defined", () => {

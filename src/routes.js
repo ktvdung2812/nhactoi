@@ -100,3 +100,17 @@ export function readRoute(
 export function isValidRoute(pathname) {
   return readRoute(pathname) !== "not-found";
 }
+
+/**
+ * Convert an old `#/page` bookmark into an app path. Only known routes are
+ * restored: `#//evil.example` would otherwise become a protocol-relative URL.
+ */
+export function legacyHashTarget(hash, search = "") {
+  const legacy = String(hash || "").match(/^#\/(.+)$/)?.[1];
+  if (!legacy || !/^[A-Za-z0-9]/.test(legacy)) return null;
+  const queryAt = legacy.indexOf("?");
+  const path = queryAt < 0 ? legacy : legacy.slice(0, queryAt);
+  const query = queryAt < 0 ? "" : legacy.slice(queryAt + 1);
+  if (readRoute(`/${path}`, query) === "not-found") return null;
+  return `/${legacy}${queryAt < 0 ? search : ""}`;
+}

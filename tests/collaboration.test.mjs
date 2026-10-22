@@ -44,3 +44,18 @@ test('mention list follows current project access, including admins and direct g
  const common=await call(s,`/tasks/${shared.id}/collaboration`,{cookie:owner.cookie});
  assert.deepEqual(common.body.members.map(m=>m.id).sort(),[owner.user.id,mate.user.id,admin.user.id,other.user.id].sort());
 });
+test('guests see mention names but never member emails',async t=>{
+ const s=await boot(t),owner=await user(s,'owner-guest-mail@example.test');
+ s.db.prepare("UPDATE subscriptions SET plan='business' WHERE workspace_id=?").run(owner.workspace.id);
+ const project=await call(s,'/projects',{method:'POST',cookie:owner.cookie,body:{name:'Chia sẻ',accessMode:'private'}});assert.equal(project.status,201,JSON.stringify(project.body));
+ const invite=await call(s,'/invitations',{method:'POST',cookie:owner.cookie,body:{email:'guest-mail@example.test',memberType:'guest',projectId:project.body.project.id,projectRole:'commenter'}});assert.equal(invite.status,201,JSON.stringify(invite.body));
+ const url=new URL(invite.body.inviteUrl),token=url.searchParams.get('invite')||new URLSearchParams(url.hash.slice(1)).get('invite');
+ const guest=await call(s,'/invitations/accept',{method:'POST',body:{token,name:'Khách',password:'Password123!'}});assert.equal(guest.status,200,JSON.stringify(guest.body));
+ const card=await call(s,'/tasks',{method:'POST',cookie:owner.cookie,body:{title:'Việc chia sẻ',dueAt:'2030-01-01T10:00:00Z',projectId:project.body.project.id}});assert.equal(card.status,201,JSON.stringify(card.body));
+ const path=`/tasks/${card.body.task.id}/collaboration`;
+ const seen=await call(s,path,{cookie:guest.cookie});assert.equal(seen.status,200,JSON.stringify(seen.body));
+ assert.ok(seen.body.members.some(m=>m.id===owner.user.id&&m.name));
+ assert.ok(seen.body.members.every(m=>!('email' in m)));
+ assert.doesNotMatch(JSON.stringify(seen.body),/owner-guest-mail@example\.test/);
+ const own=await call(s,path,{cookie:owner.cookie});assert.equal(own.body.members.find(m=>m.id===owner.user.id).email,'owner-guest-mail@example.test');
+});

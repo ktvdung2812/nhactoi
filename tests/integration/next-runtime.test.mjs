@@ -189,6 +189,11 @@ test(
 
     const deepLink = await request(base, "/tasks/direct-deep-link");
     assert.equal(deepLink.status, 200);
+    assert.equal(deepLink.headers.get("x-frame-options"), "DENY");
+    assert.equal(deepLink.headers.get("x-content-type-options"), "nosniff");
+    assert.match(deepLink.headers.get("strict-transport-security") || "", /max-age=31536000/);
+    assert.match(deepLink.headers.get("content-security-policy") || "", /frame-ancestors 'none'/);
+    assert.equal(deepLink.headers.get("x-powered-by"), null);
     assert.match(await deepLink.text(), /Đang mở không gian làm việc/);
 
     for (const path of ["/login", "/register", "/forgot-password", "/reset-password", "/inbox", "/today", "/upcoming", "/week",
@@ -268,6 +273,8 @@ test(
     const me = await request(base, "/api/me", { cookie });
     const meResult = await jsonResponse(me);
     assert.equal(me.status, 200);
+    assert.equal(me.headers.get("x-powered-by"), null);
+    assert.equal(me.headers.get("x-frame-options"), "DENY");
     assert.equal(meResult.body?.user?.id, registrationResult.body?.user?.id);
 
     // Newly registered integrations must survive the Next -> Express boundary.

@@ -32,25 +32,42 @@ test("boards bootstrap per workspace, keep columns isolated, and let visible mem
   assert.equal(memberBoard.status, 200);
   assert.equal(memberBoard.body.canManage, false);
   assert.equal(memberBoard.body.canWrite, true);
-  const createdColumn = await call(server, "/boards/columns", {
+  // Editors move work between columns; only board managers change the columns.
+  const memberColumn = await call(server, "/boards/columns", {
     method: "POST",
     cookie: member.cookie,
     body: { teamId: null, name: "Member column", status: "todo", tone: "blue" },
   });
+  assert.equal(memberColumn.status, 403, JSON.stringify(memberColumn.body));
+  const createdColumn = await call(server, "/boards/columns", {
+    method: "POST",
+    cookie: owner.cookie,
+    body: { teamId: null, name: "Owner column", status: "todo", tone: "blue" },
+  });
   assert.equal(createdColumn.status, 201, JSON.stringify(createdColumn.body));
-  assert.equal(createdColumn.body.column.name, "Member column");
+  assert.equal(createdColumn.body.column.name, "Owner column");
   assert.equal(createdColumn.body.column.status, "todo");
   assert.equal(createdColumn.body.column.tone, "blue");
-  const withMemberColumn = await call(server, "/boards", { cookie: member.cookie });
-  assert.ok(withMemberColumn.body.columns.some((column) => column.id === createdColumn.body.column.id));
-  const renamed = await call(server, `/boards/columns/${createdColumn.body.column.id}`, {
+  const withOwnerColumn = await call(server, "/boards", { cookie: member.cookie });
+  assert.ok(withOwnerColumn.body.columns.some((column) => column.id === createdColumn.body.column.id));
+  const columnPath = `/boards/columns/${createdColumn.body.column.id}`;
+  const denied = [
+    await call(server, columnPath, { method: "PATCH", cookie: member.cookie, body: { name: "Renamed by member" } }),
+    await call(server, "/boards/columns/reorder", { method: "POST", cookie: member.cookie, body: { teamId: null, ids: withOwnerColumn.body.columns.map((column) => column.id).reverse() } }),
+    await call(server, `${columnPath}/archive`, { method: "POST", cookie: member.cookie, body: {} }),
+  ];
+  assert.deepEqual(denied.map((response) => response.status), [403, 403, 403]);
+  const renamed = await call(server, columnPath, {
     method: "PATCH",
-    cookie: member.cookie,
-    body: { name: "Renamed by member" },
+    cookie: owner.cookie,
+    body: { name: "Renamed by owner" },
   });
   assert.equal(renamed.status, 200, JSON.stringify(renamed.body));
-  assert.equal(renamed.body.column.name, "Renamed by member");
-  assert.equal(renamed.body.canManage, false);
+  assert.equal(renamed.body.column.name, "Renamed by owner");
+  assert.equal(renamed.body.canManage, true);
+  assert.equal((await call(server, `${columnPath}/archive`, { method: "POST", cookie: owner.cookie, body: {} })).status, 200);
+  assert.equal((await call(server, `${columnPath}/restore`, { method: "POST", cookie: member.cookie, body: {} })).status, 403);
+  assert.equal((await call(server, `${columnPath}/restore`, { method: "POST", cookie: owner.cookie, body: {} })).status, 200);
 
   const moved = await call(server, `/boards/tasks/${card.id}/move`, {
     method: "POST",

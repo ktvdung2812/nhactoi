@@ -8,14 +8,17 @@ export function outboundSendersPaused(db) {
 
 // Session FKs own device subscriptions and delivery receipts. While recovery
 // is held, revoke access without cascading away evidence needed to reconcile.
-export function invalidateSessions(db, { id, userId, tokenHash }) {
+// exceptId keeps the caller's own session, for example after an email change.
+export function invalidateSessions(db, { id, userId, tokenHash, exceptId }) {
   const filters = [['id', id], ['user_id', userId], ['token_hash', tokenHash]].filter(([, value]) => value !== undefined);
   if (!filters.length) throw new Error('Session revocation requires a scope');
   const statement = outboundSendersPaused(db)
     ? "UPDATE sessions SET expires_at='1970-01-01T00:00:00.000Z'"
     : 'DELETE FROM sessions';
-  return db.prepare(`${statement} WHERE ${filters.map(([column]) => `${column}=?`).join(' AND ')}`)
-    .run(...filters.map(([, value]) => value));
+  const where = filters.map(([column]) => `${column}=?`);
+  if (exceptId !== undefined) where.push('id<>?');
+  return db.prepare(`${statement} WHERE ${where.join(' AND ')}`)
+    .run(...filters.map(([, value]) => value), ...(exceptId !== undefined ? [exceptId] : []));
 }
 
 export function pauseRestoredSenders(db, backupId, restoredAt) {
