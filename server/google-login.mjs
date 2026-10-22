@@ -1,6 +1,7 @@
 import {OAuth2Client} from 'google-auth-library';
 import {createHash,randomBytes} from 'node:crypto';
 import {createId,hashPassword} from './auth.mjs';
+import {createPersonalWorkspace} from './personal-workspace.mjs';
 const hash=v=>createHash('sha256').update(v).digest('hex');
 export function registerGoogleRoutes(app,{db,config,clock,requirePlatformAdmin,requireAuth,HttpError,withTransaction,writeStoredSetting,loadStoredSettings,settingsKey,writeAdminAudit,createSession,setSessionCookie}){
  const settings=()=>{const s=loadStoredSettings(db,settingsKey).get('googleLogin');return s?JSON.parse(s):{enabled:false,clientId:'',clientSecret:''}};
@@ -47,11 +48,9 @@ export function registerGoogleRoutes(app,{db,config,clock,requirePlatformAdmin,r
      const email = String(p.email).toLowerCase();
      if (db.prepare('SELECT 1 FROM users WHERE email=?').get(email)) throw new HttpError(409, 'Email đã có tài khoản. Đăng nhập bằng mật khẩu rồi liên kết Google trong mục Tài khoản');
      userId = createId('user_');
-     const wid = createId('workspace_');
      db.prepare('INSERT INTO users(id,name,email,password_hash,created_at) VALUES (?,?,?,?,?)').run(userId, String(p.name || email).slice(0,120), email, hashPassword(randomBytes(48).toString('hex')), at);
-     db.prepare('INSERT INTO workspaces(id,name,industry,created_at) VALUES (?,?,?,?)').run(wid, 'Không gian của ' + String(p.given_name || 'bạn').slice(0,100), '', at);
-     db.prepare("INSERT INTO workspace_members(workspace_id,user_id,role,created_at) VALUES (?,?,'owner',?)").run(wid, userId, at);
-     db.prepare("INSERT INTO subscriptions(workspace_id,plan,cycle,status,current_period_end,updated_at) VALUES (?,'starter','monthly','trialing',?,?)").run(wid, new Date(new Date(clock()).getTime()+14*86400000).toISOString(), at);
+     // First-time Google sign-ups are personal accounts.
+     createPersonalWorkspace(db, { userId, now: at, createId });
     }
     if (!identity) db.prepare('INSERT INTO google_identities(sub,user_id,created_at) VALUES (?,?,?)').run(p.sub, userId, at);
     const membership = db.prepare("SELECT workspace_id FROM workspace_members WHERE user_id=? ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END LIMIT 1").get(userId);

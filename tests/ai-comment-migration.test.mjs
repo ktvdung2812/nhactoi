@@ -11,6 +11,7 @@ import { seedDemo } from '../server/seed.mjs';
 import { createBackup } from '../server/backups.mjs';
 import { restoreBackup } from '../scripts/restore-backup.mjs';
 import { outboundSendersPaused } from '../server/restore-safety.mjs';
+import { removePersonalWorkspaceSchema } from './migration-helpers.mjs';
 
 const at = '2026-10-18T02:00:00.000Z';
 function schema14(snapshot) {
@@ -30,6 +31,7 @@ test('assistant migration upgrades populated schema 14 atomically, preserves old
     db.exec('ALTER TABLE task_comments DROP CONSTRAINT task_comments_ai_run_fk');
     db.exec('DROP TABLE ai_comment_runs, workspace_ai_settings');
     db.exec('ALTER TABLE task_comments DROP COLUMN author_type, DROP COLUMN author_name_snapshot, DROP COLUMN reply_to_comment_id, DROP COLUMN ai_run_id, DROP COLUMN ai_metadata');
+    removePersonalWorkspaceSchema(db);
     db.prepare('DELETE FROM schema_migrations WHERE version>14').run();
   });
   const comments = db.prepare('SELECT * FROM task_comments').all();

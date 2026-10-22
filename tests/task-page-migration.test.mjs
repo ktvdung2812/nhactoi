@@ -5,6 +5,7 @@ import { openDatabase } from './database-helpers.mjs';
 import { migrateDatabase, SCHEMA_VERSION, withTransaction } from '../server/db.mjs';
 import { exportSnapshot, importSnapshot, upgradeSnapshot, validateSnapshot } from '../server/database-snapshot.mjs';
 import { V14_TABLE_COLUMNS } from '../server/database-tables.mjs';
+import { removePersonalWorkspaceSchema } from './migration-helpers.mjs';
 
 function historicalSnapshot(db) {
   return { format: 'nhactoi-postgresql', version: 1, schemaVersion: 13,
@@ -78,6 +79,9 @@ test('schema 13 task-page index upgrade preserves rows, receipt replay, ordering
   const index = db => db.prepare("SELECT indexrelid::text id,indisvalid,indisready,pg_get_indexdef(indexrelid) definition FROM pg_index WHERE indexrelid=to_regclass('tasks_active_page_order')").get();
   assert.equal(index(s.db), undefined);
   await pages();
+  // Sessions read workspaces.kind (migration 16), so drop it only after the
+  // index-less API check; migration replay below then rebuilds it too.
+  withTransaction(s.db, () => removePersonalWorkspaceSchema(s.db));
   const historical = historicalSnapshot(s.db);
   const frozen = structuredClone(historical);
   assert.equal(validateSnapshot(historical), historical);

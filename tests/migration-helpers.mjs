@@ -17,3 +17,10 @@ export function removeRoadmapSchema(db){
  DROP TABLE IF EXISTS board_preferences; DROP TABLE IF EXISTS board_columns;
  DELETE FROM schema_migrations WHERE version>=11;`);
 }
+
+// Physically removes migration 016 so older-schema fixtures can replay it.
+export function removePersonalWorkspaceSchema(db){
+ db.exec(`DROP TRIGGER IF EXISTS workspaces_personal_protect ON workspaces; DROP TRIGGER IF EXISTS workspace_members_personal_only ON workspace_members; DROP TRIGGER IF EXISTS invitations_personal_none ON invitations;
+ DROP FUNCTION IF EXISTS nhactoi_protect_personal_workspace(); DROP FUNCTION IF EXISTS nhactoi_personal_workspace_members();
+ ALTER TABLE workspaces DROP CONSTRAINT IF EXISTS workspaces_personal_owner_check, DROP COLUMN IF EXISTS personal_owner_id, DROP COLUMN IF EXISTS kind;`);
+}

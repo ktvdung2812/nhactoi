@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { createSyncFn } from 'synckit';
 import { bootstrapAdmin as ensureBootstrapAdmin } from './bootstrap-admin.mjs';
 
-export const SCHEMA_VERSION = 15;
+export const SCHEMA_VERSION = 16;
 let worker;
 const callWorker = (...args) => (worker ||= createSyncFn(resolve(process.cwd(), 'server/postgres-worker.mjs'), { timeout: 120000, execArgv: [] }))(...args);
 
@@ -112,6 +112,10 @@ export function migrateDatabase(db, { bootstrapAdmin = true, env = process.env }
     if (version < 15) {
       db.exec(readFileSync(resolve(process.cwd(), 'server/migrations/postgres/015-comment-assistant.sql'), 'utf8'));
       db.prepare('INSERT INTO schema_migrations(version,applied_at) VALUES (?,?)').run(15, new Date().toISOString());
+    }
+    if (version < 16) {
+      db.exec(readFileSync(resolve(process.cwd(), 'server/migrations/postgres/016-personal-workspaces.sql'), 'utf8'));
+      db.prepare('INSERT INTO schema_migrations(version,applied_at) VALUES (?,?)').run(16, new Date().toISOString());
     }
     if (bootstrapAdmin) admin = ensureBootstrapAdmin(db, { env });
   });

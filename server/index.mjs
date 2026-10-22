@@ -22,6 +22,7 @@ import { registerAiAssistantRoutes } from "./ai-assistant.mjs";
 import {registerTaskExtrasRoutes,extraAssigneeIds,reconcileTaskAssignees,copyRecurringExtras,taskScopeLinkConflict} from "./task-extras.mjs";
 import {registerRemoteStorageRoutes} from "./remote-storage.mjs";
 import {registerGoogleRoutes} from "./google-login.mjs";
+import { createPersonalWorkspace, personalWorkspaceId, isPersonalWorkspace } from "./personal-workspace.mjs";
 import {registerBackupRoutes} from "./backups.mjs";
 import {registerEventRoutes,processEventReminders} from "./calendar-events.mjs";
 import { recordRevision, assertRevision } from "./record-revision.mjs";
@@ -795,7 +796,8 @@ function authContext(db, token, clock, expectedKind = null) {
            u.id, u.name, u.email, u.is_platform_admin, u.disabled_at,
            wm.role, ${db.dialect === "postgres" ? "wm.member_type" : "'member' AS member_type"},
            w.name AS workspace_name, w.industry AS workspace_industry,
-           w.suspended_at AS workspace_suspended_at
+           w.suspended_at AS workspace_suspended_at,
+           ${db.dialect === "postgres" ? "w.kind" : "'team'"} AS workspace_kind
     FROM sessions s
     JOIN users u ON u.id = s.user_id
     JOIN workspace_members wm ON wm.workspace_id = s.workspace_id AND wm.user_id = s.user_id
@@ -834,6 +836,7 @@ function authContext(db, token, clock, expectedKind = null) {
       id: session.workspace_id,
       name: session.workspace_name,
       industry: session.workspace_industry,
+      kind: session.workspace_kind || "team",
       suspendedAt: session.workspace_suspended_at || null,
     },
     sessionId: session.session_id,
@@ -2900,8 +2903,17 @@ function createApp(options = {}) {
     limitAuthRequests("register", { ipLimit: 20, windowMs: 60 * 60_000 }), (req, res, next) => {
     try {
       const mobile = req.path === "/api/mobile/auth/register";
-      if (["name", "email", "password", "workspaceName"].some((key) => typeof req.body?.[key] !== "string"))
-        throw new HttpError(400, "Vui lòng nhập đầy đủ họ tên, email, mật khẩu và tên không gian.");
+      // Older web/mobile clients omit accountType and keep creating a team workspace.
+      const accountType = req.body?.accountType ?? "team";
+      if (!["personal", "team"].includes(accountType))
+        throw new HttpError(400, "Loại tài khoản không hợp lệ.");
+      if (accountType === "personal" && db.dialect !== "postgres")
+        throw new HttpError(400, "Không gian cá nhân cần PostgreSQL.");
+      const personal = accountType === "personal";
+      if (["name", "email", "password", ...(personal ? [] : ["workspaceName"])].some((key) => typeof req.body?.[key] !== "string"))
+        throw new HttpError(400, personal
+          ? "Vui lòng nhập đầy đủ họ tên, email và mật khẩu."
+          : "Vui lòng nhập đầy đủ họ tên, email, mật khẩu và tên không gian.");
       const name = cleanString(req.body?.name, {
         required: true,
         max: 120,
@@ -2909,12 +2921,12 @@ function createApp(options = {}) {
       });
       const email = emailValue(req.body?.email);
       const password = passwordValue(req.body?.password);
-      const workspaceName = cleanString(req.body?.workspaceName, {
+      const workspaceName = personal ? null : cleanString(req.body?.workspaceName, {
         required: true,
         max: 160,
         field: "workspaceName",
       });
-      const industry = cleanString(req.body?.industry, {
+      const industry = personal ? "" : cleanString(req.body?.industry, {
         max: 120,
         field: "industry",
       });
@@ -2925,10 +2937,14 @@ function createApp(options = {}) {
         if (db.prepare("SELECT id FROM users WHERE email = ?").get(email))
           throw new HttpError(409, "email is already registered");
         const userId = createId("user_");
-        const workspaceId = createId("workspace_");
         db.prepare(
           "INSERT INTO users(id, name, email, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
         ).run(userId, name, email, hashPassword(password), now);
+        if (personal) {
+          created = { userId, workspaceId: createPersonalWorkspace(db, { userId, now, createId }) };
+          return;
+        }
+        const workspaceId = createId("workspace_");
         db.prepare(
           "INSERT INTO workspaces(id, name, industry, created_at) VALUES (?, ?, ?, ?)",
         ).run(workspaceId, workspaceName, industry, now);
@@ -3907,9 +3923,10 @@ function createApp(options = {}) {
       const workspaces = db
         .prepare(
           `
-        SELECT w.id, w.name, w.industry, wm.role
+        SELECT w.id, w.name, w.industry, wm.role,
+               ${db.dialect === "postgres" ? "w.kind" : "'team'"} AS kind
         FROM workspace_members wm JOIN workspaces w ON w.id = wm.workspace_id
-        WHERE wm.user_id = ? ORDER BY w.name
+        WHERE wm.user_id = ? ORDER BY w.kind = 'personal' DESC, w.name
       `,
         )
         .all(req.auth.userId)
@@ -3918,8 +3935,10 @@ function createApp(options = {}) {
           name: row.name,
           industry: row.industry,
           role: row.role,
+          kind: row.kind,
         }));
-      return res.json({ workspaces });
+      const canCreatePersonal = db.dialect === "postgres" && !personalWorkspaceId(db, req.auth.userId);
+      return res.json({ workspaces, canCreatePersonal });
     } catch (error) {
       return next(error);
     }
@@ -3943,29 +3962,49 @@ function createApp(options = {}) {
         .get(req.auth.userId, workspaceId);
       if (!membership)
         return fail(res, 403, "you are not a member of this workspace");
-      let session, auth;
-      withTransaction(db, () => {
-        session = createSession(db, req.auth.userId, workspaceId, config, clock);
-        auth = authContext(db, session.token, clock);
-        if (req.sessionToken) {
-          // Workspace switching rotates the cookie, while browser push belongs
-          // to this browser login across all accessible workspaces.
-          db.prepare('UPDATE web_push_subscriptions SET session_id=? WHERE session_id=? AND user_id=?')
-            .run(auth.sessionId, req.auth.sessionId, req.auth.userId);
-          invalidateSessions(db, { id: req.auth.sessionId });
-        }
-      });
-      setSessionCookie(res, session.token, config);
-      return res.json({
-        user: auth.user,
-        workspace: auth.workspace,
-        subscription: subscriptionJson(getSubscription(db, workspaceId), clock, config.plans),
-        billingConfigured: config.billingConfigured,
-      });
+      return enterWorkspace(req, res, () => workspaceId);
     } catch (error) {
       return next(error);
     }
   });
+
+  // Creates the caller's single personal workspace and moves the session there.
+  app.post("/api/workspaces/personal", requireAuth, (req, res, next) => {
+    try {
+      if (db.dialect !== "postgres")
+        throw new HttpError(400, "Không gian cá nhân cần PostgreSQL.");
+      return enterWorkspace(req, res, () => {
+        if (personalWorkspaceId(db, req.auth.userId))
+          throw new HttpError(409, "Bạn đã có không gian cá nhân");
+        return createPersonalWorkspace(db, { userId: req.auth.userId, now: isoNow(clock), createId });
+      }, 201);
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  function enterWorkspace(req, res, resolveWorkspaceId, status = 200) {
+    let session, auth, workspaceId;
+    withTransaction(db, () => {
+      workspaceId = resolveWorkspaceId();
+      session = createSession(db, req.auth.userId, workspaceId, config, clock);
+      auth = authContext(db, session.token, clock);
+      if (req.sessionToken) {
+        // Workspace switching rotates the cookie, while browser push belongs
+        // to this browser login across all accessible workspaces.
+        db.prepare('UPDATE web_push_subscriptions SET session_id=? WHERE session_id=? AND user_id=?')
+          .run(auth.sessionId, req.auth.sessionId, req.auth.userId);
+        invalidateSessions(db, { id: req.auth.sessionId });
+      }
+    });
+    setSessionCookie(res, session.token, config);
+    return res.status(status).json({
+      user: auth.user,
+      workspace: auth.workspace,
+      subscription: subscriptionJson(getSubscription(db, workspaceId), clock, config.plans),
+      billingConfigured: config.billingConfigured,
+    });
+  }
 
   registerTaskMutationCommand(app, "POST", "/api/tasks", requireAuth, (req) => {
       ensureWritable(req);
@@ -4563,6 +4602,8 @@ function createApp(options = {}) {
         const invitation = withTransaction(db, () => {
         lockWorkspaceSeats(db, req.auth.workspaceId);
         config.plans = currentPlans(db, config.plans);
+        if (req.auth.workspace.kind === "personal")
+          throw new HttpError(409, "Không gian cá nhân không thể mời thêm thành viên");
         if (!canManageAllTeams(db, req.auth.workspaceId, req.auth.userId))
           throw new HttpError(403, 'Bạn không có quyền mời thành viên');
         const subscription = ensureWritable(req);
@@ -4649,6 +4690,8 @@ function createApp(options = {}) {
         )
         .get(hashToken(token), isoNow(clock));
       if (!invite) return fail(res, 404, "invitation is invalid or expired");
+      if (db.dialect === "postgres" && isPersonalWorkspace(db, invite.workspace_id))
+        return fail(res, 409, "Không gian cá nhân không thể mời thêm thành viên");
       if (invite.workspace_suspended_at)
         return fail(
           res,
@@ -5042,6 +5085,8 @@ function createApp(options = {}) {
         let plan = config.plans.find((item) => item.id === planId);
         if (!plan || !["monthly", "yearly"].includes(cycle))
           throw new HttpError(400, "plan or cycle is invalid");
+        if (req.auth.workspace.kind === "personal")
+          throw new HttpError(409, "Không gian cá nhân miễn phí, không cần mua gói");
         if (plan.active === false) throw new HttpError(409, "Gói thuê bao đã ngừng bán; vui lòng chọn gói khác");
         assertWorkspacePlanSeats(db, req.auth.workspaceId, plan, clock);
         if (

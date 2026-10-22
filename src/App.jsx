@@ -40,6 +40,7 @@ import {
   Clock3,
   LogOut,
   Building2,
+  UserRound,
   Mail,
   Phone,
   Repeat2,
@@ -376,6 +377,7 @@ export default function App() {
     [financeType, setFinanceType] = useState("all"),
     [invitation, setInvitation] = useState(null),
     [workspaces, setWorkspaces] = useState(null),
+    [canCreatePersonal, setCanCreatePersonal] = useState(false),
     [bootError, setBootError] = useState(null),
     [previewToast, setPreviewToast] = useState("");
   const taskApi = useTaskMutation(api, `${me?.workspace?.id || ''}:${me?.user?.id || ''}`);
@@ -613,7 +615,7 @@ export default function App() {
     }
   }, [toast]);
   useEffect(() => {
-    if (page === "billing" && me)
+    if (page === "billing" && me && me.workspace.kind !== "personal")
       api("/billing")
         .then(setBilling)
         .catch((e) => notify(e.message, true));
@@ -1227,14 +1229,16 @@ export default function App() {
             onClick={async () => {
               if (workspaces) return setWorkspaces(null);
               try {
-                setWorkspaces((await api("/workspaces")).workspaces);
+                const result = await api("/workspaces");
+                setCanCreatePersonal(!!result.canCreatePersonal);
+                setWorkspaces(result.workspaces);
               } catch (e) {
                 notify(e.message, true);
               }
             }}
           >
             <span className="workspace-icon" title={me.workspace.name}>
-              <Building2 size={16} />
+              {me.workspace.kind === "personal" ? <UserRound size={16} /> : <Building2 size={16} />}
             </span>
             <span className="workspace-details">
               <strong>{me.workspace.name}</strong>
@@ -1265,11 +1269,28 @@ export default function App() {
                     go("dashboard");
                   }}
                 >
-                  <Building2 size={16} />
+                  {w.kind === "personal" ? <UserRound size={16} /> : <Building2 size={16} />}
                   <strong>{w.name}</strong>
                   {w.id === me.workspace.id && <Check size={15} />}
                 </button>
               ))}
+              {canCreatePersonal && (
+                <button
+                  disabled={busy}
+                  onClick={async () => {
+                    const result = await action(
+                      () => api("/workspaces/personal", { method: "POST" }),
+                      "Đã tạo không gian cá nhân",
+                    );
+                    if (!result) return;
+                    setInvitation(null);
+                    go("dashboard");
+                  }}
+                >
+                  <Plus size={16} />
+                  <strong>Tạo không gian cá nhân</strong>
+                </button>
+              )}
               {taskTeamOptions.length > 0 && <span>CHỌN TEAM</span>}
               {taskTeamOptions.map(([id, label]) => (
                 <button
@@ -1286,9 +1307,11 @@ export default function App() {
                   {taskTeamFilter === id && <Check size={15} />}
                 </button>
               ))}
-              <button onClick={() => go("teams")}>
-                <Users size={16} /> Quản lý thành viên
-              </button>
+              {me.workspace.kind !== "personal" && (
+                <button onClick={() => go("teams")}>
+                  <Users size={16} /> Quản lý thành viên
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -1374,7 +1397,7 @@ export default function App() {
               <ShieldCheck size={18} /> Quản trị SaaS <ArrowUpRight size={14} />
             </button>
           )}
-          <div className="plan-promo">
+          {me.workspace.kind !== "personal" && <div className="plan-promo">
             <span className="promo-icon">
               <Sparkles size={15} />
             </span>
@@ -1383,7 +1406,7 @@ export default function App() {
             <button type="button" onClick={() => go("billing")}>
               <span>Khám phá gói dịch vụ</span> <ArrowUpRight size={13} />
             </button>
-          </div>
+          </div>}
 
         </div>
         </div>
@@ -1415,7 +1438,7 @@ export default function App() {
               onTaskOpen={openTaskDetail}
               selectedTaskId={selectedAiTaskId}
               memberTaskCounts={taskTotals.byAssignee}
-              onInvite={canManage ? () => setModal({ type: "invite" }) : null}
+              onInvite={canManage && me.workspace.kind !== "personal" ? () => setModal({ type: "invite" }) : null}
               invitation={invitation}
             />
           )}
@@ -1974,7 +1997,13 @@ export default function App() {
               </p>
             </>
           )}
-          {page === "billing" && (
+          {page === "billing" && me.workspace.kind === "personal" && (
+            <PageHeading
+              title="Không gian cá nhân miễn phí"
+              subtitle="Không gian cá nhân không cần mua gói. Chuyển sang không gian Team / Doanh nghiệp để quản lý thuê bao."
+            />
+          )}
+          {page === "billing" && me.workspace.kind !== "personal" && (
             <>
               <PageHeading
                 title="Một gói phù hợp. Nhiều việc nhẹ hơn."
@@ -2821,6 +2850,7 @@ function Auth({ onLogin, onReset }) {
   const [cooldown, setCooldown] = useState(0);
   const [devAccounts, setDevAccounts] = useState([]);
   const [devMenuOpen, setDevMenuOpen] = useState(false);
+  const [accountType, setAccountType] = useState("team");
 
   useEffect(() => {
     api("/auth/google/config")
@@ -2992,7 +3022,9 @@ function Auth({ onLogin, onReset }) {
     mode === "login"
       ? "Đăng nhập để tiếp tục những việc đang làm."
       : mode === "register"
-        ? "Tạo không gian riêng và dùng thử trong 14 ngày."
+        ? accountType === "personal"
+          ? "Không gian cá nhân miễn phí, chỉ dành riêng cho bạn."
+          : "Tạo không gian cho đội ngũ và dùng thử trong 14 ngày."
         : mode === "invite"
           ? "Tạo tài khoản để nhận lời mời vào không gian."
           : mode === "forgot"
@@ -3069,6 +3101,23 @@ function Auth({ onLogin, onReset }) {
             </div>
           )}
           <form key={mode} onSubmit={submit}>
+            {mode === "register" && (
+              <fieldset className="auth-account-type" disabled={busy}>
+                <legend>Bạn dùng Nhắc tôi cho</legend>
+                {[
+                  ["personal", UserRound, "Cá nhân", "Không gian riêng, miễn phí"],
+                  ["team", Building2, "Team / Doanh nghiệp", "Mời đồng đội cùng làm việc"],
+                ].map(([value, Icon, label, hint]) => (
+                  <label key={value} className={accountType === value ? "selected" : ""}>
+                    <input type="radio" name="accountType" value={value}
+                      checked={accountType === value}
+                      onChange={() => setAccountType(value)} />
+                    <Icon size={18} />
+                    <span><strong>{label}</strong><small>{hint}</small></span>
+                  </label>
+                ))}
+              </fieldset>
+            )}
             {mode === "forgot" && (
               <Field label="Email">
                 <input disabled={busy}
@@ -3207,6 +3256,7 @@ function Auth({ onLogin, onReset }) {
                   <input disabled={busy} name="confirmPassword" type="password" required
                     minLength={8} maxLength={256} autoComplete="new-password" />
                 </Field>
+                {accountType === "team" && (<>
                 <Field label="Tên không gian / doanh nghiệp">
                   <input disabled={busy}
                     name="workspaceName"
@@ -3226,6 +3276,7 @@ function Auth({ onLogin, onReset }) {
                     <option>Bất động sản</option>
                   </select>
                 </Field>
+                </>)}
               </>
             )}
             {error && (
@@ -3244,7 +3295,7 @@ function Auth({ onLogin, onReset }) {
                 : mode === "login"
                   ? "Vào không gian làm việc"
                   : mode === "register"
-                    ? "Tạo không gian miễn phí"
+                    ? accountType === "personal" ? "Tạo không gian cá nhân" : "Tạo không gian miễn phí"
                     : mode === "invite"
                       ? "Tham gia không gian"
                       : mode === "forgot"
