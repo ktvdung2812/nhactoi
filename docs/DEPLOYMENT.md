@@ -61,12 +61,21 @@ vào Git và không gửi secret trong log deploy. Cấu hình đã lưu trong D
 production khi sao lưu/khôi phục.
 
 `NHACTOI_SETTINGS_KEY` phải là 32 byte: 64 ký tự hex hoặc base64. Bản cũ chấp
-nhận chuỗi mật khẩu bất kỳ và băm SHA-256; bản hiện tại từ chối khởi động với
-giá trị đó. Trước khi deploy, nếu production đang dùng chuỗi mật khẩu, thay giá
-trị bằng `printf %s '<chuỗi cũ>' | shasum -a 256` (lấy 64 ký tự hex đầu). Đây
-chính là khóa cũ nên cấu hình mã hóa và bản sao lưu vẫn đọc được. Không tạo khóa
-ngẫu nhiên mới cho máy chủ đã có dữ liệu: cấu hình và bản sao cũ sẽ không giải
-mã được nữa.
+nhận chuỗi mật khẩu bất kỳ; bản hiện tại từ chối khởi động với giá trị đó. Trước
+khi deploy, nếu production đang dùng chuỗi mật khẩu, chạy trong thư mục ứng dụng:
+
+```bash
+printf %s '<giá trị cũ>' | npm run -s settings-key:migrate
+```
+
+rồi thay `NHACTOI_SETTINGS_KEY` bằng 64 ký tự hex được in ra. Script tái hiện
+đúng cách bản cũ tạo khóa: không phải lúc nào cũng là SHA-256, vì chuỗi chứa đúng
+43 ký tự base64 (khoảng trắng, dấu câu bị bỏ qua) từng được giải mã base64. Vì
+vậy không dùng `shasum` thay cho script. Giá trị đọc từ stdin nên không lọt vào
+lịch sử shell qua tham số; script không đọc database và không ghi log. Nếu khóa
+không khớp dữ liệu đã mã hóa, server dừng ngay khi khởi động với thông báo "khóa
+mã hóa gốc không khớp dữ liệu đã mã hóa". Không tạo khóa ngẫu nhiên mới cho máy
+chủ đã có dữ liệu: cấu hình và bản sao cũ sẽ không giải mã được nữa.
 
 ## Git Manager và release an toàn
 

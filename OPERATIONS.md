@@ -16,7 +16,7 @@ Khi phát triển, thay đổi module backend cần khởi động lại Next đ
 
 Admin SaaS → Cấu hình → Sao lưu hệ thống cho phép tạo bản sao ngay và đặt lịch 6/12/24 giờ hoặc hằng tuần. Lịch chạy khi dịch vụ Node đang hoạt động. Bản sao manifest v3 gồm dữ liệu PostgreSQL dạng JSON từ transaction `REPEATABLE READ`, mã hóa bằng khóa mã hóa gốc, các tệp đính kèm trên máy chủ và kho ngoài và SHA-256 kiểm tra toàn vẹn. Bản sao đang chạy dùng thư mục `.pending`; nếu lỗi, dữ liệu tạm được dọn và không được liệt kê là bản sao hoàn chỉnh. Mục **Giữ lại** chọn tất cả (mặc định) hoặc 7/14/30/60 bản gần nhất; khi có giới hạn, bản hoàn chỉnh cũ hơn bị xóa sau mỗi lần sao lưu thành công, thư mục `.pending` không bị đụng tới. Chép bản sao cần giữ lâu ra nơi khác trước khi bật giới hạn và vẫn theo dõi dung lượng đĩa.
 
-Giữ riêng khóa mã hóa cấu hình của máy chủ. Tệp S3/Drive cũng được tải vào bản sao. Nếu kho không truy cập được, bản sao bị đánh dấu chưa hoàn tất. Khi khôi phục, mọi tệp được chép vào thư mục riêng mới trên máy chủ.
+Giữ riêng khóa mã hóa cấu hình của máy chủ. Khi khởi động, server giải mã mọi cấu hình đã mã hóa; nếu khóa không khớp, tiến trình dừng với thông báo "khóa mã hóa gốc không khớp dữ liệu đã mã hóa" thay vì chạy với khóa sai. Máy chủ nâng cấp từ bản cho phép chuỗi mật khẩu làm `NHACTOI_SETTINGS_KEY` cần đổi sang khóa tương đương bằng `printf %s '<giá trị cũ>' | npm run -s settings-key:migrate` (xem `docs/DEPLOYMENT.md`). Tệp S3/Drive cũng được tải vào bản sao. Nếu kho không truy cập được, bản sao bị đánh dấu chưa hoàn tất. Khi khôi phục, mọi tệp được chép vào thư mục riêng mới trên máy chủ.
 
 Khôi phục được thực hiện ngoại tuyến để tránh ghi đè dữ liệu đang sử dụng:
 

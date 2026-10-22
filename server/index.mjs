@@ -277,10 +277,11 @@ function deriveSettingsKey(value) {
     const decoded = Buffer.from(text.replaceAll("-", "+").replaceAll("_", "/"), "base64");
     if (decoded.length === SETTINGS_KEY_BYTES) return decoded;
   }
-  // Earlier releases hashed a passphrase with SHA-256; that digest in hex is
-  // the same key, so existing encrypted settings and backups stay readable.
+  // Earlier releases accepted any passphrase. scripts/settings-key-from-legacy.mjs
+  // reproduces that derivation (base64 bytes or SHA-256) as the equivalent hex
+  // key, so existing encrypted settings and backups stay readable.
   throw new Error("NHACTOI_SETTINGS_KEY phải là 32 byte ngẫu nhiên (hex 64 ký tự hoặc base64). "
-    + "Nếu đang dùng chuỗi mật khẩu, thay bằng SHA-256 hex của chính chuỗi đó (printf %s '<chuỗi>' | shasum -a 256) "
+    + "Nếu đang dùng chuỗi mật khẩu, thay bằng khóa tương đương do printf %s '<chuỗi cũ>' | npm run -s settings-key:migrate in ra "
     + "để vẫn giải mã được cấu hình đã lưu. Chỉ tạo khóa mới (openssl rand -hex 32) cho máy chủ chưa có dữ liệu mã hóa.");
 }
 
@@ -338,7 +339,8 @@ function loadStoredSettings(db, key) {
       const text = row.encrypted ? decryptSetting(row.value, key) : String(row.value);
       values.set(row.key, text);
     } catch {
-      throw new Error('Không giải mã được cấu hình. Kiểm tra khóa mã hóa gốc và tính toàn vẹn bản sao; sender chưa được khởi động.');
+      throw new Error('Không giải mã được cấu hình: khóa mã hóa gốc không khớp dữ liệu đã mã hóa hoặc bản sao bị hỏng. '
+        + 'Kiểm tra NHACTOI_SETTINGS_KEY/tệp khóa (chuyển từ chuỗi mật khẩu cũ bằng npm run settings-key:migrate); sender chưa được khởi động.');
     }
   }
   return values;
