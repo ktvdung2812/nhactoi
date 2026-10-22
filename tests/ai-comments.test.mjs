@@ -344,3 +344,35 @@ test('binary sources are summarized without persisting base64 and reference inst
   assert.equal(run.sources.find(source=>source.id==='attachment:scan').status,'summarized');
   assert.ok(!s.db.prepare('SELECT state_json FROM ai_comment_runs WHERE id=?').get(run.id).state_json.includes(data));
 });
+
+test('only links from the task description and the caller\'s own comments are fetched', async t => {
+  const fetched = [];
+  const s = await setup(t, () => answer('Đã đọc.'), { aiSourceOptions: { fetchUrl: async url => {
+    fetched.push(url); return { mimeType: 'text/plain', data: Buffer.from('Nội dung ' + url) };
+  } } });
+  const other = await user(s, 'other-commenter-links@example.test'); addMember(s, s.owner, other);
+  assert.equal((await call(s, `/tasks/${s.work.id}`, { cookie: s.owner.cookie, method: 'PATCH',
+    body: { description: 'Đặc tả https://example.com/description' } })).status, 200);
+  assert.equal((await post(s, { body: 'Xem giúp https://attacker.example/huge CANARY_OTHER_COMMENT' }, other)).status, 201);
+  assert.equal((await post(s, { body: 'Tài liệu của tôi https://example.com/mine' })).status, 201);
+  assert.equal((await post(s, { body: '@vyvy tóm tắt các tài liệu' })).status, 201);
+  await process(s);
+  const [run] = await runs(s); assert.equal(run.status, 'completed', JSON.stringify(run));
+  assert.deepEqual(fetched.sort(), ['https://example.com/description', 'https://example.com/mine']);
+  assert.ok(!run.sources.some(source => String(source.url).includes('attacker.example')));
+  assert.match(JSON.stringify(s.sent), /CANARY_OTHER_COMMENT/, 'other comments still reach the model as text');
+
+  // Twelve links from the caller: ten are read, the rest reported as skipped.
+  fetched.length = 0;
+  const links = Array.from({ length: 12 }, (_, i) => `https://example.com/many-${i}`).join(' ');
+  assert.equal((await post(s, { body: `@vyvy đọc hết ${links}` })).status, 201);
+  await process(s);
+  const latest = (await runs(s)).find(r => r.id !== run.id);
+  assert.equal(latest.status, 'completed', JSON.stringify(latest));
+  const many = latest.sources.filter(source => String(source.url).includes('/many-'));
+  assert.equal(many.length, 12);
+  // The description and earlier own links also count toward the ten.
+  assert.equal(fetched.length, 10);
+  assert.deepEqual(latest.sources.filter(source => source.status === 'skipped').map(source => source.detail),
+    Array(4).fill('Vượt giới hạn 10 liên kết trong văn bản.'));
+});

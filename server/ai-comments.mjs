@@ -291,8 +291,13 @@ export function registerCommentAssistant(app, { db, clock, config, requireAuth, 
       const assignees = db.prepare('SELECT user_id FROM task_assignees WHERE task_id=? ORDER BY position,user_id').all(task.id).map(p=>p.user_id);
       const dependencies = db.prepare('SELECT predecessor_id,successor_id FROM task_dependencies WHERE workspace_id=? AND project_id=? AND (predecessor_id=? OR successor_id=?)')
         .all(run.workspace_id,run.project_id,task.id,task.id);
+      // Every comment stays in the context as text, but only links in the
+      // task description and the caller's own comments are fetched, so other
+      // commenters (guests included) cannot make each run download for them.
+      const callerComments = new Set(db.prepare("SELECT id FROM task_comments WHERE task_id=? AND author_user_id=? AND coalesce(author_type,'human')<>'assistant'")
+        .all(task.id, run.requested_by).map(row => row.id));
       const documents = await sourceReader({ db, taskId:task.id, workspaceId:run.workspace_id, provider:initialSettings.provider,
-        capabilities: await capabilities(initialSettings), texts:[task.description,...detail.comments.filter(c=>c.authorType!=='assistant').map(c=>c.body)],
+        capabilities: await capabilities(initialSettings), texts:[task.description,...detail.comments.filter(c=>callerComments.has(c.id)).map(c=>c.body)],
         signal, assertAccess: assertCurrent, summarize, ...sourceOptions });
       assertCurrent();
       state.revisions[task.id] = recordRevision(task, 'task');

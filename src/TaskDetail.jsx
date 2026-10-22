@@ -21,7 +21,7 @@ const safeUrl = value => { try { const url = new URL(value); return ["http:", "h
 
 const sourceHref = source => source.kind === "task" && source.taskId ? `/tasks/${encodeURIComponent(source.taskId)}` : /^\/api\/tasks\/[^/?#]+\/attachments\/[^/?#]+\/download$/.test(source.url || "") ? source.url : safeUrl(source.url);
 const taskReferences = sources => (sources || []).filter(source => source.kind === "task" && source.taskId).map(source => ({ id: source.taskId, title: source.title || source.taskId }));
-const sourceStatus = { read: "Đã đọc", partial: "Đọc một phần", failed: "Chưa đọc được", unread: "Chưa đọc", unsupported: "Chưa hỗ trợ", summarized: "Đã đọc và tóm tắt" };
+const sourceStatus = { read: "Đã đọc", partial: "Đọc một phần", failed: "Chưa đọc được", unread: "Chưa đọc", unsupported: "Chưa hỗ trợ", skipped: "Bỏ qua", summarized: "Đã đọc và tóm tắt" };
 const actionStatus = { proposed: "Chờ xác nhận", completed: "Hoàn tất", failed: "Chưa thực hiện", stale: "Đã lỗi thời", dismissed: "Đã bỏ qua" };
 const argLabels = { title: "Tiêu đề", description: "Mô tả", status: "Trạng thái", priority: "Ưu tiên", dueAt: "Hạn", startAt: "Bắt đầu", assigneeId: "Phụ trách", assigneeIds: "Người phối hợp", completed: "Hoàn thành" };
 // Summarize what a proposal would change so the caller can judge it before confirming.

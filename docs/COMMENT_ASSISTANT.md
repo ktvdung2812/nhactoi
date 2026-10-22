@@ -28,9 +28,9 @@ Bình luận được lưu ngay. Worker tiếp tục khi người gọi đóng m
 | CSV, TXT, Markdown | Đọc như dữ liệu văn bản |
 | Website công khai (chỉ HTTPS) | Kiểm tra IP công khai, ghim DNS, kiểm tra lại từng redirect, chuyển HTML thành văn bản bằng `html-to-text` |
 
-Tệp dùng kho nội bộ/S3/Drive hiện có, kiểm tra quyền trước khi chuyển nội dung tới AI. Website không nhận cookie hoặc khóa ứng dụng; chỉ tải URL được dẫn, không thu thập toàn website. Trang cần đăng nhập/JavaScript hoặc nguồn không trích xuất được nội dung được báo chưa đọc được. Khả năng ảnh/PDF chưa xác nhận được coi là chưa hỗ trợ.
+Tệp dùng kho nội bộ/S3/Drive hiện có, kiểm tra quyền trước khi chuyển nội dung tới AI. Website không nhận cookie hoặc khóa ứng dụng; chỉ tải URL được dẫn, không thu thập toàn website. Liên kết được tải chỉ lấy từ mô tả công việc, tệp/URL đính kèm và bình luận của chính người gọi; bình luận của người khác (kể cả khách) vẫn vào ngữ cảnh dưới dạng văn bản nhưng liên kết trong đó không được tải. Trang cần đăng nhập/JavaScript hoặc nguồn không trích xuất được nội dung được báo chưa đọc được. Khả năng ảnh/PDF chưa xác nhận được coi là chưa hỗ trợ.
 
-- Tệp tối đa 10 MiB; URL tối đa 2 MiB; tổng tài liệu tối đa 25 MiB; tối đa 100 nguồn/lượt.
+- Tệp tối đa 10 MiB; URL tối đa 2 MiB; tổng tài liệu tối đa 25 MiB; tối đa 100 nguồn/lượt, trong đó tối đa 10 liên kết lấy từ văn bản (mô tả và bình luận). Liên kết thứ 11 trở đi có trạng thái `skipped` ("Vượt giới hạn 10 liên kết trong văn bản."); tệp và URL đính kèm không tính vào giới hạn 10 này.
 - Tải mỗi nguồn tối đa 20 giây; trích xuất tối đa 250.000 ký tự/nguồn; giữ tối đa 60.000 ký tự văn bản nguồn trước tổng hợp ngữ cảnh.
 - Văn bản dài được chia phần, tổng hợp và giữ ID nguồn. Nguồn bị cắt, lỗi hoặc không hỗ trợ luôn có trạng thái riêng.
 - Mỗi lượt tối đa 10 phút, 90 giây/lần gọi mô hình, 12 vòng công cụ; tối đa 5 lần xử lý. Hạn mức 20 lượt xử lý/10 phút/người/không gian, gồm thử lại.

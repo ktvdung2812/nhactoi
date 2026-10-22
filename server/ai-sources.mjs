@@ -15,7 +15,7 @@ import { getRemoteStore } from "./remote-storage.mjs";
 
 export const AI_SOURCE_LIMITS = Object.freeze({
   fileBytes: 10 * 1024 * 1024, totalFileBytes: 25 * 1024 * 1024,
-  urlBytes: 2 * 1024 * 1024, sources: 100, rawTextChars: 250_000,
+  urlBytes: 2 * 1024 * 1024, sources: 100, textUrls: 10, rawTextChars: 250_000,
   textChars: 60_000, chunkChars: 12_000, sourceTimeoutMs: 20_000,
 });
 
@@ -256,15 +256,20 @@ export async function collectAiSources({ db, taskId, workspaceId, texts = [], at
       urls.add(url); pending.push({ url, source: { id: `attachment:${row.id}`, title: row.title, kind: "url", url } });
     }
   }
+  // Links typed into text cost a fetch each; cap them separately from files
+  // and attached URLs. `texts` must come only from the task and the caller.
+  let textUrls = 0;
   for (const url of sourceUrls(texts)) if (!urls.has(url)) {
-    urls.add(url); pending.push({ url, source: { id: `url:${createHash("sha256").update(url).digest("hex").slice(0, 20)}`, title: url, kind: "url", url } });
+    urls.add(url); pending.push({ url, skip: ++textUrls > AI_SOURCE_LIMITS.textUrls,
+      source: { id: `url:${createHash("sha256").update(url).digest("hex").slice(0, 20)}`, title: url, kind: "url", url } });
   }
   let byteCount = 0, charCount = 0;
   for (let index = 0; index < pending.length; index++) {
-    const { row, url, source } = pending[index];
+    const { row, url, source, skip } = pending[index];
     source.status = "unread"; sources.push(source);
     await assertAccess(); signal?.throwIfAborted();
     if (index >= AI_SOURCE_LIMITS.sources) { source.detail = "Vượt giới hạn 100 nguồn trong một lượt xử lý."; continue; }
+    if (skip) { source.status = "skipped"; source.detail = `Vượt giới hạn ${AI_SOURCE_LIMITS.textUrls} liên kết trong văn bản.`; continue; }
     const sourceSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(AI_SOURCE_LIMITS.sourceTimeoutMs)]) : AbortSignal.timeout(AI_SOURCE_LIMITS.sourceTimeoutMs);
     try {
       let extracted;

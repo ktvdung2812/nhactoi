@@ -180,3 +180,18 @@ test('login pages and JavaScript shells are reported unread instead of pretendin
     assert.equal(result.sources[0].status,'unread');assert.equal(result.text,'');
   }
 });
+
+test('links typed in text are capped at 10 per run; files and attached URLs do not count toward that cap', async () => {
+  const fetched = [];
+  const texts = [Array.from({ length: 12 }, (_, i) => `https://example.com/text-${i}`).join(' ')];
+  const result = await collectAiSources({ taskId: 't', assertAccess() {}, texts,
+    attachments: [{ id: 'link', kind: 'link', title: 'Attached', url: 'https://example.com/attached' }],
+    fetchUrl: async url => { fetched.push(url); return { mimeType: 'text/plain', data: Buffer.from('Nội dung ' + url) }; } });
+  assert.equal(AI_SOURCE_LIMITS.textUrls, 10);
+  assert.deepEqual(fetched, ['https://example.com/attached', ...Array.from({ length: 10 }, (_, i) => `https://example.com/text-${i}`)]);
+  const skipped = result.sources.filter(source => source.status === 'skipped');
+  assert.deepEqual(skipped.map(source => source.url), ['https://example.com/text-10', 'https://example.com/text-11']);
+  assert.ok(skipped.every(source => source.detail === 'Vượt giới hạn 10 liên kết trong văn bản.'));
+  assert.equal(result.sources.filter(source => source.status === 'read').length, 11);
+  assert.doesNotMatch(result.text, /text-1[01]/u);
+});
