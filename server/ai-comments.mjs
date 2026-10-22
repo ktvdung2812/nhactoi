@@ -7,7 +7,7 @@ import { withMutationContext } from './task-mutation-pipeline.mjs';
 import { notifyTaskAudience } from './collaboration.mjs';
 import { completion } from './ai-provider.mjs';
 import { collectAiSources } from './ai-sources.mjs';
-import { aiRunJson, enqueueAiComment, jsonValue, workspaceAssistant } from './ai-comment-state.mjs';
+import { aiRunJson, enqueueAiComment, jsonValue, persistActions, workspaceAssistant } from './ai-comment-state.mjs';
 import { outboundSendersPaused } from './restore-safety.mjs';
 
 const object = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
@@ -117,14 +117,6 @@ export function registerCommentAssistant(app, { db, clock, config, requireAuth, 
     if (action.status !== 'proposed') fail(409, 'Đề xuất này đã được xử lý.');
     return { task, run, actions, action };
   }
-  // The run, its resumable state and the public reply all show the same list.
-  function persistActions(run, actions, at) {
-    const state = jsonValue(run.state_json, {});
-    if (Array.isArray(state.actions)) state.actions = actions;
-    db.prepare('UPDATE ai_comment_runs SET actions_json=?,state_json=?,updated_at=? WHERE id=?').run(JSON.stringify(actions), JSON.stringify(state), at, run.id);
-    const reply = run.reply_comment_id && db.prepare('SELECT ai_metadata FROM task_comments WHERE id=?').get(run.reply_comment_id);
-    if (reply) db.prepare('UPDATE task_comments SET ai_metadata=? WHERE id=?').run(JSON.stringify({ ...jsonValue(reply.ai_metadata, {}), actions }), run.reply_comment_id);
-  }
   const proposalResult = (req, run, action, extra = {}) =>
     ({ run: aiRunJson(db.prepare('SELECT * FROM ai_comment_runs WHERE id=?').get(run.id), req.auth), action, ...extra });
   app.post('/api/tasks/:id/ai-runs/:runId/actions/:actionId/apply', requireAuth, (req, res) => {
@@ -133,7 +125,7 @@ export function registerCommentAssistant(app, { db, clock, config, requireAuth, 
       const { run, actions, action } = loadProposal(req);
       if (!['completed', 'failed'].includes(run.status)) fail(409, 'Trợ lý chưa xử lý xong yêu cầu này.');
       if (!action.operation) fail(409, 'Đề xuất này không còn thực hiện được. Hãy gửi yêu cầu mới.');
-      const settle = (status, extra = {}) => { Object.assign(action, { status, resolvedAt: at, ...extra }); persistActions(run, actions, at); };
+      const settle = (status, extra = {}) => { Object.assign(action, { status, resolvedAt: at, ...extra }); persistActions(db, run, actions, at); };
       const stale = error => { settle('stale', { error }); return { status: 409, body: { error, ...proposalResult(req, run, action) } }; };
       if (Date.parse(at) - Date.parse(action.proposedAt) > PROPOSAL_TTL_MS) return stale('Đề xuất đã quá 24 giờ. Hãy gửi yêu cầu mới.');
       const operation = { ...action.operation, body: { ...action.operation.body } };
@@ -162,7 +154,7 @@ export function registerCommentAssistant(app, { db, clock, config, requireAuth, 
       if (action.name !== 'create_task' && output.taskRevision) {
         for (const other of actions) if (other.status === 'proposed' && other.operation?.taskId === operation.taskId
           && other.operation.body.expectedRevision === operation.body.expectedRevision) other.operation.body.expectedRevision = output.taskRevision;
-        persistActions(run, actions, at);
+        persistActions(db, run, actions, at);
       }
       return { status: 200, body: proposalResult(req, run, action, { taskRevision: output.taskRevision || null }) };
     });
@@ -174,7 +166,7 @@ export function registerCommentAssistant(app, { db, clock, config, requireAuth, 
       const { run, actions, action } = loadProposal(req);
       if (!['completed', 'failed', 'cancelled'].includes(run.status)) fail(409, 'Trợ lý chưa xử lý xong yêu cầu này.');
       Object.assign(action, { status: 'dismissed', resolvedAt: at });
-      persistActions(run, actions, at);
+      persistActions(db, run, actions, at);
       return proposalResult(req, run, action);
     }));
   });

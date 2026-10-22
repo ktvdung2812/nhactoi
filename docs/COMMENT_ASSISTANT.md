@@ -41,7 +41,7 @@ Các endpoint dùng cơ chế xác thực hiện có; quyền được kiểm tr
 
 | Endpoint | Hợp đồng bổ sung |
 | --- | --- |
-| `GET /api/ai/config` | `assistant`, `canManageAssistant`, `capabilities` cùng cấu hình công khai hiện có |
+| `GET /api/ai/config` | `enabled`, `ready`, `assistant`, `canManageAssistant`, `capabilities`; `provider` và `model` chỉ trả cho người quản lý trợ lý |
 | `PUT /api/ai/workspace-settings` | Owner/admin gửi `{ name, handle, enabled }` |
 | `POST /api/tasks/:id/comments` | Nhận `operationId` hoặc `Idempotency-Key`; trả `{ comment, aiRun? }` |
 | `GET /api/tasks/:id/detail` | Bình luận có `authorType`, `replyToCommentId`, `aiRunId`, `sources`, `actions` |
@@ -50,13 +50,13 @@ Các endpoint dùng cơ chế xác thực hiện có; quyền được kiểm tr
 | `POST /api/tasks/:id/ai-runs/:runId/actions/:actionId/apply` | Người gọi thực hiện một đề xuất của lượt `completed`/`failed`; trả `{ run, action, taskRevision }`. 409 khi đã xử lý hoặc lỗi thời, 403 khi không còn quyền sửa |
 | `POST /api/tasks/:id/ai-runs/:runId/actions/:actionId/dismiss` | Người gọi bỏ qua đề xuất; trả `{ run, action }` |
 
-Mỗi thao tác trong `actions` có `id`, `name`, `taskId`, `status` (`proposed`, `completed`, `failed`, `stale`, `dismissed`), `summary`, `args`, `proposedAt`, và khi đã xử lý thì `resolvedAt`, `error` hoặc `result`. Thao tác cũ (trước khi có bước xác nhận) không có `operation` nên không thực hiện lại được.
+Mỗi thao tác trong `actions` có `id`, `name`, `taskId`, `status` (`proposed`, `completed`, `failed`, `stale`, `dismissed`), `summary`, `args`, `proposedAt`, và khi đã xử lý thì `resolvedAt`, `error` hoặc `result`; đề xuất bị bỏ qua do sửa/xóa bình luận gọi có thêm `dismissedAt` và `reason`. Thao tác cũ (trước khi có bước xác nhận) không có `operation` nên không thực hiện lại được.
 
 `operationId` gồm 8–160 ký tự hợp lệ và phải được giữ nguyên khi gửi lại cùng yêu cầu sau lỗi mạng. Dùng lại khóa với nội dung khác bị từ chối. Nếu gửi cả khóa trong body và header, hai giá trị phải khớp.
 
 Migration PostgreSQL **015** thêm `workspace_ai_settings`, `ai_comment_runs` và metadata bình luận AI. Bình luận và lượt xử lý được lưu trong cùng transaction; việc gọi nhà cung cấp diễn ra sau commit. Worker lưu lời gọi công cụ, tiến độ và đề xuất. Khi người gọi xác nhận, thao tác dùng `operationId` là ID đề xuất nên có mutation receipt và sự kiện nghiệp vụ mang `causation_id` của lượt xử lý.
 
-Trạng thái gồm `queued`, `reading`, `executing`, `completed`, `failed`, `cancelled`. Sửa/xóa bình luận gọi dừng phần chưa thực hiện, không hoàn tác những thay đổi đã lưu. Xung đột revision hoặc thay đổi quyền/ngữ cảnh yêu cầu bình luận mới; không tự ghi đè dữ liệu.
+Trạng thái gồm `queued`, `reading`, `executing`, `completed`, `failed`, `cancelled`. Sửa/xóa bình luận gọi dừng phần chưa thực hiện, không hoàn tác những thay đổi đã lưu; mọi đề xuất còn **Chờ xác nhận** của bình luận đó chuyển thành `dismissed` với `reason: "comment_removed"` nên không áp dụng được nữa (apply trả 409). Xung đột revision hoặc thay đổi quyền/ngữ cảnh yêu cầu bình luận mới; không tự ghi đè dữ liệu.
 
 ## Triển khai và vận hành
 

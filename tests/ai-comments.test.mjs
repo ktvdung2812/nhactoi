@@ -392,3 +392,25 @@ test('/ai/config shows provider and model only to people who manage the assistan
     assert.ok(!('provider' in body) && !('model' in body), JSON.stringify(body));
   }
 });
+
+test('editing or deleting the calling comment dismisses its open proposals', async t => {
+  for (const verb of ['PATCH', 'DELETE']) await t.test(verb, async t => {
+    let phase = 0;
+    const s = await setup(t, () => phase++ === 0 ? tools(['update_task', { priority: 'high' }]) : answer('Đề xuất ưu tiên cao.'));
+    const calling = await post(s, { body: '@vyvy ưu tiên cao' }); assert.equal(calling.status, 201);
+    await process(s);
+    const [run] = await runs(s); assert.equal(run.status, 'completed'); assert.equal(run.actions[0].status, 'proposed');
+    const changed = await call(s, `/tasks/${s.work.id}/comments/${calling.body.comment.id}`, { cookie: s.owner.cookie, method: verb,
+      ...(verb === 'PATCH' ? { body: { body: 'Đã đổi ý, không cần nữa' } } : {}) });
+    assert.equal(changed.status, 200, JSON.stringify(changed.body));
+    assert.equal((await act(s, run, run.actions[0], 'apply')).status, 409);
+    const [after] = await runs(s);
+    assert.equal(after.status, 'completed');
+    assert.equal(after.actions[0].status, 'dismissed'); assert.equal(after.actions[0].reason, 'comment_removed');
+    assert.ok(after.actions[0].dismissedAt);
+    // The public reply carries the same list, so nobody sees it as still open.
+    assert.equal(JSON.parse(s.db.prepare('SELECT ai_metadata FROM task_comments WHERE id=?').get(after.replyCommentId).ai_metadata).actions[0].status, 'dismissed');
+    assert.equal((await detail(s)).task.priority, s.work.priority);
+    assert.equal(receipts(s, run), 0);
+  });
+});

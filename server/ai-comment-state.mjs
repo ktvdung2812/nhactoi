@@ -36,11 +36,30 @@ export function enqueueAiComment(db, { task, auth, comment, createdAt, ready }) 
   return aiRunJson(db.prepare('SELECT * FROM ai_comment_runs WHERE id=?').get(id), auth);
 }
 
+// The run, its resumable state and the public reply all show the same list.
+export function persistActions(db, run, actions, at) {
+  const state = jsonValue(run.state_json, {});
+  if (Array.isArray(state.actions)) state.actions = actions;
+  db.prepare('UPDATE ai_comment_runs SET actions_json=?,state_json=?,updated_at=? WHERE id=?').run(JSON.stringify(actions), JSON.stringify(state), at, run.id);
+  const reply = run.reply_comment_id && db.prepare('SELECT ai_metadata FROM task_comments WHERE id=?').get(run.reply_comment_id);
+  if (reply) db.prepare('UPDATE task_comments SET ai_metadata=? WHERE id=?').run(JSON.stringify({ ...jsonValue(reply.ai_metadata, {}), actions }), run.reply_comment_id);
+}
+
 export function cancelCommentRuns(db, commentId, at) {
   if (db.dialect !== 'postgres') return;
   db.prepare(`UPDATE ai_comment_runs SET status='cancelled',error=?,lease_token=NULL,lease_until=NULL,updated_at=?
     WHERE comment_id=? AND status IN ('queued','reading','executing','failed')`)
     .run('Bình luận gọi trợ lý đã được sửa hoặc xóa; các thao tác đã hoàn tất được giữ nguyên.', at, commentId);
+  // Proposals answer the request as it was written; once it is edited or
+  // removed they must not be applied. Lock like apply does so neither races.
+  for (const run of db.prepare('SELECT * FROM ai_comment_runs WHERE comment_id=? FOR UPDATE').all(commentId)) {
+    const actions = jsonValue(run.actions_json, []);
+    const open = actions.filter(action => action.status === 'proposed');
+    if (!open.length) continue;
+    for (const action of open) Object.assign(action, { status: 'dismissed', resolvedAt: at, dismissedAt: at, reason: 'comment_removed',
+      error: 'Bình luận gọi trợ lý đã được sửa hoặc xóa.' });
+    persistActions(db, run, actions, at);
+  }
 }
 
 // Shared comments must never reveal a project that was moved or revoked after
