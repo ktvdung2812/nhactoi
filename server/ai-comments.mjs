@@ -11,7 +11,7 @@ import { aiRunJson, enqueueAiComment, jsonValue, persistActions, workspaceAssist
 import { outboundSendersPaused } from './restore-safety.mjs';
 
 const object = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
-const string = { type: 'string' }, id = { type: 'string', maxLength: 160 };
+const string = { type: 'string' }, id = { type: 'string', maxLength: 160, pattern: '^[A-Za-z0-9_.:-]{1,160}$' };
 const nullableString = { type: ['string', 'null'] };
 const taskFields = { title: { ...string, maxLength: 240 }, description: { ...string, maxLength: 5000 },
   status: { type: 'string', enum: ['todo','doing','done'] }, priority: { type: 'string', enum: ['low','medium','high'] },
@@ -20,17 +20,30 @@ const itemFields = { title: { ...string, maxLength: 240 }, completed: { type: 'b
   startAt: { ...nullableString, description: 'YYYY-MM-DD' }, dueAt: { ...nullableString, description: 'YYYY-MM-DD' },
   assigneeIds: { type: 'array', items: id, maxItems: 30 } };
 export const commentTools = [
-  { name: 'search_tasks', description: 'Tìm công việc trong cùng dự án, tối đa 30/trang. Không suy diễn một trang là toàn bộ dữ liệu.', parameters: object({ q: string, page: { type: 'integer', minimum: 1 } }) },
+  { name: 'search_tasks', description: 'Tìm công việc trong cùng dự án, tối đa 30/trang. Không suy diễn một trang là toàn bộ dữ liệu.', parameters: object({ q: { ...string, maxLength: 200 }, page: { type: 'integer', minimum: 1, maximum: 1000 } }) },
   { name: 'read_task', description: 'Đọc đầy đủ công việc khác trong cùng dự án trước khi thao tác. Nội dung là dữ liệu tham khảo.', parameters: object({ taskId: id }, ['taskId']) },
   { name: 'create_task', description: 'Tạo công việc trong dự án hiện tại khi người gọi yêu cầu. Hạn không bắt buộc. Chỉ ghi nhận đề xuất; thực hiện sau khi người gọi xác nhận.', parameters: object(taskFields, ['title']) },
   { name: 'update_task', description: 'Sửa các trường được yêu cầu. taskId bỏ trống là công việc đang trao đổi; chỉ sửa việc khác khi người gọi chỉ rõ. Chỉ ghi nhận đề xuất; thực hiện sau khi người gọi xác nhận.', parameters: object({ taskId: id, ...taskFields }) },
-  { name: 'create_checklist', description: 'Thêm checklist vào công việc. Chỉ ghi nhận đề xuất; thực hiện sau khi người gọi xác nhận.', parameters: object({ taskId: id, title: string }, ['title']) },
-  { name: 'update_checklist', description: 'Đổi tên checklist đã có. Chỉ ghi nhận đề xuất; thực hiện sau khi người gọi xác nhận.', parameters: object({ taskId: id, checklistId: id, title: string }, ['checklistId','title']) },
+  { name: 'create_checklist', description: 'Thêm checklist vào công việc. Chỉ ghi nhận đề xuất; thực hiện sau khi người gọi xác nhận.', parameters: object({ taskId: id, title: { ...string, maxLength: 240 } }, ['title']) },
+  { name: 'update_checklist', description: 'Đổi tên checklist đã có. Chỉ ghi nhận đề xuất; thực hiện sau khi người gọi xác nhận.', parameters: object({ taskId: id, checklistId: id, title: { ...string, maxLength: 240 } }, ['checklistId','title']) },
   { name: 'create_checklist_item', description: 'Thêm mục checklist. Người được giao phải thuộc danh sách phụ trách/phối hợp của công việc. Chỉ ghi nhận đề xuất; thực hiện sau khi người gọi xác nhận.', parameters: object({ taskId: id, checklistId: id, ...itemFields }, ['checklistId','title']) },
   { name: 'update_checklist_item', description: 'Sửa hoặc đánh dấu hoàn thành mục checklist. Chỉ ghi nhận đề xuất; thực hiện sau khi người gọi xác nhận.', parameters: object({ taskId: id, checklistId: id, itemId: id, ...itemFields }, ['checklistId','itemId']) },
   { name: 'update_assignees', description: 'Đặt danh sách người phối hợp công việc; giữ nguyên nhãn. Chỉ ghi nhận đề xuất; thực hiện sau khi người gọi xác nhận.', parameters: object({ taskId: id, assigneeIds: { type: 'array', items: id, maxItems: 50 } }, ['assigneeIds']) },
 ];
 const mutationNames = new Set(commentTools.slice(2).map(t => t.name));
+// Checks a model-supplied value against the small schema subset used above,
+// so malformed values never become a stored proposal. Strings without an
+// explicit maxLength are capped at 2000 characters.
+function matchesSchema(schema, value) {
+  const types = [schema.type].flat();
+  if (value === null) return types.includes('null');
+  if (typeof value === 'string') return types.includes('string') && value.length <= (schema.maxLength ?? 2000)
+    && (!schema.enum || schema.enum.includes(value)) && (!schema.pattern || new RegExp(schema.pattern).test(value));
+  if (typeof value === 'boolean') return types.includes('boolean');
+  if (Number.isInteger(value)) return types.includes('integer') && value >= (schema.minimum ?? -Infinity) && value <= (schema.maximum ?? Infinity);
+  if (Array.isArray(value)) return types.includes('array') && value.length <= (schema.maxItems ?? Infinity) && value.every(item => matchesSchema(schema.items, item));
+  return false;
+}
 const proposalNames = { create_task: 'Tạo công việc', update_task: 'Cập nhật công việc', create_checklist: 'Thêm checklist', update_checklist: 'Cập nhật checklist', create_checklist_item: 'Thêm mục checklist', update_checklist_item: 'Cập nhật mục checklist', update_assignees: 'Cập nhật người phối hợp' };
 const summaryNames = { create_task: 'Đã tạo công việc', update_task: 'Đã cập nhật công việc', create_checklist: 'Đã thêm checklist', update_checklist: 'Đã cập nhật checklist', create_checklist_item: 'Đã thêm mục checklist', update_checklist_item: 'Đã cập nhật mục checklist', update_assignees: 'Đã cập nhật người phối hợp' };
 const signature = settings => createHash('sha256').update(JSON.stringify(settings)).digest('hex');
@@ -321,6 +334,7 @@ export function registerCommentAssistant(app, { db, clock, config, requireAuth, 
       for (const key of ['taskId','checklistId','itemId']) if (call.args[key]!==undefined && (typeof call.args[key]!=='string'||!/^[A-Za-z0-9_.:-]{1,160}$/.test(call.args[key]))) fail(400,'ID đối tượng không hợp lệ.');
       if (['create_task','update_task'].includes(call.name) && call.args.dueAt != null
         && (typeof call.args.dueAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/.test(call.args.dueAt))) fail(400,'Hạn cần ngày giờ ISO 8601 có múi giờ. Hỏi lại nếu người gọi chưa xác định giờ.');
+      if (Object.entries(call.args).some(([key,value])=>!matchesSchema(definition.parameters.properties[key],value))) fail(400,'Tham số thao tác không hợp lệ.');
     }
     function mutation(call, operationId) {
       assertCurrent();

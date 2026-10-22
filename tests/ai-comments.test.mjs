@@ -414,3 +414,26 @@ test('editing or deleting the calling comment dismisses its open proposals', asy
     assert.equal(receipts(s, run), 0);
   });
 });
+
+test('tool arguments of the wrong type or size are rejected before they become proposals', async t => {
+  let phase = 0;
+  const many = Array.from({ length: 51 }, (_, i) => `user_${i}`);
+  const s = await setup(t, () => phase++ === 0 ? tools(
+    ['update_task', { title: { injected: 'CANARY_OBJECT' } }],
+    ['update_checklist_item', { checklistId: 'cl_1', itemId: 'it_1', completed: 'yes' }],
+    ['update_assignees', { assigneeIds: many }],
+    ['create_checklist', { title: 'x'.repeat(241) }],
+    ['update_task', { priority: 'urgent' }],
+    ['update_task', { priority: 'high', title: 'Tiêu đề hợp lệ' }],
+  ) : answer('Xong.'));
+  await post(s, { body: '@vyvy cập nhật' }); await process(s);
+  const [run] = await runs(s); assert.equal(run.status, 'completed', JSON.stringify(run));
+  assert.deepEqual(run.actions.map(a => [a.name, a.status]), [
+    ['update_task', 'failed'], ['update_checklist_item', 'failed'], ['update_assignees', 'failed'],
+    ['create_checklist', 'failed'], ['update_task', 'failed'], ['update_task', 'proposed']]);
+  assert.ok(run.actions.slice(0, 5).every(a => a.error === 'Tham số thao tác không hợp lệ.' && a.args === undefined), JSON.stringify(run.actions));
+  assert.deepEqual(run.actions[5].args, { priority: 'high', title: 'Tiêu đề hợp lệ' });
+  assert.ok(!JSON.stringify((await detail(s)).comments).includes('CANARY_OBJECT'));
+  assert.equal((await act(s, run, run.actions[5], 'apply')).status, 200);
+  assert.equal((await detail(s)).task.priority, 'high');
+});
