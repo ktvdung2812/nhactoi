@@ -105,7 +105,7 @@ self.__SERVER_FILES_MANIFEST={
         "transform": "lodash/{{member}}"
       }
     },
-    "outputFileTracingRoot": "/Users/ktvdung/Documents/Github/nhactoi",
+    "outputFileTracingRoot": "/private/tmp/nhactoi-publish-main",
     "allowedDevOrigins": [
       "nhactoi.test"
     ],
@@ -365,14 +365,14 @@ self.__SERVER_FILES_MANIFEST={
         "./*.tar.gz"
       ]
     },
-    "repoRoot": "/Users/ktvdung/Documents/Github/nhactoi",
+    "repoRoot": "/private/tmp/nhactoi-publish-main",
     "turbopack": {
-      "root": "/Users/ktvdung/Documents/Github/nhactoi"
+      "root": "/private/tmp/nhactoi-publish-main"
     },
     "distDirRoot": ".next",
     "supportsImmutableAssets": false
   },
-  "appDir": "/Users/ktvdung/Documents/Github/nhactoi",
+  "appDir": "/private/tmp/nhactoi-publish-main",
   "relativeAppDir": "",
   "files": [
     ".next/package.json",
