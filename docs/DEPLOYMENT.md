@@ -198,4 +198,6 @@ Rollback mã nguồn nên giữ nguyên các bảng migration 31 (additive), kh�
 
 ## GitHub Actions
 
-Mỗi push lên `main` chạy workflow **Publish deploy**. Workflow cài dependency, chạy `npm run build`, rồi cập nhật nhánh `deploy` với thư mục `.next` đã build. aaPanel lắng nghe push của nhánh `deploy`; script deploy bỏ qua `build:server` khi archive có `.next/BUILD_ID`.
+Mỗi push lên `main` chạy workflow **Publish deploy**. Workflow cài dependency, chạy `npm run build`, rồi cập nhật nhánh `deploy` với thư mục `.next` đã build (kèm `.next/BUILD_NEXT_VERSION`). aaPanel lắng nghe push của nhánh `deploy`; script deploy bỏ qua `build:server` khi archive có `.next/BUILD_ID` và kiểm tra phiên bản Next trước khi start.
+
+Nếu thấy lỗi `getAssetPrefixForRender is not a function` hoặc log báo Next.js khác với `.next/BUILD_NEXT_VERSION`, release đang chạy `node_modules/next` không khớp artifact đã build. Trong thư mục release mới, chạy `npm ci --omit=dev` (không `npm install`, không tái dùng `node_modules` cũ), rồi restart.
