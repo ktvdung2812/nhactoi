@@ -712,6 +712,9 @@ export default function App() {
   const role = me?.user?.role,
     canManage = role === "owner" || role === "admin",
     unread = notifications.filter((n) => !n.readAt && !n.isRead);
+  // Shared by the sidebar and the menu editor in Appearance.
+  const canSeeNav = (id) => (me?.user?.memberType !== "guest" || ["tasks", "projects", "today", "upcoming", "week", "inbox"].includes(id))
+    && (!["finance", "zalo-oa"].includes(id) || canManage);
   useEffect(() => {
     if (me && page === "finance" && !canManage) go("dashboard");
   }, [me?.user?.role, page]);
@@ -1333,11 +1336,8 @@ export default function App() {
         <nav className="sidebar-nav">
           {navSections.map((section) => {
             const sectionItems = navItems
-              .filter(([id]) => section.items.includes(id))
-              .filter(([id]) => me.user.memberType!=="guest" || ["tasks","projects","today","upcoming","inbox","week"].includes(id))
-              .filter(([id]) => id!=="zalo-oa" || ["owner","admin"].includes(me.user.role))
+              .filter(([id]) => section.items.includes(id) && canSeeNav(id))
               .filter(([id]) => !appearance.preferences.hiddenNav.includes(id))
-              .filter((n) => (n[0] !== "finance" || canManage) && n[0] !== "account")
               .sort(([left], [right]) => appearance.preferences.navOrder.indexOf(left) - appearance.preferences.navOrder.indexOf(right));
 
             if (sectionItems.length === 0) return null;
@@ -1434,7 +1434,10 @@ export default function App() {
           {bootstrapReadError && <div role="alert">Không thể làm mới dữ liệu: {bootstrapReadError} <button type="button" onClick={()=>refresh().catch(e=>setBootstrapReadError(e.message))}>Thử lại</button></div> }
           {page === "week" && <WeekCalendar key={me.workspace.id} api={api} me={me} refreshToken={data.tasks} onOpenTask={openTaskDetail} onOpenEvent={event => openUnifiedItem({ ...event, kind: event.service_id ? "renewal" : "event", dueAt: event.starts_at, endsAt: event.ends_at, teamId: event.team_id })} onChanged={refresh} />}
           {["inbox", "today", "upcoming"].includes(page) && <PersonalTasks key={me.workspace.id} api={api} me={me} view={page} refreshToken={data.tasks} onOpen={openTaskDetail} onChanged={refresh} />}
-          {page === "appearance" && <Appearance key={`${me.workspace.id}/${appearanceTeamId}`} appearance={appearance} teams={teams} teamId={appearanceTeamId} go={go} canManage={canManage} />}
+          {page === "appearance" && <Appearance key={`${me.workspace.id}/${appearanceTeamId}`} appearance={appearance} teams={teams} teamId={appearanceTeamId} go={go}
+            navGroups={navSections.map((section) => ({ id: section.id, label: section.label,
+              items: navItems.filter(([id]) => section.items.includes(id) && canSeeNav(id)).map(([id, label]) => ({ id, label })) }))
+              .filter((group) => group.items.length)} />}
           {(page.split("/")[0] === "teams" || (page.startsWith("tasks/") && taskReturnPage?.startsWith("teams/"))) && (
             <Teams
               key={`${me.workspace.id}/${page.startsWith("tasks/") ? taskReturnPage : page}`}

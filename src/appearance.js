@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { APPEARANCE_DEFAULTS, APPEARANCE_FIELDS, resolveAppearance } from '../shared/appearance.mjs';
+import { APPEARANCE_DEFAULTS, APPEARANCE_FIELDS, APPEARANCE_PERSONAL_FIELDS, resolveAppearance } from '../shared/appearance.mjs';
 import { getSavedTheme, setThemeOverride } from './theme.js';
 
-export function accentColors(hex) {
+const PERSONAL_EDITABLE = [...APPEARANCE_FIELDS, ...APPEARANCE_PERSONAL_FIELDS];
+const DATASET = [['appearanceBackground', 'background'], ['appearanceDensity', 'density'], ['appearanceContrast', 'contrast'], ['appearanceMotion', 'motion']];
+
+export function accentColors(hex, high = false) {
   const rgb = hex.slice(1).match(/../g).map(v => parseInt(v, 16));
   const luminance = values => values.map(v => {
     v /= 255;
@@ -10,21 +13,21 @@ export function accentColors(hex) {
   }).reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
   const color = values => '#' + values.map(v => Math.round(v).toString(16).padStart(2, '0')).join('');
   let light = [...rgb], dark = [...rgb];
-  // Keep accent text legible against both surface palettes (WCAG AA).
-  while (luminance(light) > 0.17) light = light.map(v => v * 0.92);
-  while (luminance(dark) < 0.4) dark = dark.map(v => v + (255 - v) * 0.08);
+  // Keep accent text legible against both surface palettes (WCAG AA, or AAA for high contrast).
+  while (luminance(light) > (high ? 0.1 : 0.17)) light = light.map(v => v * 0.92);
+  while (luminance(dark) < (high ? 0.55 : 0.4)) dark = dark.map(v => v + (255 - v) * 0.08);
   return { light: color(light), dark: color(dark), onAccent: luminance(rgb) > 0.179 ? '#101214' : '#ffffff' };
 }
 
 export function appearanceStyle(preferences) {
-  const colors = accentColors(preferences.accent);
+  const colors = accentColors(preferences.accent, preferences.contrast === 'high');
   return {
     '--appearance-accent': preferences.accent,
     '--appearance-accent-light': colors.light,
     '--appearance-accent-dark': colors.dark,
     '--appearance-on-accent': colors.onAccent,
     '--font-sans': preferences.font === 'system' ? 'system-ui, -apple-system, "Segoe UI", sans-serif' : '"Be Vietnam Pro", system-ui, sans-serif',
-    '--appearance-font-size': { small: '93.75%', medium: '100%', large: '112.5%' }[preferences.fontSize],
+    '--appearance-font-size': { small: '93.75%', medium: '100%', large: '112.5%', xlarge: '125%' }[preferences.fontSize],
     '--radius-control': preferences.corners === 'square' ? '3px' : '8px',
     '--radius-card': preferences.corners === 'square' ? '4px' : '12px',
     '--radius-dialog': preferences.corners === 'square' ? '6px' : '16px',
@@ -47,7 +50,7 @@ export function useAppearance({ api, userId, workspaceId, teamId, enabled, notif
   const key = enabled && userId && workspaceId ? `${workspaceId}/${userId}/${teamId || ''}` : '';
   const [baseMode, setBaseMode] = useState(() => getSavedTheme());
   const defaults = useMemo(() => ({ ...APPEARANCE_DEFAULTS, mode: baseMode }), [baseMode]);
-  const [state, setState] = useState({ key: '', ready: false, saved: null, team: null });
+  const [state, setState] = useState({ key: '', ready: false, saved: null, team: null, accessibility: null });
   const [draft, setDraft] = useState(null);
   const [policyDraft, setPolicyDraft] = useState(null);
   const [editingTeam, setEditingTeam] = useState(false);
@@ -60,9 +63,14 @@ export function useAppearance({ api, userId, workspaceId, teamId, enabled, notif
   const endpoint = `/appearance${teamId ? `?teamId=${encodeURIComponent(teamId)}` : ''}`;
   const ready = !!key && state.key === key && state.ready;
   const team = ready ? state.team : null;
+  const accessibility = team ? state.accessibility : null;
   const effective = useMemo(() => ready ? resolveAppearance(state.saved || (team ? null : defaults), team) : defaults, [ready, state.saved, team, defaults]);
-  const preferences = useMemo(() => ready ? (draft ? (editingTeam ? draft : resolveAppearance(draft, team)) : (editingTeam ? team.preferences : effective)) : defaults, [ready, draft, editingTeam, team, effective, defaults]);
-  const editableFields = editingTeam || !team ? APPEARANCE_FIELDS : team.editableFields;
+  const preferences = useMemo(() => {
+    const base = ready ? (draft ? (editingTeam ? draft : resolveAppearance(draft, team)) : (editingTeam ? team.preferences : effective)) : defaults;
+    // Personal accessibility settings stay in force inside teams, even while editing the team look.
+    return accessibility ? { ...base, ...accessibility } : base;
+  }, [ready, draft, editingTeam, team, effective, defaults, accessibility]);
+  const editableFields = !team ? PERSONAL_EDITABLE : editingTeam ? APPEARANCE_FIELDS : team.editableFields;
 
   useEffect(() => {
     let canceled = false;
@@ -70,14 +78,14 @@ export function useAppearance({ api, userId, workspaceId, teamId, enabled, notif
     setPolicyDraft(null);
     setEditingTeam(false);
     setBusy(false);
-    setState({ key, ready: false, saved: null, team: null });
+    setState({ key, ready: false, saved: null, team: null, accessibility: null });
     if (!key) return;
     const load = () => {
       const sequence = ++readSequence.current;
       api(endpoint).then(result => {
         if (!canceled && sequence === readSequence.current) {
           if (!teamId && !result.preferences) setBaseMode(getSavedTheme());
-          setState({ key, ready: true, saved: result.preferences, team: result.team });
+          setState({ key, ready: true, saved: result.preferences, team: result.team, accessibility: result.accessibility || null });
         }
       }).catch(error => {
         if (!canceled && sequence === readSequence.current) setState(previous => ({
@@ -101,9 +109,11 @@ export function useAppearance({ api, userId, workspaceId, teamId, enabled, notif
     setBusy(true);
     try {
       const policy = editingTeam && !reset;
+      // Team scopes never store the personal accessibility overlay.
+      const body = teamId && next ? Object.fromEntries(Object.entries(next).filter(([field]) => !APPEARANCE_PERSONAL_FIELDS.includes(field))) : next;
       const result = await api(policy ? `/teams/${encodeURIComponent(teamId)}/appearance` : endpoint, {
         method: reset ? 'DELETE' : 'PUT',
-        ...(!reset ? { body: JSON.stringify(policy ? { preferences: next, editableFields: policyDraft || team.editableFields } : next) } : {}),
+        ...(!reset ? { body: JSON.stringify(policy ? { preferences: body, editableFields: policyDraft || team.editableFields } : body) } : {}),
       });
       if (currentKey.current !== requestKey) return;
       readSequence.current += 1;
@@ -131,8 +141,7 @@ export function useAppearance({ api, userId, workspaceId, teamId, enabled, notif
     const style = appearanceStyle(preferences);
     Object.entries(style).forEach(([name, value]) => root.style.setProperty(name, value));
     root.dataset.appearance = '';
-    root.dataset.appearanceBackground = preferences.background;
-    root.dataset.appearanceDensity = preferences.density;
+    DATASET.forEach(([name, field]) => { root.dataset[name] = preferences[field]; });
     // Until personal preferences load, keep the device theme controls usable.
     // An unknown team policy remains locked by the UI instead of being bypassed.
     if (ready) setThemeOverride(preferences.mode, mode => {
@@ -142,8 +151,7 @@ export function useAppearance({ api, userId, workspaceId, teamId, enabled, notif
     return () => {
       Object.keys(style).forEach(name => root.style.removeProperty(name));
       delete root.dataset.appearance;
-      delete root.dataset.appearanceBackground;
-      delete root.dataset.appearanceDensity;
+      DATASET.forEach(([name]) => { delete root.dataset[name]; });
       setThemeOverride(null);
     };
   }, [key, ready, preferences, editableFields]);

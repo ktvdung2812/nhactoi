@@ -1,13 +1,14 @@
 import { getTeamAccess } from './teams.mjs';
-import { APPEARANCE_DEFAULTS, validateAppearance, validateAppearancePolicy } from '../shared/appearance.mjs';
+import { APPEARANCE_DEFAULTS, APPEARANCE_FIELDS, APPEARANCE_PERSONAL_FIELDS, validateAppearance, validateAppearancePolicy } from '../shared/appearance.mjs';
 
 export function registerAppearanceRoutes(app, { db, requireAuth, HttpError }) {
   function teamPolicy(workspaceId, userId, teamId) {
     const access = getTeamAccess(db, workspaceId, userId, teamId);
     if (!access?.visible) throw new HttpError(404, 'Không tìm thấy team.');
     const row = db.prepare('SELECT preferences, editable_fields FROM team_appearance WHERE team_id=?').get(teamId);
-    return { preferences: row ? JSON.parse(row.preferences) : APPEARANCE_DEFAULTS,
-      editableFields: row ? JSON.parse(row.editable_fields) : [], canManage: access.canManage };
+    // Until an admin saves a policy, members may customize every field.
+    return { preferences: { ...APPEARANCE_DEFAULTS, ...(row ? JSON.parse(row.preferences) : {}) },
+      editableFields: row ? JSON.parse(row.editable_fields) : [...APPEARANCE_FIELDS], canManage: access.canManage };
   }
   app.put('/api/teams/:teamId/appearance', requireAuth, (req, res, next) => {
     try {
@@ -31,8 +32,16 @@ export function registerAppearanceRoutes(app, { db, requireAuth, HttpError }) {
       next();
     } catch (error) { next(error); }
   }).get((req, res) => {
-    const row = db.prepare('SELECT preferences FROM user_appearance WHERE workspace_id=? AND user_id=? AND scope=?').get(req.auth.workspaceId, req.auth.userId, req.appearanceScope);
-    res.json({ preferences: row ? JSON.parse(row.preferences) : null, team: req.appearanceTeam });
+    const read = scope => {
+      const row = db.prepare('SELECT preferences FROM user_appearance WHERE workspace_id=? AND user_id=? AND scope=?').get(req.auth.workspaceId, req.auth.userId, scope);
+      return row ? JSON.parse(row.preferences) : null;
+    };
+    const preferences = read(req.appearanceScope);
+    if (!req.appearanceTeam) return res.json({ preferences, team: null });
+    // Accessibility settings are personal and apply inside every team.
+    const personal = read('') || {};
+    const accessibility = Object.fromEntries(APPEARANCE_PERSONAL_FIELDS.map(field => [field, personal[field] ?? APPEARANCE_DEFAULTS[field]]));
+    res.json({ preferences, team: req.appearanceTeam, accessibility });
   }).put((req, res, next) => {
     try {
       let preferences;
@@ -41,7 +50,7 @@ export function registerAppearanceRoutes(app, { db, requireAuth, HttpError }) {
       if (req.appearanceTeam) {
         const { preferences: shared, editableFields } = req.appearanceTeam;
         for (const [field, value] of Object.entries(preferences)) {
-          if (!editableFields.includes(field) && JSON.stringify(value) !== JSON.stringify(shared[field]))
+          if (!editableFields.includes(field) && !APPEARANCE_PERSONAL_FIELDS.includes(field) && JSON.stringify(value) !== JSON.stringify(shared[field]))
             throw new HttpError(403, 'Quản trị team chưa cho phép thay đổi tùy chọn này.');
         }
         preferences = Object.fromEntries(Object.entries(preferences).filter(([field, value]) => editableFields.includes(field) && JSON.stringify(value) !== JSON.stringify(shared[field])));
