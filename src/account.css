@@ -17,9 +17,25 @@
 .account-profile-panel .field {
   min-width: 0;
 }
-.account-profile-panel input {
+.account-profile-panel input:not([type="checkbox"]):not([type="radio"]) {
   width: 100%;
   min-width: 0;
+}
+.account-profile-panel label.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+.account-profile-panel label.check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--green);
 }
 .account-help {
   color: var(--muted);
@@ -72,10 +88,7 @@
 }
 .theme-option-card.active .theme-option-icon {
   background: var(--green);
-  color: #fff;
-}
-[data-theme="dark"] .theme-option-card.active .theme-option-icon {
-  color: #0f1114;
+  color: var(--on-green);
 }
 .theme-option-card strong {
   font-size: var(--text-sm);

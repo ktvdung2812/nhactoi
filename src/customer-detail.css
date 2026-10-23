@@ -24,7 +24,7 @@
   font-weight: 500;
   cursor: pointer;
   padding: 6px 10px;
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-control);
   transition: color 0.15s ease, background 0.15s ease;
 }
 
@@ -40,7 +40,7 @@
   align-items: flex-start;
   gap: 24px;
   padding: 24px;
-  border-radius: var(--radius-md, 12px);
+  border-radius: var(--radius-card);
   background: var(--bg-surface);
   border: 1px solid var(--border-card, var(--line));
   flex-wrap: wrap;
@@ -148,7 +148,7 @@
   align-items: center;
   gap: 16px;
   padding: 16px 20px;
-  border-radius: var(--radius-md, 12px);
+  border-radius: var(--radius-card);
   background: var(--bg-surface);
   border: 1px solid var(--border-card, var(--line));
 }
@@ -164,18 +164,18 @@
 }
 
 .stat-icon-wrap.primary {
-  background: rgba(30, 144, 255, 0.12);
-  color: #1e90ff;
+  background: var(--info-subtle);
+  color: var(--info);
 }
 
 .stat-icon-wrap.accent {
-  background: rgba(245, 158, 11, 0.12);
-  color: #f59e0b;
+  background: var(--warning-subtle);
+  color: var(--warning);
 }
 
 .stat-icon-wrap.success {
-  background: rgba(16, 185, 129, 0.12);
-  color: #10b981;
+  background: var(--green-subtle);
+  color: var(--green);
 }
 
 .stat-label {
@@ -219,7 +219,7 @@
   font-weight: 600;
   color: var(--muted);
   cursor: pointer;
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-control);
   transition: all 0.15s ease;
   position: relative;
 }
@@ -274,13 +274,13 @@
 
 .filter-chip.active {
   background: var(--green);
-  color: #fff;
+  color: var(--on-green);
   border-color: var(--green);
 }
 
 .customer-tasks-list-panel {
   padding: 8px;
-  border-radius: var(--radius-md, 12px);
+  border-radius: var(--radius-card);
   background: var(--bg-surface);
   border: 1px solid var(--border-card, var(--line));
   display: flex;
@@ -296,7 +296,7 @@
   align-items: center;
   gap: 14px;
   color: var(--muted);
-  border-radius: var(--radius-md, 12px);
+  border-radius: var(--radius-card);
   background: var(--bg-surface);
   border: 1px dashed var(--border-card, var(--line));
 }
@@ -305,7 +305,7 @@
 .customer-services-table-panel,
 .customer-finance-table-panel {
   padding: 0;
-  border-radius: var(--radius-md, 12px);
+  border-radius: var(--radius-card);
   background: var(--bg-surface);
   border: 1px solid var(--border-card, var(--line));
   overflow-x: auto;
@@ -352,13 +352,13 @@
 }
 
 .status-badge.badge-active {
-  background: rgba(16, 185, 129, 0.12);
-  color: #10b981;
+  background: var(--green-subtle);
+  color: var(--green);
 }
 
 .status-badge.badge-inactive {
-  background: rgba(156, 163, 175, 0.15);
-  color: #6b7280;
+  background: var(--bg-hover);
+  color: var(--muted);
 }
 
 .tx-category {
@@ -376,11 +376,11 @@
 }
 
 .tx-amount.income {
-  color: #10b981;
+  color: var(--green);
 }
 
 .tx-amount.expense {
-  color: #ef4444;
+  color: var(--danger);
 }
 
 /* Dark mode adjustments */
@@ -396,6 +396,14 @@
 .dark .customer-finance-table-panel {
   background: var(--bg-surface);
   border-color: var(--border-card);
+}
+
+/* Active filter chips use the app-wide dark highlight, like active filter tabs. */
+[data-theme="dark"] .filter-chip.active,
+.dark .filter-chip.active {
+  background: #f0f2f5;
+  border-color: #f0f2f5;
+  color: #101214;
 }
 
 [data-theme="dark"] .customer-back-btn:hover,

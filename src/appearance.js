@@ -15,8 +15,34 @@ export function accentColors(hex, high = false) {
   let light = [...rgb], dark = [...rgb];
   // Keep accent text legible against both surface palettes (WCAG AA, or AAA for high contrast).
   while (luminance(light) > (high ? 0.1 : 0.17)) light = light.map(v => v * 0.92);
-  while (luminance(dark) < (high ? 0.55 : 0.4)) dark = dark.map(v => v + (255 - v) * 0.08);
+  // Lighten in HSL so the dark-mode accent keeps its saturation instead of fading to a pastel.
+  let [hue, saturation, lightness] = toHsl(rgb);
+  while (luminance(dark) < (high ? 0.55 : 0.3) && lightness < 1) {
+    lightness = Math.min(1, lightness + 0.02);
+    dark = fromHsl(hue, saturation, lightness);
+  }
   return { light: color(light), dark: color(dark), onAccent: luminance(rgb) > 0.179 ? '#101214' : '#ffffff' };
+}
+
+function toHsl(rgb) {
+  const [r, g, b] = rgb.map(v => v / 255);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), lightness = (max + min) / 2;
+  if (max === min) return [0, 0, lightness];
+  const d = max - min;
+  const saturation = lightness > 0.5 ? d / (2 - max - min) : d / (max + min);
+  const hue = max === r ? (g - b) / d + (g < b ? 6 : 0) : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [hue / 6, saturation, lightness];
+}
+
+function fromHsl(hue, saturation, lightness) {
+  if (!saturation) return [lightness, lightness, lightness].map(v => v * 255);
+  const q = lightness < 0.5 ? lightness * (1 + saturation) : lightness + saturation - lightness * saturation;
+  const p = 2 * lightness - q;
+  const channel = t => {
+    t = ((t % 1) + 1) % 1;
+    return t < 1 / 6 ? p + (q - p) * 6 * t : t < 1 / 2 ? q : t < 2 / 3 ? p + (q - p) * (2 / 3 - t) * 6 : p;
+  };
+  return [channel(hue + 1 / 3), channel(hue), channel(hue - 1 / 3)].map(v => v * 255);
 }
 
 export function appearanceStyle(preferences) {

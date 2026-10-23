@@ -6,8 +6,8 @@
   overflow: hidden;
 }
 .settings-card.is-editing {
-  border-color: #8bb8a3;
-  box-shadow: 0 0 0 3px #e7f1eb;
+  border-color: color-mix(in srgb, var(--green) 45%, var(--border-card));
+  box-shadow: 0 0 0 3px var(--green-subtle);
 }
 .settings-card-heading {
   display: flex;
@@ -21,7 +21,7 @@
   flex-shrink: 0;
   display: grid;
   place-items: center;
-  background: #edf4ef;
+  background: var(--green-subtle);
   border-radius: 12px;
   color: var(--green);
 }
@@ -37,7 +37,7 @@
   margin: 0;
   font-size: var(--text-xs);
   line-height: 1.7;
-  color: #829087;
+  color: var(--muted);
 }
 .settings-card-heading .button {
   font-size: var(--font-control);
@@ -59,13 +59,14 @@
 }
 .settings-value span,
 .settings-values span {
-  color: #84958c;
+  color: var(--muted);
 }
 .settings-value strong,
 .settings-values strong {
   overflow-wrap: anywhere;
   text-align: right;
   font-weight: 500;
+  color: var(--ink);
 }
 .settings-values {
   display: grid;
@@ -79,9 +80,9 @@
 }
 .settings-plan {
   padding: 18px;
-  background: var(--bg-subtle, #f5f8f5);
+  background: var(--bg-subtle);
   border-radius: 12px;
-  border: 1px solid var(--border-card, #e4ece5);
+  border: 1px solid var(--border-card);
 }
 .settings-plan > span {
   font-size: var(--text-sm);
@@ -99,21 +100,21 @@
   font-size: var(--text-xs);
   font-weight: 400;
   letter-spacing: 0;
-  color: #849087;
+  color: var(--muted);
 }
 .settings-plan p {
   font-size: var(--text-xs);
-  color: #849087;
+  color: var(--muted);
   margin: 8px 0 18px;
 }
 .settings-plan > div {
   display: flex;
   align-items: center;
   gap: 7px;
-  border-top: 1px solid #e0e9e1;
+  border-top: 1px solid var(--line);
   padding-top: 14px;
   font-size: var(--text-xs);
-  color: #6e8377;
+  color: var(--muted);
 }
 .settings-editor {
   padding: 0 24px 24px;
@@ -141,16 +142,16 @@
   font-size: var(--font-control);
 }
 .settings-editor .field small {
-  color: #87988d;
+  color: var(--muted);
   line-height: 1.7;
   font-size: var(--text-xs);
 }
 .settings-editor .field em {
-  color: #b17752;
+  color: var(--danger);
   font-style: normal;
 }
 .settings-plan-edit > div {
-  border-bottom: 1px solid #e6ece7;
+  border-bottom: 1px solid var(--line);
   padding-bottom: 20px;
   margin-bottom: 18px;
 }
@@ -161,7 +162,7 @@
 .settings-plan-edit h3 small {
   font-size: var(--text-xs);
   font-weight: 400;
-  color: #96a098;
+  color: var(--muted);
   margin-left: 8px;
 }
 .settings-editor .settings-reason {
@@ -171,7 +172,7 @@
   display: flex;
   align-items: center;
   gap: 9px;
-  color: #6b8174;
+  color: var(--ink-secondary);
   font-size: var(--text-xs);
   line-height: 1.6;
 }
@@ -190,7 +191,7 @@
 }
 .settings-help {
   font-size: var(--text-xs);
-  color: #84968b;
+  color: var(--muted);
   line-height: 1.8;
   margin: 18px 0 0;
 }
@@ -200,7 +201,7 @@
   gap: 10px;
   margin-top: 22px;
   padding-top: 18px;
-  border-top: 1px solid #e4ece6;
+  border-top: 1px solid var(--line);
 }
 .settings-actions small {
   display: flex;
@@ -208,7 +209,7 @@
   gap: 6px;
   margin-right: auto;
   font-size: var(--text-xs);
-  color: #8b9a90;
+  color: var(--muted);
 }
 .settings-actions .button {
   font-size: var(--font-control);
@@ -219,8 +220,8 @@
   margin-top: 16px;
   border-radius: 8px;
   padding: 12px;
-  background: #fff2e9;
-  color: #a55734;
+  background: var(--danger-subtle);
+  color: var(--danger);
   font-size: var(--text-sm);
   line-height: 1.7;
 }
@@ -278,6 +279,7 @@
 }
 .admin-settings .admin-config-tip .text-button {
   margin-top: 10px;
+  color: var(--green);
 }
 .admin-identity-link {
   color: inherit;
@@ -343,7 +345,7 @@
   }
 }
 
-.settings-storage-hint { font-size: var(--text-xs); line-height: 1.8; color: #7b9082; overflow-wrap: anywhere; }
+.settings-storage-hint { font-size: var(--text-xs); line-height: 1.8; color: var(--muted); overflow-wrap: anywhere; }
 
 /* The transfer page uses the same panel primitives but needs a narrow-safe file picker. */
 .board-transfer-panel { overflow-wrap: anywhere; }
@@ -352,8 +354,9 @@
   gap: 8px;
   min-width: 0;
   margin-top: 18px;
-  color: #6e8261;
-  font-size: var(--text-xs);
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: 500;
 }
 .board-transfer-field select {
   width: 100%;
@@ -403,98 +406,6 @@ form.settings-editor > button:not([class]) {
 .settings-editor details > form > .button { justify-self: start; }
 .settings-editor > details { margin-top: 18px; }
 .board-transfer-actions > label:focus-within {
-  outline: 2px solid #26816b;
+  outline: 2px solid var(--green);
   outline-offset: 3px;
-}
-
-
-/* Admin Settings Dark Theme Overrides */
-[data-theme="dark"] .settings-card,
-.dark .settings-card {
-  background: var(--bg-surface);
-  border-color: var(--line);
-  color: var(--ink);
-}
-[data-theme="dark"] .settings-card-icon,
-.dark .settings-card-icon {
-  background: var(--bg-hover);
-  color: var(--green);
-}
-[data-theme="dark"] .settings-card-heading h2,
-.dark .settings-card-heading h2 {
-  color: var(--ink);
-}
-[data-theme="dark"] .settings-card-heading p,
-.dark .settings-card-heading p {
-  color: var(--muted);
-}
-[data-theme="dark"] .settings-value span,
-[data-theme="dark"] .settings-values span,
-.dark .settings-value span,
-.dark .settings-values span {
-  color: var(--muted);
-}
-[data-theme="dark"] .settings-value strong,
-[data-theme="dark"] .settings-values strong,
-.dark .settings-value strong,
-.dark .settings-values strong {
-  color: var(--ink);
-}
-[data-theme="dark"] .settings-plan,
-.dark .settings-plan {
-  background: var(--bg-subtle);
-  border-color: var(--line);
-  color: var(--ink);
-}
-[data-theme="dark"] .settings-plan > span,
-.dark .settings-plan > span {
-  color: var(--green);
-}
-[data-theme="dark"] .settings-plan > strong,
-.dark .settings-plan > strong {
-  color: var(--ink);
-}
-[data-theme="dark"] .settings-plan strong small,
-[data-theme="dark"] .settings-plan p,
-.dark .settings-plan strong small,
-.dark .settings-plan p {
-  color: var(--muted);
-}
-[data-theme="dark"] .settings-plan > div,
-.dark .settings-plan > div {
-  border-top-color: var(--line);
-  color: var(--muted);
-}
-[data-theme="dark"] .settings-plan-edit > div,
-.dark .settings-plan-edit > div {
-  border-bottom-color: var(--line);
-}
-[data-theme="dark"] .settings-plan-edit h3,
-.dark .settings-plan-edit h3 {
-  color: var(--ink);
-}
-[data-theme="dark"] .settings-editor .field small,
-.dark .settings-editor .field small {
-  color: var(--muted);
-}
-[data-theme="dark"] .settings-check,
-.dark .settings-check {
-  color: var(--ink);
-}
-[data-theme="dark"] .settings-help,
-.dark .settings-help {
-  color: var(--muted);
-}
-[data-theme="dark"] .settings-actions,
-.dark .settings-actions {
-  border-top-color: var(--line);
-}
-[data-theme="dark"] .settings-actions small,
-.dark .settings-actions small {
-  color: var(--muted);
-}
-[data-theme="dark"] .settings-error,
-.dark .settings-error {
-  background: rgba(224, 115, 103, 0.15);
-  color: #f28b80;
 }

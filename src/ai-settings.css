@@ -5,7 +5,7 @@
 .ai-settings-form .field { display: grid; gap: 9px; }
 .ai-settings-feedback { display: flex; align-items: flex-start; gap: 10px; margin: 0; padding: 14px 16px; border: 1px solid var(--border-card); border-radius: 10px; background: var(--green-subtle); color: var(--green); font-size: var(--text-sm); line-height: 1.7; }
 .ai-settings-feedback svg { margin-top: 2px; flex-shrink: 0; }
-.ai-settings-feedback.is-error { color: #ac523a; background: var(--bg-subtle); }
+.ai-settings-feedback.is-error { color: var(--danger); background: var(--danger-subtle); }
 .ai-settings-actions { padding-top: 20px; border-top: 1px solid var(--line); }
 .ai-catalog-note { margin: 0; color: var(--muted); font-size: var(--text-xs); line-height: 1.8; }
 .ai-model-field > label { font-weight: 500; }
@@ -13,6 +13,8 @@
 .ai-model-input { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 12px; background: var(--bg-input); border: 1px solid var(--border-color); border-radius: 8px; color: var(--muted); }
 .ai-model-input:focus-within { border-color: var(--green); outline: 2px solid var(--green-subtle); }
 .ai-settings-form .ai-model-input input { flex: 1; min-width: 0; padding: 11px 0; border: 0; outline: none; box-shadow: none; background: transparent; color: var(--ink); }
+/* The wrapper shows focus; the shared input focus ring would draw a second box inside it. */
+#ai-settings .ai-model-input input:focus { box-shadow: none; }
 .ai-model-dropdown { position: absolute; top: calc(100% + 7px); left: 0; right: 0; z-index: 12; border: 1px solid var(--border-card); border-radius: 10px; background: var(--bg-surface); box-shadow: var(--shadow-dialog); overflow: hidden; }
 .ai-model-dropdown ul { list-style: none; margin: 0; padding: 5px; max-height: 270px; overflow-y: auto; overscroll-behavior: contain; }
 .ai-model-dropdown li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 6px; color: var(--ink); cursor: pointer; }

@@ -45,6 +45,21 @@
   --modal-overlay: rgba(15, 30, 24, 0.45);
   --shadow-card: 0 2px 4px rgba(36, 72, 56, 0.04);
   --shadow-dialog: 0 20px 80px rgba(18, 50, 28, 0.2);
+  /* Text/icons drawn on a solid var(--green) fill. */
+  --on-green: #ffffff;
+  /* Main call to action: accent in light mode, a light fill in dark mode (matches .button). */
+  --primary: var(--green);
+  --primary-hover: var(--green-hover);
+  --on-primary: var(--on-green);
+  /* Status colors: text tones reach 4.5:1 on their subtle fill and on surfaces. */
+  --danger: #b42318;
+  --danger-subtle: #fef3f2;
+  --warning: #9a5b0b;
+  --warning-subtle: #fef6e7;
+  --info: #1d5bbf;
+  --info-subtle: #eef4ff;
+  --violet: #6941c6;
+  --violet-subtle: #f4f0fd;
 
   font-family: var(--font-sans);
   font-size: 100%;
@@ -70,6 +85,18 @@
   --modal-overlay: rgba(0, 0, 0, 0.75);
   --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.45);
   --shadow-dialog: 0 20px 80px rgba(0, 0, 0, 0.8);
+  --on-green: #0f1a17;
+  --primary: #f0f2f5;
+  --primary-hover: #ffffff;
+  --on-primary: #101214;
+  --danger: #f97066;
+  --danger-subtle: rgba(249, 112, 102, 0.14);
+  --warning: #f5b041;
+  --warning-subtle: rgba(245, 176, 65, 0.14);
+  --info: #84adff;
+  --info-subtle: rgba(132, 173, 255, 0.14);
+  --violet: #b9a3f5;
+  --violet-subtle: rgba(185, 163, 245, 0.14);
   color-scheme: dark;
 }
 
@@ -123,6 +150,11 @@ body :is(.panel-head, .td-section-heading, .settings-card-heading,
   font-weight: 600;
   line-height: var(--leading-heading);
   color: var(--ink);
+}
+/* Section descriptions read as secondary text on every panel type. */
+body :is(.panel-head, .td-section-heading, .settings-card-heading) p,
+body .td-panel > h2 + p {
+  color: var(--muted);
 }
 .eyebrow, .teams-eyebrow, .nav-caption {
   font-size: var(--text-xs);
@@ -257,8 +289,9 @@ body :is(.button, .teams-button, .icon-button, .icon-btn, .action-menu-trigger,
 :root[data-appearance] .app-shell :is(.sidebar, .topbar, .brand-box) { background: var(--bg-surface); }
 :root[data-appearance] .app-shell .page-content { max-width: var(--appearance-content-width); }
 :root[data-appearance] .app-shell .sidebar nav button.active { background: var(--green-subtle); color: var(--green); }
-:root[data-appearance] .app-shell :is(.button.primary, .teams-button-primary) { background: var(--appearance-accent); color: var(--appearance-on-accent); border-color: var(--appearance-accent); }
-:root[data-appearance] .app-shell :is(.button.primary, .teams-button-primary):hover { filter: brightness(0.95); }
+/* Dark mode keeps the app-wide light primary fill; the raw accent only fills light-mode CTAs. */
+:root[data-appearance]:not([data-theme="dark"]) .app-shell :is(.button.primary, .teams-button.primary) { background: var(--appearance-accent); color: var(--appearance-on-accent); border-color: var(--appearance-accent); }
+:root[data-appearance]:not([data-theme="dark"]) .app-shell :is(.button.primary, .teams-button.primary):hover { filter: brightness(0.95); }
 :root[data-appearance] .app-shell :is(.workspace-switch, .plan-promo, .overview-strip) { background: var(--bg-subtle); border-color: var(--line); color: var(--ink); }
 :root[data-appearance] .app-shell :is(input, select, textarea):focus { border-color: var(--green) !important; box-shadow: 0 0 0 3px var(--green-subtle); }
 :root[data-appearance] .app-shell :is(button, a):focus-visible { outline-color: var(--green); }
@@ -276,7 +309,7 @@ body :is(.button, .teams-button, .icon-button, .icon-btn, .action-menu-trigger,
   :root[data-appearance] { --control-height: 44px; }
 }
 :root[data-appearance] .app-shell :is(.task-board-card, .workflow-board-archived, .workflow-board-archived-row) { border-radius: var(--radius-card); background: var(--bg-card); border-color: var(--border-card); color: var(--ink); }
-:root[data-appearance] .app-shell :is(.workflow-board-button.primary, .task-extras-button.primary) { background: var(--appearance-accent); color: var(--appearance-on-accent); }
+:root[data-appearance]:not([data-theme="dark"]) .app-shell :is(.workflow-board-button.primary, .task-extras-button.primary) { background: var(--appearance-accent); color: var(--appearance-on-accent); }
 :root[data-appearance-density="compact"] .app-shell .task-board-card { padding: 8px; }
 :root[data-appearance-density="compact"] .app-shell .task-board-cards { gap: 6px; }
 @media (max-width: 600px) {
@@ -358,6 +391,8 @@ body :is(.button, .teams-button, .icon-button, .icon-btn, .action-menu-trigger,
   }
   :is(.teams-roster-list, .services-modal .services-history, .calendar-event-detail,
     .trash-detail-fields, .admin-detail dl, .audit-detail) > * { min-width: 0; }
+  /* Selectable member rows sit close together so their highlight reads as one list. */
+  body .teams-roster-form .teams-roster-list { gap: 6px 12px; }
   .calendar-event-detail > .service-card-description { grid-column: 1 / -1; }
   .trash-detail-fields > div { grid-template-columns: minmax(0, 1fr); gap: 6px; }
   .admin-detail dl > div { flex-direction: column; gap: 6px; }
