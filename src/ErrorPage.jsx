@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useLayoutEffect, useState } from "react";
 import {
   ArrowLeft,
   RefreshCw,
@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
+import { applyTheme } from "./theme.js";
 import "./access-denied.css";
 import "./error-pages.css";
 
@@ -259,6 +260,11 @@ export default function ErrorPage({
           ? CreditCard
           : ArrowLeft;
   const [paused, setPaused] = useState(false);
+  // Next serves the catch-all 404 as a client-rendered error shell, so the
+  // root layout's inline theme script never runs there; apply it before paint.
+  useLayoutEffect(() => {
+    if (!document.documentElement.dataset.theme) applyTheme();
+  }, []);
   useEffect(() => {
     setPaused(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   }, []);

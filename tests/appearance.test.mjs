@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { boot, call, user, addMember } from './roadmap-helpers.mjs';
 import { migrateDatabase, openDatabase } from './database-helpers.mjs';
-import { APPEARANCE_DEFAULTS as defaults, validateAppearance, resolveAppearance } from '../shared/appearance.mjs';
+import { APPEARANCE_DEFAULTS as defaults, APPEARANCE_FIELDS, validateAppearance, resolveAppearance } from '../shared/appearance.mjs';
 import { accentColors, themeDisabledReason } from '../src/appearance.js';
 
 const put = (s, path, cookie, body) => call(s, path, { method: 'PUT', cookie, body });
@@ -37,7 +37,10 @@ test('team admins grant fields, members cannot bypass locks, policy changes over
   assert.equal(created.status, 201, JSON.stringify(created.body));
   const id = created.body.team.id, path = `/appearance?teamId=${id}`, policyPath = `/teams/${id}/appearance`;
   const shared = { ...defaults, accent: '#245bc0', background: 'cool' };
-  assert.deepEqual((await call(s, path, { cookie: member.cookie })).body.team.editableFields, []);
+  // An unconfigured team starts from the defaults but leaves every field open to members.
+  assert.deepEqual((await call(s, path, { cookie: member.cookie })).body.team.editableFields, APPEARANCE_FIELDS);
+  assert.equal((await put(s, path, member.cookie, { ...defaults, mode: 'dark', accent: '#a63266' })).status, 200);
+  assert.deepEqual((await call(s, path, { cookie: member.cookie })).body.preferences, { mode: 'dark', accent: '#a63266' });
   assert.equal((await put(s, policyPath, member.cookie, { preferences: shared, editableFields: ['fontSize'] })).status, 403);
   assert.equal((await put(s, policyPath, owner.cookie, { preferences: shared, editableFields: ['fontSize', 'density'] })).status, 200);
   assert.equal((await put(s, path, member.cookie, { ...shared, fontSize: 'large', density: 'compact' })).status, 200);
@@ -101,6 +104,38 @@ test('appearance validation and contrast handle all-white and all-black accents'
   }
   assert.equal(accentColors('#ffffff').onAccent, '#101214');
   assert.equal(accentColors('#000000').onAccent, '#ffffff');
+  const luminance = hex => hex.slice(1).match(/../g).map(v => parseInt(v, 16) / 255)
+    .map(v => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)
+    .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+  const standard = accentColors('#176b59'), high = accentColors('#176b59', true);
+  assert.ok(luminance(high.light) < luminance(standard.light));
+  assert.ok(1.05 / (luminance(high.light) + 0.05) >= 7, 'high-contrast accent reaches AAA on white');
+  assert.ok((luminance(high.dark) + 0.05) / (luminance('#16181b') + 0.05) >= 7, 'high-contrast accent reaches AAA on dark surfaces');
+});
+
+test('larger text, high contrast and reduced motion are valid choices', () => {
+  assert.deepEqual(validateAppearance({ fontSize: 'xlarge', contrast: 'high', motion: 'reduced' }),
+    { ...defaults, fontSize: 'xlarge', contrast: 'high', motion: 'reduced' });
+  for (const bad of [{ contrast: 'max' }, { motion: 'none' }, { fontSize: 'huge' }]) assert.throws(() => validateAppearance(bad), JSON.stringify(bad));
+  assert.ok(!APPEARANCE_FIELDS.includes('contrast') && !APPEARANCE_FIELDS.includes('motion'));
+});
+
+test('accessibility follows the person into every team and cannot be locked by admins', async t => {
+  const s = await boot(t), owner = await user(s, 'a11y-owner@example.test'), member = await user(s, 'a11y-member@example.test');
+  addMember(s, owner, member);
+  const created = await call(s, '/teams', { method: 'POST', cookie: owner.cookie, body: { name: 'A11y', color: 'blue', members: [{ userId: owner.user.id, role: 'lead' }, { userId: member.user.id, role: 'member' }] } });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const id = created.body.team.id, path = `/appearance?teamId=${id}`, policyPath = `/teams/${id}/appearance`;
+  assert.equal((await put(s, policyPath, owner.cookie, { preferences: defaults, editableFields: ['contrast'] })).status, 400);
+  assert.equal((await put(s, policyPath, owner.cookie, { preferences: defaults, editableFields: [] })).status, 200);
+  assert.deepEqual((await call(s, path, { cookie: member.cookie })).body.accessibility, { contrast: 'standard', motion: 'system' });
+  assert.equal((await put(s, '/appearance', member.cookie, { ...defaults, contrast: 'high', motion: 'reduced' })).status, 200);
+  const scoped = (await call(s, path, { cookie: member.cookie })).body;
+  assert.deepEqual(scoped.accessibility, { contrast: 'high', motion: 'reduced' });
+  assert.equal((await call(s, '/appearance', { cookie: member.cookie })).body.accessibility, undefined);
+  // A fully locked team still accepts the personal overlay but never stores it in the team scope.
+  assert.equal((await put(s, path, member.cookie, { ...defaults, contrast: 'high', motion: 'reduced' })).status, 200);
+  assert.deepEqual((await call(s, path, { cookie: member.cookie })).body.preferences, {});
 });
 
 test('scoped theme uses the server preference without overwriting the device fallback', async () => {
@@ -141,7 +176,7 @@ test('personal theme stays available on load failure, while team locks and unsav
 test('existing menu preferences gain templates and automations without losing the saved order', () => {
   const oldOrder = ['tasks', 'dashboard', 'today', 'upcoming', 'week', 'inbox', 'teams', 'customers', 'services', 'finance', 'transfer', 'tickets', 'trash'];
   const preferences = validateAppearance({ navOrder: oldOrder, hiddenNav: ['tickets'] });
-  assert.deepEqual(preferences.navOrder, [...oldOrder, 'templates', 'automations']);
+  assert.deepEqual(preferences.navOrder, [...oldOrder, 'projects', 'templates', 'automations', 'public-integrations', 'google-calendar', 'zalo-oa']);
   assert.deepEqual(resolveAppearance({ navOrder: oldOrder }).navOrder, preferences.navOrder);
   assert.deepEqual(resolveAppearance(null, { preferences: { ...defaults, navOrder: oldOrder }, editableFields: [] }).navOrder, preferences.navOrder);
   assert.deepEqual(preferences.hiddenNav, ['tickets']);

@@ -17,6 +17,7 @@
 .appearance-page input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--green); flex-shrink: 0; }
 .appearance-permission, .appearance-nav-list label { display: flex; align-items: center; gap: 10px; }
 .appearance-nav-list { list-style: none; padding: 0; margin: 0; }
+.appearance-nav-group h3 { margin: 0 0 4px; font-size: var(--text-sm); font-weight: 600; color: var(--muted); }
 .appearance-nav-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .appearance-nav-list li > div { display: flex; }
 /* Sticks to the bottom edge; right padding keeps the actions clear of the AI launcher. */

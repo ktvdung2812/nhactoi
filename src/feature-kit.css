@@ -95,11 +95,11 @@
 }
 :is(.kit, .page-section) button:not([class]):hover:not(:disabled) { background: var(--bg-hover); filter: none; }
 :is(.kit, .page-section) form button:not([class]):not([type="button"]) {
-  border-color: var(--green);
-  background: var(--green);
-  color: #fff;
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--on-primary);
 }
-:is(.kit, .page-section) form button:not([class]):not([type="button"]):hover:not(:disabled) { background: var(--green-hover); }
+:is(.kit, .page-section) form button:not([class]):not([type="button"]):hover:not(:disabled) { background: var(--primary-hover); }
 :is(.kit, .page-section) button:disabled { opacity: 0.55; cursor: not-allowed; }
 
 /* Forms and stand-alone fieldsets are cards with a responsive field grid. */

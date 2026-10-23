@@ -7,37 +7,23 @@ const LABELS = {
   mode: 'Chế độ sáng / tối', accent: 'Màu nhấn', background: 'Nền không gian', font: 'Phông chữ',
   fontSize: 'Cỡ chữ', density: 'Độ giãn giao diện', corners: 'Bo góc', sidebarWidth: 'Chiều rộng thanh bên',
   contentWidth: 'Chiều rộng nội dung', hiddenNav: 'Ẩn / hiện menu', navOrder: 'Thứ tự menu',
-};
-const NAV_LABELS = {
-  dashboard: 'Tổng quan',
-  tasks: 'Công việc',
-  today: 'Hôm nay',
-  upcoming: 'Sắp tới',
-  week: 'Lịch tuần',
-  inbox: 'Inbox',
-  teams: 'Teams',
-  customers: 'Khách hàng',
-  services: 'Quản lý gia hạn',
-  finance: 'Thu & chi',
-  templates: 'Mẫu công việc',
-  automations: 'Tự động hóa',
-  transfer: 'Nhập / xuất bảng',
-  tickets: 'Hỗ trợ',
-  trash: 'Thùng rác',
+  contrast: 'Độ tương phản', motion: 'Chuyển động',
 };
 const OPTIONS = {
   mode: [['system', 'Theo thiết bị'], ['light', 'Sáng'], ['dark', 'Tối']],
   background: [['default', 'Trung tính'], ['warm', 'Ấm áp'], ['cool', 'Mát dịu']],
   font: [['vietnam', 'Be Vietnam Pro'], ['system', 'Phông hệ thống']],
-  fontSize: [['small', 'Nhỏ'], ['medium', 'Vừa'], ['large', 'Lớn']],
+  fontSize: [['small', 'Nhỏ'], ['medium', 'Vừa'], ['large', 'Lớn'], ['xlarge', 'Rất lớn']],
   density: [['comfortable', 'Thoáng'], ['compact', 'Gọn']],
   corners: [['rounded', 'Mềm mại'], ['square', 'Vuông']],
   sidebarWidth: [['narrow', 'Hẹp'], ['standard', 'Tiêu chuẩn'], ['wide', 'Rộng']],
   contentWidth: [['full', 'Toàn chiều rộng'], ['centered', 'Tập trung ở giữa']],
+  contrast: [['standard', 'Tiêu chuẩn'], ['high', 'Cao']],
+  motion: [['system', 'Theo thiết bị'], ['reduced', 'Giảm tối đa']],
 };
 const SWATCHES = ['#176b59', '#245bc0', '#7747b8', '#b54d2a', '#a63266', '#475569'];
 
-export default function Appearance({ appearance: a, teams, teamId, go, canManage }) {
+export default function Appearance({ appearance: a, teams, teamId, go, navGroups }) {
   useEffect(() => () => a.leave(), []);
   useEffect(() => {
     if (!a.dirty) return;
@@ -51,9 +37,11 @@ export default function Appearance({ appearance: a, teams, teamId, go, canManage
     if (a.dirty && !window.confirm('Bỏ các thay đổi giao diện chưa lưu?')) return;
     go(`appearance${value ? `?team=${encodeURIComponent(value)}` : ''}`);
   }
-  function move(id, offset) {
+  const ordered = items => [...items].sort((left, right) => a.preferences.navOrder.indexOf(left.id) - a.preferences.navOrder.indexOf(right.id));
+  // The sidebar sorts inside each section, so moves stay within a group.
+  function move(group, id, offset) {
     const next = [...a.preferences.navOrder];
-    const visible = next.filter(item => item !== 'finance' || canManage);
+    const visible = ordered(group.items).map(item => item.id);
     const targetId = visible[visible.indexOf(id) + offset];
     if (!targetId) return;
     const index = next.indexOf(id), target = next.indexOf(targetId);
@@ -85,10 +73,21 @@ export default function Appearance({ appearance: a, teams, teamId, go, canManage
           </section>
           <section className="settings-card appearance-card"><h2>Chữ & bố cục</h2>{['font', 'fontSize', 'density', 'corners', 'sidebarWidth', 'contentWidth'].map(key => <Choice key={key} name={key} a={a} />)}</section>
           <section className="settings-card appearance-card"><h2>Thanh điều hướng</h2><p>Ẩn các mục ít dùng và sắp xếp theo cách bạn làm việc. Nút cá nhân hóa luôn có trên thanh trên cùng.</p>
-            <ul className="appearance-nav-list">{a.preferences.navOrder.filter(id => id !== 'finance' || canManage).map((id, index, visible) => <li key={id}>
-              <label><input type="checkbox" checked={!a.preferences.hiddenNav.includes(id)} disabled={!allowed('hiddenNav')} onChange={e => a.change('hiddenNav', e.target.checked ? a.preferences.hiddenNav.filter(item => item !== id) : [...a.preferences.hiddenNav, id])} />{NAV_LABELS[id]}</label>
-              <div><button type="button" className="icon-button" aria-label={`Đưa ${NAV_LABELS[id]} lên`} disabled={!allowed('navOrder') || index === 0} onClick={() => move(id, -1)}><ArrowUp size={16} /></button><button type="button" className="icon-button" aria-label={`Đưa ${NAV_LABELS[id]} xuống`} disabled={!allowed('navOrder') || index === visible.length - 1} onClick={() => move(id, 1)}><ArrowDown size={16} /></button></div>
-            </li>)}</ul>
+            {navGroups.map(group => <div key={group.id} className="appearance-nav-group"><h3>{group.label || 'Chung'}</h3>
+              <ul className="appearance-nav-list">{ordered(group.items).map(({ id, label }, index, visible) => <li key={id}>
+                <label><input type="checkbox" checked={!a.preferences.hiddenNav.includes(id)} disabled={!allowed('hiddenNav')} onChange={e => a.change('hiddenNav', e.target.checked ? a.preferences.hiddenNav.filter(item => item !== id) : [...a.preferences.hiddenNav, id])} />{label}</label>
+                <div><button type="button" className="icon-button" aria-label={`Đưa ${label} lên`} disabled={!allowed('navOrder') || index === 0} onClick={() => move(group, id, -1)}><ArrowUp size={16} /></button><button type="button" className="icon-button" aria-label={`Đưa ${label} xuống`} disabled={!allowed('navOrder') || index === visible.length - 1} onClick={() => move(group, id, 1)}><ArrowDown size={16} /></button></div>
+              </li>)}</ul>
+            </div>)}
+          </section>
+          <section className="settings-card appearance-card"><h2>Trợ năng</h2>
+            {teamId ? <>
+              <p>Độ tương phản và chuyển động theo cài đặt ở Không gian cá nhân, áp dụng trên mọi trang.</p>
+              <div><button type="button" className="button" onClick={() => switchScope('')}>Mở Không gian cá nhân</button></div>
+            </> : <>
+              <p>Áp dụng cho tài khoản của bạn trên mọi trang, kể cả trong các team.</p>
+              {['contrast', 'motion'].map(key => <Choice key={key} name={key} a={a} />)}
+            </>}
           </section>
           {a.editingTeam && <section className="settings-card appearance-card"><h2>Thành viên được tùy chỉnh</h2><p>Bỏ chọn để khóa mục đó theo giao diện chung. Các tùy chỉnh cá nhân đã lưu ở mục bị khóa sẽ không còn được áp dụng.</p>
             <div className="appearance-policy-actions"><button type="button" className="button" onClick={() => a.setPolicyFields([...APPEARANCE_FIELDS])}>Cho phép tất cả</button><button type="button" className="button" onClick={() => a.setPolicyFields([])}>Khóa tất cả</button></div>
@@ -102,7 +101,8 @@ export default function Appearance({ appearance: a, teams, teamId, go, canManage
         <button className="button" disabled={a.busy || !a.dirty} onClick={a.cancel}>Hủy thay đổi</button>
         <button className="button primary" disabled={a.busy || !a.dirty} onClick={a.save}><Save size={16} />{a.busy ? 'Đang lưu…' : a.editingTeam ? 'Lưu cho cả team' : 'Lưu giao diện'}</button>
       </footer>
-    </>}\n  </section>;
+    </>}
+  </section>;
 }
 function Choice({ name, a }) {
   const locked = !a.editableFields.includes(name);

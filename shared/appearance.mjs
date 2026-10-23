@@ -1,18 +1,21 @@
 export const APPEARANCE_NAV_IDS = [
   'dashboard', 'tasks', 'today', 'upcoming', 'week', 'inbox',
-  'teams', 'customers', 'services', 'finance',
-  'templates', 'automations', 'transfer', 'tickets', 'trash'
+  'projects', 'teams', 'customers', 'services', 'finance',
+  'templates', 'automations', 'public-integrations', 'google-calendar', 'zalo-oa',
+  'transfer', 'tickets', 'trash'
 ];
 export const APPEARANCE_DEFAULTS = Object.freeze({
   mode: 'system', accent: '#176b59', background: 'default', font: 'vietnam',
   fontSize: 'medium', density: 'comfortable', corners: 'rounded',
   sidebarWidth: 'standard', contentWidth: 'full', hiddenNav: [], navOrder: APPEARANCE_NAV_IDS,
+  contrast: 'standard', motion: 'system',
 });
 const choices = {
   mode: ['system', 'light', 'dark'], background: ['default', 'warm', 'cool'],
-  font: ['vietnam', 'system'], fontSize: ['small', 'medium', 'large'],
+  font: ['vietnam', 'system'], fontSize: ['small', 'medium', 'large', 'xlarge'],
   density: ['comfortable', 'compact'], corners: ['rounded', 'square'],
   sidebarWidth: ['narrow', 'standard', 'wide'], contentWidth: ['full', 'centered'],
+  contrast: ['standard', 'high'], motion: ['system', 'reduced'],
 };
 export function validateAppearance(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Cấu hình giao diện không hợp lệ.');
@@ -30,7 +33,9 @@ export function validateAppearance(value) {
   return result;
 }
 
-export const APPEARANCE_FIELDS = Object.keys(APPEARANCE_DEFAULTS);
+// Accessibility needs follow the person everywhere; team admins cannot lock them.
+export const APPEARANCE_PERSONAL_FIELDS = ['contrast', 'motion'];
+export const APPEARANCE_FIELDS = Object.keys(APPEARANCE_DEFAULTS).filter(key => !APPEARANCE_PERSONAL_FIELDS.includes(key));
 export function validateAppearancePolicy(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !['preferences', 'editableFields'].includes(key))) throw new Error('Cấu hình quyền giao diện không hợp lệ.');
   const fields = value.editableFields;
@@ -39,7 +44,7 @@ export function validateAppearancePolicy(value) {
 }
 export function resolveAppearance(personal, team) {
   const preferences = team
-    ? { ...team.preferences, ...Object.fromEntries(Object.entries(personal || {}).filter(([key]) => team.editableFields.includes(key))) }
+    ? { ...APPEARANCE_DEFAULTS, ...team.preferences, ...Object.fromEntries(Object.entries(personal || {}).filter(([key]) => team.editableFields.includes(key))) }
     : { ...APPEARANCE_DEFAULTS, ...personal };
   const order = preferences.navOrder || APPEARANCE_NAV_IDS;
   return { ...preferences, navOrder: [...order, ...APPEARANCE_NAV_IDS.filter(id => !order.includes(id))] };

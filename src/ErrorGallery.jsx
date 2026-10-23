@@ -25,7 +25,7 @@ export default function ErrorGallery({ go }) {
       <h1>
         Lỗi một nhịp.
         <br />
-        Vẫn đúng vibe <span style={{ color: "#a58cbd" }}>nhắc tôi.</span>
+        Vẫn đúng vibe <span>nhắc tôi.</span>
       </h1>
       <p className="error-gallery-intro">
         Một chút dễ thương khi mọi thứ chưa như ý. Mỗi trang đều có lời giải

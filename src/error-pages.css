@@ -1,34 +1,48 @@
 .error-theme-mint {
   --error-character: #9bc8b6;
   --error-shadow: #d5e6dd;
-  background: #f2f8f4;
-}
-.error-theme-mint .no-entry-art:before {
-  background: #e1f0e7;
-}
-.error-theme-mint h1 > span {
-  color: #689681;
-}
-.error-theme-mint .no-entry-eyebrow {
-  background: #eaf4ed;
-  border-color: #d2e4d7;
-  color: #749780;
+  --error-bg: #f2f8f4;
+  --error-halo: #e1f0e7;
+  --error-accent: #689681;
+  --error-eyebrow-bg: #eaf4ed;
+  --error-eyebrow-line: #d2e4d7;
+  --error-accent-text: #4a7659;
 }
 .error-theme-peach {
   --error-character: #edb19f;
   --error-shadow: #ecdbd3;
-  background: #fcf6f2;
+  --error-bg: #fcf6f2;
+  --error-halo: #f8e7df;
+  --error-accent: #a9735e;
+  --error-eyebrow-bg: #f8eee7;
+  --error-eyebrow-line: #edd8cc;
+  --error-accent-text: #94603f;
 }
-.error-theme-peach .no-entry-art:before {
-  background: #f8e7df;
+[data-theme="dark"] .error-theme-mint {
+  --error-shadow: #070d0b;
+  --error-bg: #111917;
+  --error-halo: #1c2a24;
+  --error-accent: #8fd6b6;
+  --error-eyebrow-bg: #17251f;
+  --error-eyebrow-line: #2a4237;
+  --error-accent-text: #9fdcbf;
+  --error-paper: #18231f;
+  --error-outline: #77b99c;
+  --error-bubble-shadow: #2a4538;
+  --error-cta-shadow: #5fa688;
 }
-.error-theme-peach h1 > span {
-  color: #c18b7c;
-}
-.error-theme-peach .no-entry-eyebrow {
-  background: #f8eee7;
-  border-color: #edd8cc;
-  color: #bf9a83;
+[data-theme="dark"] .error-theme-peach {
+  --error-shadow: #0d0908;
+  --error-bg: #1b1514;
+  --error-halo: #2d211e;
+  --error-accent: #f4b49e;
+  --error-eyebrow-bg: #2a1e1b;
+  --error-eyebrow-line: #47332d;
+  --error-accent-text: #f2bda9;
+  --error-paper: #271d1b;
+  --error-outline: #d99a84;
+  --error-bubble-shadow: #4a3530;
+  --error-cta-shadow: #c98a74;
 }
 .error-page-actions {
   display: flex;
@@ -39,8 +53,8 @@
 }
 .error-back-secondary {
   font-size: var(--text-xs);
-  color: #8c7b9d;
-  border-bottom: 1px solid #cdbfe0;
+  color: var(--error-text);
+  border-bottom: 1px solid var(--error-line-strong);
   padding: 8px 0;
 }
 .error-preview-back {
@@ -48,14 +62,14 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  color: #9582ac;
+  color: var(--error-text);
   font-size: var(--text-xs);
   padding: 8px 12px;
   margin-top: -10px;
   margin-bottom: 10px;
-  border: 1px solid #e1d7eb;
+  border: 1px solid var(--error-line);
   border-radius: 7px;
-  background: #fff7;
+  background: color-mix(in srgb, var(--error-paper) 47%, transparent);
 }
 .error-pupils {
   animation: error-look 4s ease-in-out infinite;
@@ -67,15 +81,23 @@
 .error-spark {
   animation: error-spark 2.4s ease-in-out infinite;
 }
-.error-theme-mint .no-entry-footer button,
-.error-theme-peach .no-entry-footer button {
-  background: transparent;
-}
 .error-gallery {
+  --error-card: #fff;
+  --error-card-warm: #fffaf6;
+  --error-card-warm-line: #f0e4d9;
+  --error-warm-accent: #a9735e;
+  --error-heading: #78698d;
   min-height: 100dvh;
-  background: #f8f6fc;
+  background: var(--error-bg);
   padding: 32px max(24px, calc((100vw - 1100px) / 2));
-  color: #302939;
+  color: var(--error-ink);
+}
+[data-theme="dark"] .error-gallery {
+  --error-card: #1e1926;
+  --error-card-warm: #211a1b;
+  --error-card-warm-line: #3a2b29;
+  --error-warm-accent: #f4b49e;
+  --error-heading: #b9aed0;
 }
 .error-gallery-header {
   display: flex;
@@ -95,19 +117,22 @@
   align-items: center;
   gap: 7px;
   font-size: var(--text-xs);
-  color: #8d7d9f;
+  color: var(--error-muted);
 }
 .error-gallery h1 {
   font-size: var(--text-5xl);
   letter-spacing: -1.5px;
   line-height: 1.35;
 }
+.error-gallery h1 > span {
+  color: var(--error-accent);
+}
 .error-gallery-intro {
   font-size: var(--text-sm);
   line-height: 1.9;
   max-width: 610px;
   margin-top: 15px;
-  color: #9a8eaa;
+  color: var(--error-text);
   overflow-wrap: anywhere;
 }
 .error-gallery-note {
@@ -115,9 +140,9 @@
   gap: 8px;
   align-items: center;
   font-size: var(--text-xs);
-  color: #9a88af;
-  background: #f0eafa;
-  border: 1px solid #e0d6ed;
+  color: var(--error-text);
+  background: var(--error-eyebrow-bg);
+  border: 1px solid var(--error-eyebrow-line);
   border-radius: 8px;
   padding: 12px 15px;
   margin-top: 23px;
@@ -131,7 +156,7 @@
   font-size: var(--text-lg);
   font-weight: 600;
   margin: 32px 0 16px;
-  color: #78698d;
+  color: var(--error-heading);
 }
 .error-gallery-grid {
   display: grid;
@@ -143,8 +168,8 @@
   padding: 22px;
   width: 100%;
   min-width: 0;
-  background: #fff;
-  border: 1px solid #e9e1ef;
+  background: var(--error-card);
+  border: 1px solid var(--error-line);
   border-radius: 13px;
   transition:
     transform 0.2s,
@@ -154,20 +179,20 @@
   transform: translateY(-3px);
   box-shadow: 0 7px 15px #8f78ad0d;
   filter: none;
-  border-color: #cbb9df;
+  border-color: var(--error-line-strong);
 }
 .error-gallery-card > div {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  color: #b9aacc;
+  color: color-mix(in srgb, var(--error-accent) 65%, transparent);
   margin-bottom: 17px;
 }
 .error-gallery-card b {
   font-size: var(--text-4xl);
   font-weight: 600;
   letter-spacing: -1px;
-  color: #a08abc;
+  color: var(--error-accent);
 }
 .error-gallery-card strong {
   display: block;
@@ -177,7 +202,7 @@
 }
 .error-gallery-card p {
   font-size: var(--text-xs);
-  color: #a396b0;
+  color: var(--error-text);
   line-height: 1.9;
   margin-top: 8px;
   overflow-wrap: anywhere;
@@ -185,24 +210,24 @@
 .error-gallery-card small {
   display: block;
   font-size: var(--text-xs);
-  color: #aa96c0;
+  color: var(--error-accent-text);
   margin-top: 16px;
   overflow-wrap: anywhere;
 }
 .error-gallery-card[data-family="5xx"] {
-  background: #fffaf6;
-  border-color: #f0e4d9;
+  background: var(--error-card-warm);
+  border-color: var(--error-card-warm-line);
 }
 .error-gallery-card[data-family="5xx"] b {
-  color: #c59d87;
+  color: var(--error-warm-accent);
 }
 .error-gallery button:focus-visible {
-  outline: 3px solid #ad97c9;
+  outline: 3px solid var(--error-focus);
   outline-offset: 4px;
 }
 .error-gallery-footer {
   margin-top: 30px;
-  color: #b4a7bf;
+  color: var(--error-muted);
   font-size: var(--text-xs);
   line-height: 1.8;
 }
@@ -309,6 +334,6 @@
 
 .error-gallery-header > .no-entry-brand {
   font-size: var(--text-3xl);
-  color: #2c2635;
+  color: var(--error-ink);
   gap: 9px;
 }
