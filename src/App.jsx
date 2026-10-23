@@ -758,7 +758,7 @@ export default function App() {
   const boardCounts = { open: taskTotals.open + (calendarMeta.summary?.eventOpen??eventItems.filter(item=>item.kind!=="renewal" && item.status!=="done").length),
     today: taskTotals.today + (calendarMeta.summary?.eventToday??eventItems.filter(item=>item.kind!=="renewal" && item.status!=="done" && isToday(item.dueAt)).length),
     overdue: taskTotals.overdue + (calendarMeta.summary?.eventOverdue??eventItems.filter(item=>item.kind!=="renewal" && item.status!=="done" && item.dueAt && new Date(item.dueAt)<now).length) };
-  const taskPagination = needsTasks && data.taskPage ? <><nav className="task-pagination" aria-label="Phân trang công việc">
+  const taskPagination = me && needsTasks && data.taskPage ? <><nav className="task-pagination" aria-label="Phân trang công việc">
     <button type="button" disabled={taskPage===1 || data.taskQuery!==dashboardPath} onClick={()=>setTaskPage(n=>n-1)}>Trang trước</button>
     <span role="status">{data.taskQuery!==dashboardPath ? "Đang tải…" : `Trang ${data.taskPage.page} · ${data.taskPage.total} công việc`}</span>
     <button type="button" disabled={!data.taskPage.hasMore || data.taskQuery!==dashboardPath} onClick={()=>setTaskPage(n=>n+1)}>Trang tiếp</button>
