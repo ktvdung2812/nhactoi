@@ -146,6 +146,7 @@ const actionLabels = {
   "settings.update": "Cập nhật cấu hình nền tảng",
   "plan.create": "Thêm gói thuê bao",
   "plan.update": "Cập nhật gói thuê bao",
+  "plan.reorder": "Sắp xếp thứ tự gói thuê bao",
   "storage.update": "Cập nhật lưu trữ tệp",
   "ticket.reply": "Phản hồi yêu cầu hỗ trợ",
   "ticket.update": "Cập nhật yêu cầu hỗ trợ",

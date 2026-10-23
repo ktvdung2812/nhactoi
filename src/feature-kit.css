@@ -149,6 +149,21 @@
   grid-column: 1 / -1;
 }
 :is(.kit, .page-section) :is(form, fieldset) > button { justify-self: start; }
+:is(.kit, .page-section) form.settings-editor,
+:is(.kit, .page-section) .settings-editor > form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: stretch;
+}
+:is(.kit, .page-section) form.settings-editor fieldset,
+:is(.kit, .page-section) .settings-editor fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: stretch;
+  grid-template-columns: unset;
+}
 :is(.kit, .page-section) :is(details, article) > form + form { margin-top: 12px; }
 
 /* Lists of records become bordered rows with actions on the right. */

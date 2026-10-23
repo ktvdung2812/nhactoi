@@ -626,11 +626,12 @@ export default function App() {
     }
   }, [toast]);
   useEffect(() => {
-    if (page === "billing" && me && me.workspace.kind !== "personal")
+    if (page === "billing" && me?.billingConfigured && me.workspace.kind !== "personal")
       api("/billing")
         .then(setBilling)
         .catch((e) => notify(e.message, true));
-  }, [page, me]);
+    else if (page !== "billing" || !me?.billingConfigured) setBilling(null);
+  }, [page, me?.billingConfigured, me?.workspace?.kind]);
   useEffect(() => {
     if (!page.startsWith("tasks/") && !aiTaskId) return undefined;
     const previousFocus = document.activeElement;
@@ -714,6 +715,9 @@ export default function App() {
   useEffect(() => {
     if (me && page === "finance" && !canManage) go("dashboard");
   }, [me?.user?.role, page]);
+  useEffect(() => {
+    if (me && page === "billing" && !me.billingConfigured) go("dashboard");
+  }, [me?.billingConfigured, page]);
   const eventItems = calendarEvents.map((event) => ({
     ...event,
     id: event.id,
@@ -1408,7 +1412,7 @@ export default function App() {
               <ShieldCheck size={18} /> Quản trị SaaS <ArrowUpRight size={14} />
             </button>
           )}
-          {me.workspace.kind !== "personal" && <div className="plan-promo">
+          {me.workspace.kind !== "personal" && me.billingConfigured && <div className="plan-promo">
             <span className="promo-icon">
               <Sparkles size={15} />
             </span>
@@ -2002,13 +2006,13 @@ export default function App() {
               </p>
             </>
           )}
-          {page === "billing" && me.workspace.kind === "personal" && (
+          {page === "billing" && me.billingConfigured && me.workspace.kind === "personal" && (
             <PageHeading
               title="Không gian cá nhân miễn phí"
               subtitle="Không gian cá nhân không cần mua gói. Chuyển sang không gian Team / Doanh nghiệp để quản lý thuê bao."
             />
           )}
-          {page === "billing" && me.workspace.kind !== "personal" && (
+          {page === "billing" && me.billingConfigured && me.workspace.kind !== "personal" && (
             <>
               <PageHeading
                 title="Một gói phù hợp. Nhiều việc nhẹ hơn."

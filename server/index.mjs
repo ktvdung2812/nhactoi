@@ -2076,6 +2076,21 @@ function settingsPlanValues(config, bodyPlans) {
   return plans;
 }
 
+function plansInOrder(config, ids) {
+  if (!Array.isArray(ids) || ids.length !== config.plans.length)
+    throw new HttpError(400, "Danh sách gói không khớp danh mục hiện tại");
+  const seen = new Set();
+  for (const raw of ids) {
+    const id = cleanString(raw, { required: true, max: 20, field: "plan.id" });
+    if (seen.has(id)) throw new HttpError(400, "Mã gói bị trùng trong thứ tự");
+    seen.add(id);
+  }
+  if (config.plans.some((plan) => !seen.has(plan.id)))
+    throw new HttpError(400, "Thiếu gói trong thứ tự mới");
+  const byId = new Map(config.plans.map((plan) => [plan.id, plan]));
+  return ids.map((id) => byId.get(id));
+}
+
 function assertPlanSeatChanges(db, plans, clock) {
   lockPlanSeatChanges(db);
   for (const plan of plans) {
@@ -3333,6 +3348,40 @@ function createApp(options = {}) {
   }
   app.post("/api/admin/plans", requirePlatformAdmin, saveAdminPlan);
   app.patch("/api/admin/plans/:id", requirePlatformAdmin, saveAdminPlan);
+  app.post("/api/admin/plans/reorder", requirePlatformAdmin, (req, res, next) => {
+    try {
+      const body = req.body || {};
+      const reason = adminReason(body.reason);
+      if (!Array.isArray(body.ids) || !body.ids.length)
+        throw new HttpError(400, "ids phải là mảng mã gói");
+      let plans;
+      const updatedAt = isoNow(clock);
+      const beforeOrder = config.plans.map((plan) => plan.id);
+      withTransaction(db, () => {
+        config.plans = currentPlans(db, config.plans);
+        plans = plansInOrder(config, body.ids);
+        if (plans.every((plan, index) => plan.id === config.plans[index]?.id))
+          throw new HttpError(400, "Thứ tự gói không thay đổi");
+        writeStoredSetting(db, "plans", plans, { updatedAt });
+        writeAdminAudit(db, {
+          actorUserId: req.auth.userId,
+          action: "plan.reorder",
+          targetType: "plan",
+          targetId: "catalog",
+          reason,
+          before: { order: beforeOrder },
+          after: { order: plans.map((plan) => plan.id) },
+          createdAt: updatedAt,
+        });
+      });
+      config.plans = plans;
+      config.settingsSource.plans = "database";
+      config._storedSettings.set("plans", jsonSetting(plans));
+      return res.json(adminPlansData());
+    } catch (error) {
+      return next(error);
+    }
+  });
 
   app.get("/api/admin/settings", requirePlatformAdmin, (req, res, next) => {
     try {

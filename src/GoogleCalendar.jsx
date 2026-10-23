@@ -33,10 +33,18 @@ export function GoogleCalendarSettings({api:request}) {
   const [data,setData]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[notice,setNotice]=useState('');
   const [api,isCurrent]=useGuardedApi(request,e=>{setData(null);setNotice('');setError(e.message);});
   useEffect(()=>{let live=true;setData(null);setBusy(false);setError('');setNotice('');api('/admin/google-calendar').then(d=>live&&setData(d)).catch(e=>live&&!staleRequest(e)&&setError(e.message));return()=>{live=false;};},[api]);
-  return <section className="panel settings-card"><h2>Đồng bộ Google Calendar</h2><p>Consent Calendar tách riêng khỏi đăng nhập Google. Chỉ bật sau khi OAuth, callback và tài khoản thử đã được kiểm tra.</p>{error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}{data&&<form className="settings-editor" onSubmit={async e=>{e.preventDefault();const form=e.currentTarget,f=new FormData(form);setBusy(true);setError('');try{await api('/admin/google-calendar',{method:'PUT',body:JSON.stringify({enabled:f.has('enabled'),clientId:f.get('clientId'),clientSecret:f.get('clientSecret'),reason:f.get('reason')})});setData(await api('/admin/google-calendar'));form.elements.clientSecret.value='';setNotice('Đã lưu cấu hình Calendar.');}catch(err){if(!staleRequest(err))setError(err.message);}finally{if(isCurrent())setBusy(false);}}}><fieldset disabled={busy}>
-    <label><input type="checkbox" name="enabled" defaultChecked={data.enabled}/>Bật kết nối Calendar</label>
-    <label className="field"><span>OAuth Client ID</span><input name="clientId" maxLength={300} defaultValue={data.clientId}/></label>
-    <label className="field"><span>Client Secret</span><input name="clientSecret" type="password" autoComplete="new-password" maxLength={1000} placeholder={data.hasSecret?'Đã lưu; để trống để giữ nguyên':'Chưa cấu hình'}/></label>
-    <label className="field"><span>Callback cần đăng ký</span><input readOnly value={data.redirectUri}/></label><label className="field"><span>Watch callback HTTPS</span><input readOnly value={data.watchUrl}/></label>
-    <label className="field"><span>Lý do thay đổi</span><input name="reason" required minLength={3} maxLength={500}/></label></fieldset><button disabled={busy}>Lưu cấu hình Calendar</button></form>}</section>;
+  return <section className="panel settings-card">
+    <div className="settings-card-heading"><div><h2>Đồng bộ Google Calendar</h2><p>Consent Calendar tách riêng khỏi đăng nhập Google. Chỉ bật sau khi OAuth, callback và tài khoản thử đã được kiểm tra.</p></div></div>
+    <div className="settings-editor">{error&&<p className="settings-error" role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}{data&&<form onSubmit={async e=>{e.preventDefault();const form=e.currentTarget,f=new FormData(form);setBusy(true);setError('');try{await api('/admin/google-calendar',{method:'PUT',body:JSON.stringify({enabled:f.has('enabled'),clientId:f.get('clientId'),clientSecret:f.get('clientSecret'),reason:f.get('reason')})});setData(await api('/admin/google-calendar'));form.elements.clientSecret.value='';setNotice('Đã lưu cấu hình Calendar.');}catch(err){if(!staleRequest(err))setError(err.message);}finally{if(isCurrent())setBusy(false);}}}>
+      <fieldset disabled={busy}>
+        <label className="settings-switch"><input type="checkbox" name="enabled" defaultChecked={data.enabled}/>Bật kết nối Calendar</label>
+        <label className="field"><span>OAuth Client ID</span><input name="clientId" maxLength={300} defaultValue={data.clientId}/></label>
+        <label className="field"><span>Client Secret</span><input name="clientSecret" type="password" autoComplete="new-password" maxLength={1000} placeholder={data.hasSecret?'Đã lưu · để trống để giữ nguyên':'Chưa cấu hình'}/></label>
+        <label className="field"><span>Callback cần đăng ký</span><input readOnly value={data.redirectUri}/></label>
+        <label className="field"><span>Watch callback HTTPS</span><input readOnly value={data.watchUrl}/></label>
+        <label className="field"><span>Lý do thay đổi</span><input name="reason" required minLength={3} maxLength={500}/></label>
+      </fieldset>
+      <button className="button" disabled={busy}>Lưu cấu hình Calendar</button>
+    </form>}</div>
+  </section>;
 }

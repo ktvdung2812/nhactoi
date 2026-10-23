@@ -81,6 +81,20 @@ test("plan catalog validates and persists admin changes, enforces seats and keep
   assert.equal((await call(s, "/billing", { cookie: customer.cookie })).body.plans.find((p) => p.id === "enterprise").monthlyPrice, 1600000);
   assert.equal(isValidRoute("/admin/plans"), true);
   assert.equal(readRoute("/admin/plans"), "admin/plans");
+  const order = s.app.locals.config.plans.map((plan) => plan.id);
+  const reversed = [...order].reverse();
+  assert.equal((await write("/admin/plans/reorder", { ids: reversed, reason: "Đảo thứ tự thử" }, "POST")).status, 200);
+  assert.deepEqual(s.app.locals.config.plans.map((plan) => plan.id), reversed);
+  const billing = await call(s, "/billing", { cookie: customer.cookie });
+  assert.deepEqual(billing.body.plans.map((plan) => plan.id), reversed.filter((id) => billing.body.plans.some((plan) => plan.id === id)));
+  assert.equal((await write("/admin/plans/reorder", { ids: order, reason: "" }, "POST")).status, 400);
+  assert.equal((await write("/admin/plans/reorder", { ids: order, reason: "Khôi phục thứ tự" }, "POST")).status, 200);
+  const rotated = [...order.slice(1), order[0]];
+  assert.equal((await write("/admin/plans/reorder", { ids: rotated, reason: "Xoay thứ tự" }, "POST")).status, 200);
+  assert.equal((await write("/admin/plans/reorder", { ids: rotated, reason: "Giữ nguyên thứ tự" }, "POST")).status, 400);
+  const auditReorder = s.db.prepare("SELECT * FROM admin_audit_logs WHERE action = 'plan.reorder' ORDER BY created_at DESC, id DESC LIMIT 1").get();
+  assert.equal(auditReorder.target_id, "catalog");
+  assert.deepEqual(JSON.parse(auditReorder.after_json).order, rotated);
 });
 
 test("custom plan checkout preserves quotes and settles after the plan stops selling", async (t) => {

@@ -375,10 +375,22 @@
   border: 0;
 }
 
-/* Separate labels and primary actions in the storage/operations forms. */
-.settings-editor fieldset {
-  display: grid;
+/* Stack admin fields in one column; avoid feature-kit multi-column form grids. */
+.settings-editor fieldset,
+form.settings-editor > fieldset {
+  display: flex;
+  flex-direction: column;
   gap: 14px;
+  align-items: stretch;
+}
+form.settings-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+form.settings-editor > .button,
+form.settings-editor > button:not([class]) {
+  align-self: flex-start;
 }
 .settings-editor > form,
 .settings-editor details > form {
