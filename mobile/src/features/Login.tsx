@@ -1,21 +1,37 @@
-import React, { useState } from "react";
-import { KeyboardAvoidingView, ScrollView, View } from "react-native";
+import { useTheme } from "../ui/theme";
+import React, { useRef, useState } from "react";
+import {
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  View,
+  type TextInput,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { HingeSafe } from "../ui/frames";
+import { hingeSafeRegion, position, useMeasuredWindow } from "../ui/frames";
 import { useSession } from "../core/session";
 import { errorMessage } from "../core/api";
-import { PasswordRecovery, RegisterForm } from "./AuthForms";
 import {
+  FocusableField,
+  keyboardAwareScrollProps,
+  PasswordRecovery,
+  readableWidth,
+  RegisterForm,
+} from "./AuthForms";
+import { useKitStyles,
   Text,
-  Heading,
   Card,
-  Field,
   Button,
   ErrorNotice,
-  s,
-  colors,
+  KeyboardRevealContext,
+  useKeyboardReveal,
 } from "../ui/kit";
+
+/** Decorative hero text stops growing here so the sign-in form stays reachable at AX sizes. */
+const HERO_MAX_FONT_SCALE = 1.4;
 export function Login() {
+  const s = useKitStyles();
+  const { colors } = useTheme();
   const { login, error: sessionError } = useSession();
   const [email, setEmail] = useState(""),
     [password, setPassword] = useState(""),
@@ -23,6 +39,27 @@ export function Login() {
     [success, setSuccess] = useState(""),
     [mode, setMode] = useState<"login" | "register" | "recovery">("login"),
     [busy, setBusy] = useState(false);
+  const passwordRef = useRef<TextInput>(null);
+  const { attach, onLayout, ...window } = useMeasuredWindow();
+  const { fontScale, foldingFeatures, width, height } = window;
+  const fold = window.layout?.posture === "tabletop"
+    ? foldingFeatures.find((feature) => feature.orientation === "HORIZONTAL" && feature.isSeparating)
+    : undefined;
+  const {
+    scroll: outerScroll,
+    reveal: revealInOuter,
+    onScroll: onOuterScroll,
+  } = useKeyboardReveal();
+  const {
+    scroll: controlsScroll,
+    reveal: revealInControls,
+    onScroll: onControlsScroll,
+  } = useKeyboardReveal();
+  const margin = 8;
+  const topHeight = fold ? Math.max(0, Math.min(height, fold.bounds.top - margin)) : 0;
+  const bottomY = fold ? Math.max(0, Math.min(height, fold.bounds.bottom + margin)) : 0;
+  const region = fold ? { x: 0, y: 0, width, height } : hingeSafeRegion(width, height, foldingFeatures);
+  const columnStyle = { width: "100%" as const, maxWidth: readableWidth(fontScale, 460), alignSelf: "center" as const, gap: 24 };
   const switchMode = (next: "login" | "register" | "recovery") => {
     if (busy) return;
     setPassword("");
@@ -58,45 +95,81 @@ export function Login() {
   }
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
-      {/* Measure the hinge-safe region after reserving space for the keyboard. */}
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
-        <HingeSafe>
+      {/* Android: measure the hinge-safe region after reserving space for the keyboard.
+          iOS: padding never scrolls the focused field into view (it stayed under the keyboard on
+          the iPhone Duo cover display), so the native scroll view insets itself instead. */}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior="padding"
+        enabled={Platform.OS !== "ios"}
+      >
+        <View ref={attach} onLayout={onLayout} style={{ flex: 1 }}>
+          <View testID="login-hinge-safe" style={position(region)}>
           <ScrollView
-            keyboardShouldPersistTaps="handled"
-            contentContainerStyle={{
-              flexGrow: 1,
-              justifyContent: "center",
-              padding: 24,
-            }}
+            testID="login-scroll"
+            ref={outerScroll}
+            onScroll={onOuterScroll}
+            scrollEventThrottle={16}
+            {...keyboardAwareScrollProps}
+            scrollEnabled={!fold}
+            contentContainerStyle={{ flexGrow: 1, justifyContent: fold ? "flex-start" : "center" }}
           >
-            <View
-              style={{
-                width: "100%",
-                maxWidth: 460,
-                alignSelf: "center",
-                gap: 24,
-              }}
+            <ScrollView
+              testID="login-hero-scroll"
+              scrollEnabled={!!fold}
+              style={fold ? { height: topHeight, flexGrow: 0 } : { flexGrow: 0 }}
+              contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 24, paddingBottom: fold ? 24 : 12 }}
             >
+            <View testID="login-column" style={columnStyle}>
               <View style={{ gap: 8 }}>
                 <Text
+                  accessibilityLabel="Nhắc tôi"
+                  maxFontSizeMultiplier={HERO_MAX_FONT_SCALE}
                   style={{
                     fontFamily: "BeVietnamPro_700Bold",
                     fontSize: 18,
-                    color: colors.green,
+                    color: colors.accent,
                   }}
                 >
                   ◉ nhắc tôi
                 </Text>
-                <Heading>Việc hôm nay,{"\n"}nhẹ đầu hơn.</Heading>
-                <Text style={s.muted}>
+                <Text
+                  accessibilityRole="header"
+                  maxFontSizeMultiplier={HERO_MAX_FONT_SCALE}
+                  style={s.heading}
+                >
+                  Việc hôm nay,{"\n"}nhẹ đầu hơn.
+                </Text>
+                <Text
+                  maxFontSizeMultiplier={HERO_MAX_FONT_SCALE}
+                  style={s.muted}
+                >
                   Công việc, đồng đội và những điều cần nhớ.
                 </Text>
               </View>
+            </View>
+            </ScrollView>
+            <ScrollView
+              testID="login-controls-scroll"
+              ref={controlsScroll}
+              onScroll={onControlsScroll}
+              scrollEventThrottle={16}
+              {...keyboardAwareScrollProps}
+              scrollEnabled={!!fold}
+              style={fold ? { height: height - bottomY, marginTop: bottomY - topHeight, flexGrow: 0 } : { flexGrow: 0 }}
+              contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 24, paddingTop: fold ? 24 : 12 }}
+            >
+            <View style={columnStyle}>
+              {/* Keep the focused field clear of the iOS keyboard instead of flush against it;
+                  in tabletop posture only the lower pane scrolls. */}
+              <KeyboardRevealContext.Provider
+                value={fold ? revealInControls : revealInOuter}
+              >
               <Card>
                 <Text style={s.cardTitle}>Chào bạn trở lại</Text>
-                {success ? <Text style={{ color: colors.green }}>{success}</Text> : null}
+                {success ? <Text style={{ color: colors.accent }}>{success}</Text> : null}
                 <ErrorNotice message={error || sessionError} />
-                <Field
+                <FocusableField
                   label="Email"
                   testID="login-email"
                   value={email}
@@ -104,10 +177,17 @@ export function Login() {
                   editable={!busy}
                   keyboardType="email-address"
                   autoCapitalize="none"
+                  autoCorrect={false}
                   autoComplete="email"
-                  textContentType="emailAddress"
+                  // Apple: an email used as the account name is `.username` so Password AutoFill
+                  // offers the saved login instead of contact email suggestions.
+                  textContentType="username"
+                  returnKeyType="next"
+                  submitBehavior="submit"
+                  onSubmitEditing={() => passwordRef.current?.focus()}
                 />
-                <Field
+                <FocusableField
+                  ref={passwordRef}
                   label="Mật khẩu"
                   testID="login-password"
                   value={password}
@@ -116,6 +196,7 @@ export function Login() {
                   secureTextEntry
                   autoComplete="current-password"
                   textContentType="password"
+                  returnKeyType="go"
                   onSubmitEditing={() => void submit()}
                 />
                 <Button
@@ -144,12 +225,18 @@ export function Login() {
                   Dùng tài khoản doanh nghiệp Nhắc tôi đã có.
                 </Text>
               </Card>
-              <Text style={[s.muted, { textAlign: "center", fontSize: 12 }]}>
+              </KeyboardRevealContext.Provider>
+              <Text
+                maxFontSizeMultiplier={HERO_MAX_FONT_SCALE}
+                style={[s.muted, { textAlign: "center", fontSize: 12 }]}
+              >
                 Nhắc đúng lúc · Làm cùng nhau
               </Text>
             </View>
+            </ScrollView>
           </ScrollView>
-        </HingeSafe>
+          </View>
+        </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );

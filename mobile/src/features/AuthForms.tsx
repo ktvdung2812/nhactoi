@@ -1,16 +1,15 @@
-import React, { useEffect, useState } from "react";
-import { View } from "react-native";
+import { useTheme } from "../ui/theme";
+import React, { useEffect, useRef, useState } from "react";
+import { View, type TextInput } from "react-native";
 import { errorMessage, request } from "../core/api";
 import { useSession } from "../core/session";
-import {
+import { useKitStyles,
   Button,
   Card,
   ErrorNotice,
   Field,
   FormPage,
   Text,
-  colors,
-  s,
 } from "../ui/kit";
 
 const GENERIC_RESET_MESSAGE =
@@ -31,6 +30,20 @@ export type RecoveryResponse = {
 
 type BackProps = { onBack: () => void };
 
+/**
+ * kit's Field spreads its remaining props onto TextInput and React 19 passes `ref` as a prop, so a
+ * ref given here reaches the native input. Typed locally because TextInputProps omits `ref`.
+ */
+export const FocusableField = Field as (
+  props: React.ComponentProps<typeof Field> & { ref?: React.Ref<TextInput> },
+) => React.ReactElement;
+
+// Shared with Login/Account; the single source lives in the UI kit.
+export { keyboardAwareScrollProps, readableWidth } from "../ui/kit";
+
+/** iOS strong-password suggestions must satisfy the same length rule the server enforces. */
+const PASSWORD_RULES = "minlength: 8; maxlength: 256;";
+
 function emailIsValid(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
@@ -47,6 +60,7 @@ export function RegisterForm({
   onBack,
   onRegistered,
 }: BackProps & { onRegistered?: () => void }) {
+  const s = useKitStyles();
   const { register } = useSession();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -56,6 +70,11 @@ export function RegisterForm({
   const [industry, setIndustry] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const emailRef = useRef<TextInput>(null);
+  const passwordRef = useRef<TextInput>(null);
+  const confirmationRef = useRef<TextInput>(null);
+  const workspaceRef = useRef<TextInput>(null);
+  const industryRef = useRef<TextInput>(null);
 
   const submit = async () => {
     if (busy) return;
@@ -104,7 +123,8 @@ export function RegisterForm({
           Tạo không gian làm việc để bắt đầu cùng đội nhóm.
         </Text>
         <ErrorNotice message={error} />
-        <Field
+        {/* Each "next" key moves to the following field; only the last field submits. */}
+        <FocusableField
           label="Họ và tên"
           testID="register-name"
           value={name}
@@ -115,8 +135,11 @@ export function RegisterForm({
           textContentType="name"
           autoCapitalize="words"
           returnKeyType="next"
+          submitBehavior="submit"
+          onSubmitEditing={() => emailRef.current?.focus()}
         />
-        <Field
+        <FocusableField
+          ref={emailRef}
           label="Email"
           testID="register-email"
           value={email}
@@ -125,11 +148,16 @@ export function RegisterForm({
           editable={!busy}
           keyboardType="email-address"
           autoCapitalize="none"
+          autoCorrect={false}
           autoComplete="email"
-          textContentType="emailAddress"
+          // The email is the account name: iOS saves the new password under it.
+          textContentType="username"
           returnKeyType="next"
+          submitBehavior="submit"
+          onSubmitEditing={() => passwordRef.current?.focus()}
         />
-        <Field
+        <FocusableField
+          ref={passwordRef}
           label="Mật khẩu"
           testID="register-password"
           value={password}
@@ -139,9 +167,13 @@ export function RegisterForm({
           secureTextEntry
           autoComplete="new-password"
           textContentType="newPassword"
+          passwordRules={PASSWORD_RULES}
           returnKeyType="next"
+          submitBehavior="submit"
+          onSubmitEditing={() => confirmationRef.current?.focus()}
         />
-        <Field
+        <FocusableField
+          ref={confirmationRef}
           label="Nhập lại mật khẩu"
           testID="register-confirm"
           value={confirmation}
@@ -151,9 +183,13 @@ export function RegisterForm({
           secureTextEntry
           autoComplete="new-password"
           textContentType="newPassword"
-          onSubmitEditing={() => void submit()}
+          passwordRules={PASSWORD_RULES}
+          returnKeyType="next"
+          submitBehavior="submit"
+          onSubmitEditing={() => workspaceRef.current?.focus()}
         />
-        <Field
+        <FocusableField
+          ref={workspaceRef}
           label="Tên doanh nghiệp"
           testID="register-workspace"
           value={workspaceName}
@@ -163,8 +199,11 @@ export function RegisterForm({
           autoComplete="organization"
           textContentType="organizationName"
           returnKeyType="next"
+          submitBehavior="submit"
+          onSubmitEditing={() => industryRef.current?.focus()}
         />
-        <Field
+        <FocusableField
+          ref={industryRef}
           label="Ngành nghề (không bắt buộc)"
           testID="register-industry"
           value={industry}
@@ -173,6 +212,7 @@ export function RegisterForm({
           editable={!busy}
           autoComplete="off"
           returnKeyType="done"
+          onSubmitEditing={() => void submit()}
         />
         <Button
           testID="register-submit"
@@ -191,6 +231,7 @@ type ForgotProps = BackProps & {
 
 /** Requests a password reset code and hands the normalized email to the code form. */
 export function ForgotPasswordForm({ onBack, onSent }: ForgotProps) {
+  const s = useKitStyles();
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -245,8 +286,10 @@ export function ForgotPasswordForm({ onBack, onSent }: ForgotProps) {
           editable={!busy}
           keyboardType="email-address"
           autoCapitalize="none"
+          autoCorrect={false}
           autoComplete="email"
-          textContentType="emailAddress"
+          textContentType="username"
+          returnKeyType="send"
           onSubmitEditing={() => void submit()}
         />
         <Button
@@ -277,6 +320,8 @@ export function ResetPasswordForm({
   onResend,
   onComplete,
 }: ResetProps) {
+  const s = useKitStyles();
+  const { colors } = useTheme();
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
@@ -285,6 +330,8 @@ export function ResetPasswordForm({
   const [retryAfter, setRetryAfter] = useState(Math.max(0, retryAfterSeconds));
   const [busy, setBusy] = useState(false);
   const [resending, setResending] = useState(false);
+  const passwordRef = useRef<TextInput>(null);
+  const confirmationRef = useRef<TextInput>(null);
 
   useEffect(() => {
     if (retryAfter <= 0) return;
@@ -354,24 +401,30 @@ export function ResetPasswordForm({
           để tìm mã xác nhận. Mã có hiệu lực trong 15 phút và chỉ dùng một lần.
         </Text>
         {notice ? (
-          <Text testID="reset-message" style={{ color: colors.green }}>
+          <Text testID="reset-message" style={{ color: colors.accent }}>
             {notice}
           </Text>
         ) : null}
         <ErrorNotice message={error} />
-        <Field
+        <FocusableField
           label="Mã xác nhận (6 chữ số)"
           testID="reset-code"
           value={code}
-          onChangeText={(value) => setCode(value.replace(/\D/g, "").slice(0, 6))}
+          onChangeText={(value) => {
+            const digits = value.replace(/\D/g, "").slice(0, 6);
+            setCode(digits);
+            // The number pad has no return key on iPhone: move on once the code is complete,
+            // including when iOS fills it from Mail with one tap.
+            if (digits.length === 6 && code.length !== 6) passwordRef.current?.focus();
+          }}
           keyboardType="number-pad"
           autoComplete="one-time-code"
           textContentType="oneTimeCode"
           maxLength={6}
           editable={!busy && !resending}
-          returnKeyType="next"
         />
-        <Field
+        <FocusableField
+          ref={passwordRef}
           label="Mật khẩu mới"
           testID="reset-password"
           value={password}
@@ -381,9 +434,13 @@ export function ResetPasswordForm({
           secureTextEntry
           autoComplete="new-password"
           textContentType="newPassword"
+          passwordRules={PASSWORD_RULES}
           returnKeyType="next"
+          submitBehavior="submit"
+          onSubmitEditing={() => confirmationRef.current?.focus()}
         />
-        <Field
+        <FocusableField
+          ref={confirmationRef}
           label="Nhập lại mật khẩu mới"
           testID="reset-confirm"
           value={confirmation}
@@ -393,6 +450,8 @@ export function ResetPasswordForm({
           secureTextEntry
           autoComplete="new-password"
           textContentType="newPassword"
+          passwordRules={PASSWORD_RULES}
+          returnKeyType="done"
           onSubmitEditing={() => void submit()}
         />
         <Button

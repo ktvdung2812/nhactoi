@@ -6,7 +6,6 @@ export const licenseTypes = Object.freeze([
   "perpetual",
   "trial",
   "support",
-  "domain",
   "other",
 ]);
 
@@ -15,7 +14,6 @@ export const licenseTypeLabels = Object.freeze({
   perpetual: "Vĩnh viễn / bảo trì",
   trial: "Dùng thử",
   support: "Hỗ trợ / bảo trì",
-  domain: "Tên miền / SSL",
   other: "Khác",
 });
 

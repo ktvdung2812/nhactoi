@@ -1,3 +1,4 @@
+import { useTheme } from "../ui/theme";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Modal,
@@ -5,6 +6,7 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
+  TextInput,
   View,
 } from "react-native";
 import { router } from "expo-router";
@@ -18,10 +20,10 @@ import type {
 import { statuses, priorities, dateLabel } from "../core/policy";
 import { errorMessage } from "../core/api";
 import { HingeSafe } from "../ui/frames";
-import {
+import { useAdaptiveWindow } from "../ui/adaptive";
+import { useKitStyles,
   Text,
   Heading,
-  Field,
   Select,
   Row,
   Button,
@@ -29,8 +31,6 @@ import {
   Empty,
   Loading,
   ErrorNotice,
-  s,
-  colors,
 } from "../ui/kit";
 
 export type WorkItem =
@@ -137,11 +137,14 @@ function CreateChooser({
   visible: boolean;
   onClose: (path?: "/task/new" | "/event/new") => void;
 }) {
+  const s = useKitStyles();
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <Modal
       visible={visible}
       transparent
-      animationType="fade"
+      animationType={theme.reduceMotion ? "none" : "fade"}
       onRequestClose={() => onClose()}
     >
       <View style={styles.modalOverlay}>
@@ -172,6 +175,10 @@ export function TaskList({
   selectedId?: string;
   onSelect: (id: string) => void;
 }) {
+  const s = useKitStyles();
+  const theme = useTheme();
+  const { colors, radius } = theme;
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const { session, writable, taskWritable=writable, online } = useSession();
   const tasks = useResource<{ tasks: Task[] }>("/tasks");
   const guest=session?.user.memberType==='guest';
@@ -188,6 +195,10 @@ export function TaskList({
     [filtersOpen, setFiltersOpen] = useState(false),
     [createOpen, setCreateOpen] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [height, setHeight] = useState(0);
+  const { fontScale } = useAdaptiveWindow();
+  // Below this height the full header leaves little room for the board, especially at larger text sizes.
+  const compact = height > 0 && height < 520 * Math.max(fontScale, 1);
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 60000);
     return () => clearInterval(timer);
@@ -225,34 +236,50 @@ export function TaskList({
       onRefresh={() => {
         refreshWork();
       }}
-      tintColor={colors.green}
+      tintColor={colors.accent}
+      colors={[colors.accent]}
+      progressBackgroundColor={colors.surface}
     />
   );
   const retry = () => {
     refreshWork();
   };
   const header = (
-    <View style={{ gap: 16, paddingBottom: 16 }}>
-      <View>
-        <Text style={[s.label, { color: colors.green }]}>KHÔNG GIAN LÀM VIỆC</Text>
+    <View style={{ gap: compact ? 8 : 16, paddingBottom: compact ? 8 : 16 }}>
+      <View style={compact && styles.hidden}>
+        <Text style={[s.label, { color: colors.accent }]}>KHÔNG GIAN LÀM VIỆC</Text>
         <Heading>Công việc của bạn</Heading>
         <Text style={s.muted}>{session?.workspace.name}</Text>
       </View>
-      <Row>
-        <Button label="＋ Tạo mới" disabled={!taskWritable} onPress={()=>online===false?router.push("/task/new"):openCreate()} />
-        <Button
-          label={filtersOpen ? "Ẩn bộ lọc" : "Bộ lọc"}
-          secondary
-          onPress={() => setFiltersOpen((value) => !value)}
-        />
-      </Row>
-      <Field
-        label="Tìm công việc hoặc lịch hẹn"
-        placeholder="Tên hoặc nội dung…"
-        value={search}
-        onChangeText={setSearch}
-      />
-      <Select label="Lọc dự án" value={project} onChange={setProject} options={[{value:'all',label:'Tất cả dự án'},...(projects.data?.value.projects||[]).map(p=>({value:p.id,label:p.name}))]}/>
+      <View style={[styles.headerControls, compact && styles.compactControls]}>
+        <Row>
+          <Button label="＋ Tạo mới" disabled={!taskWritable} onPress={()=>online===false?router.push("/task/new"):openCreate()} />
+          <Button
+            label={filtersOpen ? "Ẩn bộ lọc" : "Bộ lọc"}
+            secondary
+            onPress={() => setFiltersOpen((value) => !value)}
+          />
+        </Row>
+        <View style={[s.field, compact && styles.compactSearch]}>
+          <Text accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[s.label, compact && styles.hidden]}>
+            Tìm công việc hoặc lịch hẹn
+          </Text>
+          <TextInput
+            accessibilityLabel="Tìm công việc hoặc lịch hẹn"
+            placeholder="Tên hoặc nội dung…"
+            placeholderTextColor={colors.muted}
+            selectionColor={colors.accent}
+            cursorColor={colors.accent}
+            keyboardAppearance={theme.scheme}
+            value={search}
+            onChangeText={setSearch}
+            style={s.input}
+          />
+        </View>
+      </View>
+      <View style={compact && !filtersOpen && styles.hidden}>
+        <Select label="Lọc dự án" value={project} onChange={setProject} options={[{value:'all',label:'Tất cả dự án'},...(projects.data?.value.projects||[]).map(p=>({value:p.id,label:p.name}))]}/>
+      </View>
       {filtersOpen && (
         <>
           <Select
@@ -349,7 +376,7 @@ export function TaskList({
         onPress={onPress}
         style={
           isTask && selectedId === item.value.id
-            ? { borderColor: colors.green, borderWidth: 2, borderRadius: 18 }
+            ? { borderColor: colors.accent, borderWidth: 2, borderRadius: radius.sheet }
             : undefined
         }
       >
@@ -358,7 +385,7 @@ export function TaskList({
             <Text style={s.pill}>{isTask ? "Công việc" : "Lịch hẹn"}</Text>
             <Text style={s.pill}>{statuses[status]}</Text>
             {isTask && item.value.priority === "high" && (
-              <Text style={[s.pill, { color: colors.orange, backgroundColor: "#fff0dd" }]}>
+              <Text style={[s.pill, { color: colors.orange, backgroundColor: colors.orangePale }]}>
                 {priorities[item.value.priority]}
               </Text>
             )}
@@ -390,7 +417,9 @@ export function TaskList({
   return (
     <>
       <ScrollView
-        contentContainerStyle={s.content}
+        testID="task-list"
+        onLayout={(event) => setHeight(event.nativeEvent.layout.height)}
+        contentContainerStyle={[s.content, { width: '100%', maxWidth: 760, alignSelf: 'center' }]}
         keyboardShouldPersistTaps="handled"
         refreshControl={refresh}
       >
@@ -424,19 +453,24 @@ export function TaskList({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles({ colors, radius }: import("../ui/theme").Theme) {
+ return StyleSheet.create({
+  hidden: { display: "none" },
+  headerControls: { gap: 16 },
+  compactControls: { flexDirection: "row-reverse", alignItems: "center", gap: 8 },
+  compactSearch: { flex: 1, minWidth: 0 },
   boardColumns: { gap: 12, paddingBottom: 8 },
   boardColumn: {
     width: 270,
     minHeight: 180,
     padding: 14,
     gap: 12,
-    borderRadius: 16,
-    backgroundColor: "#eaf1ea",
+    borderRadius: radius.card,
+    backgroundColor: colors.pale,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "#142d2677",
+    backgroundColor: colors.overlay,
     justifyContent: "center",
     padding: 24,
   },
@@ -444,9 +478,10 @@ const styles = StyleSheet.create({
   modalCard: {
     width: "100%",
     maxWidth: 500,
-    backgroundColor: colors.white,
-    borderRadius: 20,
+    backgroundColor: colors.surface,
+    borderRadius: radius.sheet,
     padding: 20,
     gap: 16,
   },
 });
+}

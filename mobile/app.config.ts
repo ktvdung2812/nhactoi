@@ -7,7 +7,7 @@ const config: ExpoConfig = {
   version: "0.1.0",
   scheme: "nhactoi",
   orientation: "default",
-  userInterfaceStyle: "light",
+  userInterfaceStyle: "automatic",
   icon: "./assets/icon.png",
   android: {
     package: release ? "com.nhactoi.app" : "com.nhactoi.app.dev",
@@ -16,17 +16,18 @@ const config: ExpoConfig = {
     ...(googleServicesFile ? { googleServicesFile } : {}),
     adaptiveIcon: {
       foregroundImage: "./assets/android-icon-foreground.png",
-      backgroundColor: "#176b59",
+      backgroundColor: "#e6f4fe",
     },
     blockedPermissions: [
       "android.permission.READ_MEDIA_IMAGES",
       "android.permission.READ_MEDIA_VIDEO",
       "android.permission.RECORD_AUDIO",
     ],
-    predictiveBackGestureEnabled: true,
+    predictiveBackGestureEnabled: false,
   },
   ios: { supportsTablet: true, bundleIdentifier: "com.nhactoi.app" },
   plugins: [
+    "./plugins/with-android-config-changes",
     "expo-router",
     "expo-secure-store",
     ["expo-sqlite", { useSQLCipher: true }],
@@ -34,7 +35,14 @@ const config: ExpoConfig = {
     "expo-document-picker",
     "expo-sharing",
     "expo-font",
-    ["expo-build-properties", { android: { usesCleartextTraffic: !release } }],
+    [
+      "expo-build-properties",
+      {
+        android: { usesCleartextTraffic: !release },
+        // Apps built with the iOS 27 SDK must adopt the UIScene life cycle or they fail to launch.
+        ios: { enableSceneSupport: true },
+      },
+    ],
   ],
   extra: { pushConfigured: !!googleServicesFile },
   experiments: { typedRoutes: true },

@@ -18,9 +18,20 @@ export function removeRoadmapSchema(db){
  DELETE FROM schema_migrations WHERE version>=11;`);
 }
 
-// Physically removes migrations 016 to 018 so older-schema fixtures can replay them.
+// Physically removes migrations 016 onward so older-schema fixtures can replay them.
 export function removePersonalWorkspaceSchema(db){
- db.exec(`ALTER TABLE sessions DROP COLUMN IF EXISTS auth_method;
+ db.exec(`DROP TABLE IF EXISTS user_appearance_sync;
+ ALTER TABLE user_appearance DROP CONSTRAINT user_appearance_pkey;
+ ALTER TABLE user_appearance DROP COLUMN IF EXISTS platform;
+ ALTER TABLE user_appearance ADD PRIMARY KEY (workspace_id, user_id, scope);
+ ALTER TABLE service_contracts DROP CONSTRAINT service_contracts_license_type_check;
+ ALTER TABLE service_contracts ADD CONSTRAINT service_contracts_license_type_check CHECK (license_type IN ('subscription', 'perpetual', 'trial', 'support', 'domain', 'other'));
+ DROP TABLE IF EXISTS billing_profiles;
+ DROP INDEX IF EXISTS billing_orders_reconcile_idx;
+ ALTER TABLE billing_orders DROP CONSTRAINT billing_orders_status_check;
+ ALTER TABLE billing_orders ADD CONSTRAINT billing_orders_status_check CHECK (status IN ('pending', 'paid', 'failed', 'refunded', 'expired'));
+ ALTER TABLE billing_orders DROP COLUMN IF EXISTS payment_code, DROP COLUMN IF EXISTS subtotal_amount, DROP COLUMN IF EXISTS tax_rate, DROP COLUMN IF EXISTS tax_amount, DROP COLUMN IF EXISTS amount_paid, DROP COLUMN IF EXISTS last_checked_at;
+ ALTER TABLE sessions DROP COLUMN IF EXISTS auth_method;
  DROP TABLE IF EXISTS email_change_requests;
  DROP TRIGGER IF EXISTS workspaces_personal_protect ON workspaces; DROP TRIGGER IF EXISTS workspace_members_personal_only ON workspace_members; DROP TRIGGER IF EXISTS invitations_personal_none ON invitations;
  DROP FUNCTION IF EXISTS nhactoi_protect_personal_workspace(); DROP FUNCTION IF EXISTS nhactoi_personal_workspace_members();

@@ -5,16 +5,16 @@
 .reminder-panel li { margin-block: 8px; }
 .reminder-fields { border: 0; padding: 0; min-width: 0; }
 .reminder-steps { display: grid; gap: 12px; margin-block: 14px; }
-.reminder-step { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; min-width: 0; }
+.reminder-step { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; border: 1px solid var(--border-color); border-radius: var(--radius-control); padding: 12px; min-width: 0; }
 .reminder-panel label { display: grid; gap: 6px; font-size: 13px; }
 .reminder-panel .reminder-check { display: flex; align-items: center; gap: 8px; margin-block: 12px; }
 .reminder-panel .reminder-check input { width: auto; }
-.reminder-panel input, .reminder-panel select { max-width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-input); color: inherit; }
+.reminder-panel input, .reminder-panel select { max-width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: var(--radius-control); background: var(--bg-input); color: inherit; }
 .reminder-actions, .reminder-times { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-block: 14px; }
 .reminder-panel details { margin-block: 12px; }
 .reminder-step:disabled, .reminder-fields:disabled { opacity: .7; }
 /* Collapsible sections read as cards with a chevron instead of the raw disclosure marker. */
-.reminder-panel details { padding: 0 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-surface); }
+.reminder-panel details { padding: 0 14px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--bg-surface); }
 .reminder-panel details[open] { padding-bottom: 12px; }
 .reminder-panel summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; list-style: none; }
 .reminder-panel summary::-webkit-details-marker { display: none; }

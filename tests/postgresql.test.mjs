@@ -97,7 +97,7 @@ test('PostgreSQL simultaneous startups apply the baseline and create the initial
   } finally { db.exec(`DROP SCHEMA "${schema}" CASCADE`); db.close(); }
 });
 
-test('a schema 17 backup restores into schema 18 with every session marked as a password sign-in', () => {
+test('a schema 17 backup restores with every session marked as a password sign-in', () => {
   const source = openDatabase();
   seedDemo({ db: source, includeDemoAccount: true });
   const now = new Date().toISOString(), later = new Date(Date.now() + 86400000).toISOString();
@@ -107,15 +107,16 @@ test('a schema 17 backup restores into schema 18 with every session marked as a 
   source.prepare("INSERT INTO sessions(id, token_hash, user_id, workspace_id, expires_at, created_at, kind, auth_method) VALUES (?, ?, ?, ?, ?, ?, 'mobile', 'dev')")
     .run('ses_dev_v17', 'hash-dev-v17', user_id, workspace_id, later, now);
   const current = exportSnapshot(source);
-  assert.equal(current.schemaVersion, 18);
+  assert.equal(current.schemaVersion, SCHEMA_VERSION);
   assert.deepEqual(current.tables.sessions.columns, TABLE_COLUMNS.sessions);
   const sessions = V17_TABLE_COLUMNS.sessions;
   assert.equal(sessions.includes('auth_method'), false);
   // An application at schema 17 had no auth_method column to export.
-  const v17 = { ...current, schemaVersion: 17, tables: { ...current.tables,
-    sessions: { columns: [...sessions], rows: current.tables.sessions.rows.map(row => row.slice(0, sessions.length)) } } };
+  const v17 = { ...current, schemaVersion: 17, tables: Object.fromEntries(Object.entries(V17_TABLE_COLUMNS).map(([table, columns]) => [table, {
+    columns: [...columns], rows: current.tables[table].rows.map(row => columns.map(column => row[current.tables[table].columns.indexOf(column)])),
+  }])) };
   const upgraded = upgradeSnapshot(v17);
-  assert.equal(upgraded.schemaVersion, 18);
+  assert.equal(upgraded.schemaVersion, SCHEMA_VERSION);
   assert.deepEqual(upgraded.tables.sessions.columns, TABLE_COLUMNS.sessions);
 
   const target = openDatabase();

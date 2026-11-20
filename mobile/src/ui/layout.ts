@@ -1,5 +1,6 @@
 import type {
   NhactoiFoldingFeature,
+  WindowLayoutInfoEvent,
   WindowRect,
 } from "../../modules/nhactoi-window";
 
@@ -49,6 +50,33 @@ const BASE_PANE_GAP = 16;
 const MIN_PANE_WIDTH = 280;
 const MIN_TABLETOP_HEIGHT = 240;
 
+/** Discard a cached native posture until RN has caught up with the window resize. */
+export function currentWindowSnapshot(
+  snapshot: WindowLayoutInfoEvent | null,
+  dimensions: { width: number; height: number },
+): WindowLayoutInfoEvent | null {
+  return snapshot &&
+    Math.abs(snapshot.width - dimensions.width) <= 2 &&
+    Math.abs(snapshot.height - dimensions.height) <= 2
+    ? snapshot
+    : null;
+}
+
+/** Translate app-window feature coordinates into a measured child frame. */
+export function localizeFoldingFeatures(
+  features: NhactoiFoldingFeature[], offsetX: number, offsetY: number,
+): NhactoiFoldingFeature[] {
+  return features.map((feature) => ({
+    ...feature,
+    bounds: {
+      left: feature.bounds.left - offsetX,
+      top: feature.bounds.top - offsetY,
+      right: feature.bounds.right - offsetX,
+      bottom: feature.bounds.bottom - offsetY,
+    },
+  }));
+}
+
 const finite = (value: number, fallback: number) =>
   Number.isFinite(value) && value >= 0 ? value : fallback;
 
@@ -73,6 +101,10 @@ const intersection = (
   let right = Math.min(a.x + a.width, b.right);
   let bottom = Math.min(a.y + a.height, b.bottom);
   if (right < left || bottom < top) return undefined;
+  // A non-zero feature that only touches the region is outside it. Only expand
+  // a line when the original feature itself has zero thickness.
+  if ((right === left && b.right !== b.left) ||
+      (bottom === top && b.bottom !== b.top)) return undefined;
 
   // Android can report a zero-pixel hinge line for a continuous fold. Keep a one dp exclusion
   // centered on that line so content never straddles it after the native px -> dp conversion.
@@ -106,6 +138,43 @@ export function getAdaptiveLayout({
   fontScale: rawFontScale = 1,
   foldingFeatures = [],
 }: AdaptiveLayoutInput): AdaptiveLayout {
+  const layout = computeAdaptiveLayout({
+    width: rawWidth, height: rawHeight, fontScale: rawFontScale, foldingFeatures,
+  });
+  // More than one display feature can intersect a window. Keep every returned
+  // region on one side of each one, including navigation outside the content area.
+  const avoidFeatures = (original: LayoutRegion) => foldingFeatures.reduce((area, feature) => {
+    if (!featureIsSeparating(feature)) return area;
+    const gap = intersection(area, feature.bounds);
+    if (!gap) return area;
+    if (feature.orientation === "VERTICAL") {
+      const left = gap.x - area.x;
+      const right = area.x + area.width - gap.x - gap.width;
+      return left >= right
+        ? region(area.x, area.y, left, area.height)
+        : region(gap.x + gap.width, area.y, right, area.height);
+    }
+    if (feature.orientation === "HORIZONTAL") {
+      const top = gap.y - area.y;
+      const bottom = area.y + area.height - gap.y - gap.height;
+      return top >= bottom
+        ? region(area.x, area.y, area.width, top)
+        : region(area.x, gap.y + gap.height, area.width, bottom);
+    }
+    return area;
+  }, original);
+  layout.primary = avoidFeatures(layout.primary);
+  layout.navigationRegion = avoidFeatures(layout.navigationRegion);
+  if (layout.secondary) layout.secondary = avoidFeatures(layout.secondary);
+  return layout;
+}
+
+function computeAdaptiveLayout({
+  width: rawWidth,
+  height: rawHeight,
+  fontScale: rawFontScale = 1,
+  foldingFeatures = [],
+}: AdaptiveLayoutInput): AdaptiveLayout {
   const width = finite(rawWidth, 0);
   const height = finite(rawHeight, 0);
   const fontScale = Math.min(1.5, Math.max(1, finite(rawFontScale, 1)));
@@ -128,9 +197,12 @@ export function getAdaptiveLayout({
       ? region(0, 0, width, Math.max(0, height - bottomNavHeight))
       : region(railWidth, 0, Math.max(0, width - railWidth), height);
   const paneGap = BASE_PANE_GAP * fontScale;
-  const minPaneWidth = MIN_PANE_WIDTH * Math.min(fontScale, 1.25);
+  const minPaneWidth = MIN_PANE_WIDTH * Math.min(fontScale, 1.2);
   const minTabletopHeight = MIN_TABLETOP_HEIGHT * Math.min(fontScale, 1.25);
-  const usableFeatures = foldingFeatures.filter(featureIsSeparating);
+  const usableFeatures = foldingFeatures.filter((feature) =>
+    featureIsSeparating(feature) &&
+    (feature.orientation === "VERTICAL" || feature.orientation === "HORIZONTAL"),
+  );
   const feature = usableFeatures
     .map((candidate) => ({
       candidate,
@@ -229,8 +301,11 @@ export function getAdaptiveLayout({
     };
   }
 
+  // Medium windows (an unfolded book-style foldable such as a ~700dp inner display, or a
+  // portrait small tablet) also get list + detail when both panes keep the same minimum width
+  // a half-opened book posture requires. Unfolding flat vs. half-open then keeps one mode.
   if (
-    widthClass === "expanded" &&
+    widthClass !== "compact" &&
     available.width >= minPaneWidth * 2 + paneGap
   ) {
     const primaryWidth = (available.width - paneGap) / 2;

@@ -1,4 +1,4 @@
-import { TABLE_COLUMNS, V2_TABLE_COLUMNS, V3_TABLE_COLUMNS, V4_TABLE_COLUMNS, V5_TABLE_COLUMNS, V6_TABLE_COLUMNS, V7_TABLE_COLUMNS, V8_TABLE_COLUMNS, V9_TABLE_COLUMNS, V10_TABLE_COLUMNS, V11_TABLE_COLUMNS, V12_TABLE_COLUMNS, V14_TABLE_COLUMNS, V15_TABLE_COLUMNS, V16_TABLE_COLUMNS, V17_TABLE_COLUMNS } from './database-tables.mjs';
+import { TABLE_COLUMNS, V2_TABLE_COLUMNS, V3_TABLE_COLUMNS, V4_TABLE_COLUMNS, V5_TABLE_COLUMNS, V6_TABLE_COLUMNS, V7_TABLE_COLUMNS, V8_TABLE_COLUMNS, V9_TABLE_COLUMNS, V10_TABLE_COLUMNS, V11_TABLE_COLUMNS, V12_TABLE_COLUMNS, V14_TABLE_COLUMNS, V15_TABLE_COLUMNS, V16_TABLE_COLUMNS, V17_TABLE_COLUMNS, V18_TABLE_COLUMNS, V20_TABLE_COLUMNS } from './database-tables.mjs';
 import { SCHEMA_VERSION, withTransaction } from './db.mjs';
 export const quoteIdentifier = name => '"' + name.replaceAll('"', '""') + '"';
 
@@ -22,7 +22,10 @@ const SNAPSHOT_COLUMNS = {
   15: V15_TABLE_COLUMNS,
   16: V16_TABLE_COLUMNS,
   17: V17_TABLE_COLUMNS,
-  18: TABLE_COLUMNS,
+  18: V18_TABLE_COLUMNS,
+  19: V20_TABLE_COLUMNS,
+  20: V20_TABLE_COLUMNS,
+  21: TABLE_COLUMNS,
 };
 
 export function validateSnapshot(snapshot) {
@@ -65,10 +68,35 @@ export function validateSnapshot(snapshot) {
 export function upgradeSnapshot(snapshot) {
   validateSnapshot(snapshot);
   if (snapshot.schemaVersion === SCHEMA_VERSION) return snapshot;
+  if (snapshot.schemaVersion === 20) return upgradeSnapshot({ ...snapshot, schemaVersion: 21, tables: { ...snapshot.tables,
+    user_appearance: { columns: TABLE_COLUMNS.user_appearance, rows: snapshot.tables.user_appearance.rows.map(row => [...row, 'all']) },
+    user_appearance_sync: { columns: TABLE_COLUMNS.user_appearance_sync, rows: [] },
+  } });
+  // Version 20 mirrors migration 020: the retired 'domain' license type
+  // becomes 'other' so restored rows satisfy the narrowed CHECK.
+  if (snapshot.schemaVersion === 19) {
+    const contracts = snapshot.tables.service_contracts;
+    const type = contracts.columns.indexOf('license_type');
+    return upgradeSnapshot({ ...snapshot, schemaVersion: 20, tables: { ...snapshot.tables,
+      service_contracts: { ...contracts, rows: contracts.rows.map(row =>
+        row[type] === 'domain' ? row.with(type, 'other') : row) },
+    } });
+  }
+  // Version 19 mirrors migration 019: older orders had no VAT, so the subtotal
+  // is the amount, and a paid order was settled only after full payment.
+  if (snapshot.schemaVersion === 18) {
+    const orders = snapshot.tables.billing_orders;
+    const amount = orders.columns.indexOf('amount'), status = orders.columns.indexOf('status');
+    return upgradeSnapshot({ ...snapshot, schemaVersion: 19, tables: { ...snapshot.tables,
+      billing_orders: { columns: TABLE_COLUMNS.billing_orders, rows: orders.rows.map(row =>
+        [...row, null, row[amount], 0, 0, row[status] === 'paid' ? row[amount] : 0, null]) },
+      billing_profiles: { columns: TABLE_COLUMNS.billing_profiles, rows: [] },
+    } });
+  }
   // Version 18 records how a session signed in; older sessions used a password.
-  if (snapshot.schemaVersion === 17) return { ...snapshot, schemaVersion: 18, tables: { ...snapshot.tables,
-    sessions: { columns: TABLE_COLUMNS.sessions, rows: snapshot.tables.sessions.rows.map(row => [...row, 'password']) },
-  } };
+  if (snapshot.schemaVersion === 17) return upgradeSnapshot({ ...snapshot, schemaVersion: 18, tables: { ...snapshot.tables,
+    sessions: { columns: V18_TABLE_COLUMNS.sessions, rows: snapshot.tables.sessions.rows.map(row => [...row, 'password']) },
+  } });
   // Version 17 adds pending email changes; none exist in an older backup.
   if (snapshot.schemaVersion === 16) return upgradeSnapshot({ ...snapshot, schemaVersion: 17, tables: { ...snapshot.tables,
     email_change_requests: { columns: V17_TABLE_COLUMNS.email_change_requests, rows: [] },

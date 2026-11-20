@@ -23,6 +23,8 @@ export type WindowLayoutInfoEvent = {
   height: number;
   /** Logical density used to convert native pixel bounds to dp. */
   density: number;
+  /** Android configuration font scale, updated even while the activity remains visible. */
+  fontScale?: number;
   /** Original application-window origin in the host display, in dp. */
   origin: { x: number; y: number };
   /** Full WindowMetrics bounds, in display coordinates and dp. */

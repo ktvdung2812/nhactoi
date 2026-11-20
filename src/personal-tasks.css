@@ -238,7 +238,7 @@
   align-items: center;
   gap: 6px;
   padding: 5px 10px;
-  border-radius: var(--radius-control);
+  border-radius: 999px;
   font-size: var(--text-xs);
   font-weight: 500;
   color: var(--muted);

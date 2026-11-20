@@ -1,14 +1,27 @@
 import React, { useState } from "react";
 import {OfflineQueue} from "./OfflineQueue";
 import {router} from "expo-router";
-import { Alert, Linking, ScrollView } from "react-native";
+import { Alert, Linking, Platform, ScrollView, useWindowDimensions, type AlertButton } from "react-native";
+import { keyboardAwareScrollProps, readableWidth } from "./AuthForms";
 import { useResource, useSession } from "../core/session";
 import type { AssistantConfig } from "../core/types";
 import { errorMessage } from "../core/api";
 import { unregisterPush } from "../core/push";
 import { dateLabel } from "../core/policy";
-import { Heading, Text, Card, Button, Select, Field, ErrorNotice, s } from "../ui/kit";
+import { useKitStyles, Heading, Text, Card, Button, Select, Field, ErrorNotice } from "../ui/kit";
+/** Readable line length on iPad and unfolded displays; matches the shared form page. */
+const READABLE_WIDTH = 760;
+const LOGOUT_CHOICES = (exit: (choice: "sync" | "keep" | "delete") => void): AlertButton[] => [
+  { text: "Đồng bộ trước", onPress: () => exit("sync") },
+  { text: "Giữ nháp mã hóa", onPress: () => exit("keep") },
+  { text: "Xóa nháp và thoát", style: "destructive", onPress: () => exit("delete") },
+  // `cancelable` only works on Android (tap outside). Without this button an iOS alert offers no
+  // way back, so every choice signs the user out. Android alerts show at most three buttons.
+  ...(Platform.OS === "ios" ? [{ text: "Hủy", style: "cancel" } as const] : []),
+];
+
 export function Account() {
+  const s = useKitStyles();
   const { session, switchWorkspace, logout, online, api } = useSession();
   const [invitation,setInvitation]=useState('');
   const spaces = useResource<{ workspaces: { id: string; name: string }[] }>(
@@ -16,6 +29,7 @@ export function Account() {
   );
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  const { fontScale } = useWindowDimensions();
   if (!session) return null;
   async function change(id: string) {
     setBusy(true);
@@ -40,8 +54,16 @@ export function Account() {
     }
   }
   return (
-    <ScrollView contentContainerStyle={s.content}>
+    <ScrollView
+      testID="account-scroll"
+      {...keyboardAwareScrollProps}
+      contentContainerStyle={[
+        s.content,
+        { width: "100%", maxWidth: readableWidth(fontScale, READABLE_WIDTH), alignSelf: "center" },
+      ]}
+    >
       <Heading>Tài khoản</Heading>
+      <Button label="Giao diện" secondary onPress={()=>router.push("/appearance")}/>
       <Button label="Lịch làm việc và ủy quyền" secondary onPress={()=>router.push("/work-management")}/>
       <Button label="Tải công việc và SLA" secondary onPress={()=>router.push("/work-reports")}/>
       <Button label="Tự động hóa" secondary onPress={()=>router.push("/automations")}/>
@@ -58,7 +80,7 @@ export function Account() {
       <ErrorNotice message={error} />
       <Card>
         <Text style={s.cardTitle}>Tham gia dự án được mời</Text>
-        <Field label="Liên kết mời" value={invitation} onChangeText={setInvitation} autoCapitalize="none"/>
+        <Field label="Liên kết mời" value={invitation} onChangeText={setInvitation} autoCapitalize="none" autoCorrect={false} keyboardType="url" textContentType="URL"/>
         <Button label="Chấp nhận lời mời" disabled={!online||busy||!invitation.trim()} onPress={()=>void (async()=>{
           setBusy(true);setError('');
           try { let token=invitation.trim();if(token.includes('://')){const link=new URL(token);token=new URLSearchParams(link.hash.slice(1)).get('invite')||link.searchParams.get('invite')||'';}
@@ -103,7 +125,7 @@ export function Account() {
         </Text>
       </Card>
       <Button
-        label="Cài đặt thông báo Android"
+        label={Platform.OS === "ios" ? "Cài đặt thông báo" : "Cài đặt thông báo Android"}
         secondary
         onPress={() => void Linking.openSettings()}
       />
@@ -116,11 +138,8 @@ export function Account() {
           Alert.alert(
             "Đăng xuất",
             "Cache đọc sẽ được xóa. Chọn cách xử lý nháp và hàng đợi chưa gửi.",
-            [
-              { text: "Đồng bộ trước", onPress:()=>void exit("sync") },
-              { text: "Giữ nháp mã hóa", onPress:()=>void exit("keep") },
-              { text: "Xóa nháp và thoát", style:"destructive", onPress:()=>void exit("delete") },
-            ], {cancelable:true},
+            LOGOUT_CHOICES((choice) => void exit(choice)),
+            { cancelable: true },
           )
         }
       />
@@ -129,6 +148,7 @@ export function Account() {
 }
 
 function AssistantSettings() {
+  const s = useKitStyles();
   const { api, session, online, writable } = useSession();
   const config = useResource<AssistantConfig>("/ai/config");
   const [edited, setDraft] = useState<AssistantConfig["assistant"] | null>(null);

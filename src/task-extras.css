@@ -7,9 +7,9 @@
 .task-templates-heading h1 { font-size: var(--font-page-title); }
 .task-templates-heading p { margin: 7px 0 0; color: var(--muted); font-size: var(--text-sm); line-height: 1.7; }
 .task-extras-eyebrow { display: block; color: var(--muted); font-size: var(--text-xs); font-weight: 600; letter-spacing: .08em; }
-.task-extras-count { display: inline-flex; align-items: center; gap: 6px; padding: 7px 9px; border-radius: 7px; background: var(--green-subtle); color: var(--green); font-size: var(--text-xs); }
+.task-extras-count { display: inline-flex; align-items: center; gap: 6px; padding: 7px 9px; border-radius: var(--radius-control); background: var(--green-subtle); color: var(--green); font-size: var(--text-xs); }
 .task-extras-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; }
-.task-extras-panel { min-width: 0; padding: 17px; border: 1px solid var(--border-card); border-radius: 12px; background: var(--bg-surface); color: var(--ink); box-shadow: var(--shadow-card); }
+.task-extras-panel { min-width: 0; padding: 17px; border: 1px solid var(--border-card); border-radius: var(--radius-card); background: var(--bg-surface); color: var(--ink); box-shadow: var(--shadow-card); }
 .task-extras-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; margin-bottom: 13px; }
 .task-extras-panel-heading h3 { display: flex; align-items: center; gap: 7px; min-width: 0; margin: 0; color: var(--ink); font-size: var(--font-card-title); font-weight: 600; }
 .task-extras-panel-heading h3 svg { color: var(--green); flex: 0 0 auto; }
@@ -18,10 +18,10 @@
 .task-extras-link:hover { color: var(--green-hover); }
 .task-extras-meta { color: var(--muted); font-size: var(--text-xs); }
 .task-extras-pills { display: flex; flex-wrap: wrap; gap: 6px; min-height: 24px; margin-bottom: 11px; }
-.task-extras-pill { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border-radius: 6px; color: var(--ink-secondary); background: var(--bg-hover); font-size: var(--text-xs); }
+.task-extras-pill { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border-radius: 999px; color: var(--ink-secondary); background: var(--bg-hover); font-size: var(--text-xs); }
 .task-extras-options { display: grid; gap: 2px; min-width: 0; max-height: 190px; overflow-y: auto; scrollbar-width: thin; }
 .task-extras-check-row,
-.task-extras-member-row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 7px 6px; border-radius: 7px; color: var(--ink-secondary); font-size: var(--text-xs); cursor: pointer; }
+.task-extras-member-row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 7px 6px; border-radius: var(--radius-control); color: var(--ink-secondary); font-size: var(--text-xs); cursor: pointer; }
 .task-extras-check-row:hover,
 .task-extras-member-row:hover { background: var(--bg-hover); }
 .task-extras-check-row input,
@@ -45,13 +45,13 @@
 .task-extras-field input,
 .task-extras-field select,
 .task-extras-inline-form input,
-.task-extras-inline-form select { box-sizing: border-box; width: 100%; min-width: 0; min-height: 36px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg-input); color: var(--ink); font: inherit; font-size: var(--font-control); }
+.task-extras-inline-form select { box-sizing: border-box; width: 100%; min-width: 0; min-height: 36px; padding: 8px 9px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--bg-input); color: var(--ink); font: inherit; font-size: var(--font-control); }
 .task-extras-field input:focus,
 .task-extras-field select:focus,
 .task-extras-inline-form input:focus,
 .task-extras-inline-form select:focus { border-color: var(--green); outline: 2px solid var(--green-subtle); outline-offset: 0; }
 .task-extras-inline-form { display: grid; grid-template-columns: minmax(0, 1fr) 85px auto; align-items: center; gap: 6px; margin-top: 10px; }
-.task-extras-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 7px 10px; border: 1px solid transparent; border-radius: 7px; font: inherit; font-size: var(--font-control); cursor: pointer; }
+.task-extras-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 7px 10px; border: 1px solid transparent; border-radius: var(--radius-control); font: inherit; font-size: var(--font-control); cursor: pointer; }
 .task-extras-button.primary { background: var(--primary); color: var(--on-primary); }
 .task-extras-button.secondary { border-color: var(--line); background: var(--bg-card); color: var(--ink-secondary); }
 .task-extras-button.danger { background: var(--danger); color: var(--bg-surface); }
@@ -80,19 +80,19 @@
 .task-extras-loading { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 100px; color: var(--muted); font-size: var(--text-xs); }
 .task-extras-spin { animation: task-extras-spin 900ms linear infinite; }
 @keyframes task-extras-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-.task-extras-error { display: flex; align-items: flex-start; gap: 7px; margin: 0 0 12px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--danger) 22%, transparent); border-radius: 8px; color: var(--danger); background: var(--danger-subtle); font-size: var(--text-xs); line-height: 1.6; }
+.task-extras-error { display: flex; align-items: flex-start; gap: 7px; margin: 0 0 12px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--danger) 22%, transparent); border-radius: var(--radius-control); color: var(--danger); background: var(--danger-subtle); font-size: var(--text-xs); line-height: 1.6; }
 .task-extras-error svg { flex: 0 0 auto; margin-top: 1px; }
-.task-extras-notice { margin: 0 0 12px; padding: 10px 12px; border-radius: 8px; color: var(--green); background: var(--green-subtle); font-size: var(--text-xs); }
+.task-extras-notice { margin: 0 0 12px; padding: 10px 12px; border-radius: var(--radius-control); color: var(--green); background: var(--green-subtle); font-size: var(--text-xs); }
 
 .task-templates-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
-.task-templates-filters { display: flex; gap: 3px; padding: 3px; overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-subtle); }
+.task-templates-filters { display: flex; gap: 3px; padding: 3px; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--bg-subtle); }
 .task-templates-filters button { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; min-height: 30px; padding: 6px 10px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); font: inherit; font-size: var(--font-control); cursor: pointer; }
 .task-templates-filters button.active { background: var(--bg-surface); box-shadow: var(--shadow-card); color: var(--green); font-weight: 600; }
 /* Active tabs share the light highlight of .filter-tabs in dark mode. */
 [data-theme="dark"] .task-templates-filters button.active, .dark .task-templates-filters button.active { background: #f0f2f5; color: #101214; }
 .task-templates-filters span { min-width: 16px; padding: 2px 4px; border-radius: 4px; background: color-mix(in srgb, currentColor 12%, transparent); font-size: var(--text-xs); text-align: center; }
 .task-templates-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(275px, 100%), 1fr)); gap: 14px; }
-.task-template-card { display: flex; flex-direction: column; min-width: 0; padding: 17px; border: 1px solid var(--border-card); border-radius: 12px; background: var(--bg-surface); color: var(--ink); box-shadow: var(--shadow-card); }
+.task-template-card { display: flex; flex-direction: column; min-width: 0; padding: 17px; border: 1px solid var(--border-card); border-radius: var(--radius-card); background: var(--bg-surface); color: var(--ink); box-shadow: var(--shadow-card); }
 .task-template-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .task-template-card-top .action-menu-trigger { width: 29px; height: 29px; border-color: transparent; background: transparent; }
 .task-template-kind { display: inline-flex; align-items: center; gap: 6px; width: fit-content; padding: 5px 7px; border-radius: 5px; font-size: var(--text-xs); }
@@ -103,15 +103,15 @@
 .task-template-card > .task-extras-button { align-self: flex-start; }
 .task-template-delete { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-top: auto; padding-top: 11px; color: var(--danger); font-size: var(--text-xs); }
 .task-template-delete span { flex: 1 1 100%; }
-.task-templates-empty { display: grid; place-items: center; gap: 7px; padding: 55px 20px; border: 1px dashed var(--border-card); border-radius: 12px; color: var(--muted); text-align: center; }
+.task-templates-empty { display: grid; place-items: center; gap: 7px; padding: 55px 20px; border: 1px dashed var(--border-card); border-radius: var(--radius-card); color: var(--muted); text-align: center; }
 .task-templates-empty > svg { color: var(--green); }
 .task-templates-empty h2 { margin: 3px 0 0; color: var(--ink); font-size: var(--font-section-title); }
 .task-templates-empty p { margin: 0 0 8px; font-size: var(--text-xs); }
 .task-extras-modal-backdrop { position: fixed; inset: 0; z-index: 120; display: flex; align-items: center; justify-content: center; padding: 20px; background: var(--modal-overlay); backdrop-filter: blur(4px); }
-.task-extras-modal { width: min(480px, 100%); max-height: min(680px, calc(100dvh - 40px)); overflow: auto; border: 1px solid var(--border-card); border-radius: 14px; background: var(--bg-surface); color: var(--ink); box-shadow: var(--shadow-dialog); }
+.task-extras-modal { width: min(480px, 100%); max-height: min(680px, calc(100dvh - 40px)); overflow: auto; border: 1px solid var(--border-card); border-radius: var(--radius-dialog); background: var(--bg-surface); color: var(--ink); box-shadow: var(--shadow-dialog); }
 .task-extras-modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 13px; padding: 20px 21px 14px; border-bottom: 1px solid var(--line); }
 .task-extras-modal-head h2 { margin: 4px 0 0; color: var(--ink); font-size: var(--font-section-title); font-weight: 600; }
-.task-extras-modal-close { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-card); color: var(--muted); cursor: pointer; }
+.task-extras-modal-close { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--bg-card); color: var(--muted); cursor: pointer; }
 .task-extras-modal-close:hover { color: var(--ink); background: var(--bg-hover); }
 .task-extras-modal-body { display: grid; gap: 14px; padding: 19px 21px 8px; }
 .task-extras-modal-body .task-extras-error { margin: 0; }

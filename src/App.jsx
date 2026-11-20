@@ -16,6 +16,7 @@ import Account, { AssistantSettings, EmailChange, ThemeSettings } from "./Accoun
 import ThemeToggle, { ThemeToggleButton } from "./ThemeToggle.jsx";
 import { useTheme } from "./theme.js";
 import BoardTransfer from "./BoardTransfer.jsx";
+import BillingProfile, { BillingOrders, percentLabel, priceWithVat, taxRateOf } from "./BillingProfile.jsx";
 import React, { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -214,7 +215,7 @@ async function api(path, options = {}) {
       localPath: "Thư mục lưu tệp",
       "plan.name": "Tên gói",
       "plan.seats": "Giới hạn thành viên",
-      "billgateway.apiUrl": "Địa chỉ BillGateway",
+      "billgateway.apiUrl": "Địa chỉ VC Billing",
       "smtp.host": "Máy chủ SMTP",
       "smtp.port": "Cổng SMTP",
       "smtp.from": "Địa chỉ người gửi",
@@ -626,12 +627,28 @@ export default function App() {
     }
   }, [toast]);
   useEffect(() => {
-    if (page === "billing" && me?.billingConfigured && me.workspace.kind !== "personal")
+    if (page !== "billing" || !me?.billingConfigured || me.workspace.kind === "personal") {
+      setBilling(null);
+      return undefined;
+    }
+    // Payment is confirmed by webhook or server reconciliation while the owner
+    // is on the VC Billing tab, so reload quietly when they come back.
+    let canceled = false;
+    const load = (quiet) =>
       api("/billing")
-        .then(setBilling)
-        .catch((e) => notify(e.message, true));
-    else if (page !== "billing" || !me?.billingConfigured) setBilling(null);
-  }, [page, me?.billingConfigured, me?.workspace?.kind]);
+        .then((next) => { if (!canceled) setBilling(next); })
+        .catch((e) => { if (!canceled && !quiet) notify(e.message, true); });
+    const onReturn = () => { if (document.visibilityState === "visible") load(true); };
+    setBilling(null); // never show another workspace's orders while loading
+    load(false);
+    window.addEventListener("focus", onReturn);
+    document.addEventListener("visibilitychange", onReturn);
+    return () => {
+      canceled = true;
+      window.removeEventListener("focus", onReturn);
+      document.removeEventListener("visibilitychange", onReturn);
+    };
+  }, [page, me?.billingConfigured, me?.workspace?.kind, me?.workspace?.id]);
   useEffect(() => {
     if (!page.startsWith("tasks/") && !aiTaskId) return undefined;
     const previousFocus = document.activeElement;
@@ -2019,7 +2036,7 @@ export default function App() {
             <>
               <PageHeading
                 title="Một gói phù hợp. Nhiều việc nhẹ hơn."
-                subtitle="Lựa chọn theo quy mô đội ngũ, thanh toán linh hoạt qua BillGateway."
+                subtitle="Lựa chọn theo quy mô đội ngũ, thanh toán linh hoạt qua VC Billing."
               />
               <div className="subscription-banner">
                 <span className="soft-icon">
@@ -2050,6 +2067,15 @@ export default function App() {
                     : "Thuê bao"}
                 </span>
               </div>
+              {billing && (
+                <BillingProfile
+                  api={api}
+                  billing={billing}
+                  setBilling={setBilling}
+                  notify={notify}
+                  canEdit={role === "owner"}
+                />
+              )}
               <div className="pricing-period">
                 <div>
                   <button
@@ -2095,6 +2121,17 @@ export default function App() {
                           )}
                           <span>/{cycle === "monthly" ? "tháng" : "năm"}</span>
                         </div>
+                        {taxRateOf(billing) > 0 && (
+                          <div className="plan-tax">
+                            Chưa gồm VAT {percentLabel(taxRateOf(billing))}% · Tổng{" "}
+                            {money(
+                              priceWithVat(
+                                cycle === "monthly" ? p.monthlyPrice : p.yearlyPrice,
+                                taxRateOf(billing),
+                              ),
+                            )}
+                          </div>
+                        )}
                         <Button
                           secondary={p.id !== "team"}
                           icon={ArrowUpRight}
@@ -2147,63 +2184,25 @@ export default function App() {
                   <p className="pricing-note">
                     <ShieldCheck size={16} />
                     {billing.configured
-                      ? "Thanh toán qua BillGateway. Gói được kích hoạt sau khi xác nhận thanh toán."
-                      : "Giá minh họa cho môi trường thử nghiệm. Cần cấu hình BillGateway để mở thanh toán."}
+                      ? `Thanh toán qua VC Billing.${taxRateOf(billing) > 0 ? ` Giá chưa gồm VAT ${percentLabel(taxRateOf(billing))}%; thuế được cộng vào hóa đơn.` : ""} Gói được kích hoạt sau khi xác nhận thanh toán.`
+                      : "Giá minh họa cho môi trường thử nghiệm. Cần cấu hình VC Billing để mở thanh toán."}
                   </p>
                   <p className="billing-policy">
                     Gia hạn cùng gói sẽ nối tiếp hạn hiện tại. Đổi gói bắt đầu
                     kỳ mới khi thanh toán; thời gian còn lại của gói cũ không
                     được cộng dồn.
                   </p>
-                  {billing.orders?.length > 0 && (
-                    <section className="panel">
-                      <div className="panel-head">
-                        <h2>Lịch sử thuê bao</h2>
-                      </div>
-                      {billing.orders.map((o) => (
-                        <div className="order-row" key={o.id}>
-                          <span>
-                            {o.plan} · {o.cycle === "yearly" ? "Năm" : "Tháng"}
-                          </span>
-                          <strong>{money(o.amount)}</strong>
-                          <span>
-                            {o.status === "paid"
-                              ? "Đã thanh toán"
-                              : o.status === "pending"
-                                ? "Chờ thanh toán"
-                                : o.status}
-                          </span>
-                          {o.checkoutUrl && o.status === "pending" && (
-                            <a
-                              href={o.checkoutUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              Thanh toán <ExternalLink size={13} />
-                            </a>
-                          )}
-                          {role === "owner" && o.status === "pending" && (
-                            <button
-                              className="text-button"
-                              disabled={busy}
-                              onClick={async () => {
-                                const result = await action(
-                                  () =>
-                                    api(`/billing/orders/${o.id}/refresh`, {
-                                      method: "POST",
-                                    }),
-                                  "Đã kiểm tra trạng thái hóa đơn",
-                                );
-                                if (result) setBilling(await api("/billing"));
-                              }}
-                            >
-                              <RefreshCw size={14} /> Kiểm tra thanh toán
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </section>
-                  )}
+                  <BillingOrders
+                    api={api}
+                    billing={billing}
+                    setBilling={setBilling}
+                    action={action}
+                    notify={notify}
+                    busy={busy}
+                    isOwner={role === "owner"}
+                    money={money}
+                    dateLabel={dateLabel}
+                  />
                 </>
               )}
             </>

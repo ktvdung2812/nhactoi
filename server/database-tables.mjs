@@ -712,7 +712,19 @@ export const V17_TABLE_COLUMNS = {
   email_change_requests: ['id','user_id','previous_email','new_email','code_hash','expires_at','attempts','created_at','consumed_at'],
 };
 
-export const TABLE_COLUMNS = {
+export const V18_TABLE_COLUMNS = {
   ...V17_TABLE_COLUMNS,
   sessions: [...V17_TABLE_COLUMNS.sessions, 'auth_method'],
+};
+
+export const V20_TABLE_COLUMNS = {
+  ...V18_TABLE_COLUMNS,
+  billing_orders: [...V18_TABLE_COLUMNS.billing_orders, 'payment_code', 'subtotal_amount', 'tax_rate', 'tax_amount', 'amount_paid', 'last_checked_at'],
+  billing_profiles: ['workspace_id', 'company_name', 'tax_code', 'address', 'email', 'updated_by', 'updated_at'],
+};
+
+export const TABLE_COLUMNS = {
+  ...V20_TABLE_COLUMNS,
+  user_appearance: [...V20_TABLE_COLUMNS.user_appearance, 'platform'],
+  user_appearance_sync: ['workspace_id', 'user_id', 'platform', 'separate', 'updated_at'],
 };

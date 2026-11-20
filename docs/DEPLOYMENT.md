@@ -54,11 +54,19 @@ NHACTOI_DATA_DIR=/www/wwwroot/nhactoi.ktvdung.io.vn/shared/data
 DISABLE_BACKGROUND_WORKER=false
 ```
 
-Điền các secret BillGateway, SMTP, OAuth, FCM và khóa mã hóa settings trong
-aaPanel secret storage hoặc file dùng chung; không in file, không đưa secret
-vào Git và không gửi secret trong log deploy. Cấu hình đã lưu trong DB có thể
-ưu tiên biến môi trường. Giữ nguyên `NHACTOI_SETTINGS_KEY` hoặc file key của
-production khi sao lưu/khôi phục.
+Điền các secret VC Billing (tên cũ BillGateway; `BILLGATE_API_KEY` là project
+key `bg_proj_…`, `BILLGATE_WEBHOOK_SECRET`), SMTP, OAuth, FCM và khóa mã hóa
+settings trong aaPanel secret storage hoặc file dùng chung; không in file, không
+đưa secret vào Git và không gửi secret trong log deploy. Cấu hình đã lưu trong DB
+có thể ưu tiên biến môi trường. Giữ nguyên `NHACTOI_SETTINGS_KEY` hoặc file key
+của production khi sao lưu/khôi phục.
+
+Trên project VC Billing, đặt webhook tới
+`https://nhactoi.ktvdung.io.vn/api/billing/webhook` (URL này cũng hiển thị ở
+**Quản trị SaaS → Cấu hình → VC Billing**). VC Billing không gửi lại webhook;
+giữ `DISABLE_BACKGROUND_WORKER=false` để worker tự đối soát hóa đơn đang chờ theo
+`BILLING_RECONCILE_INTERVAL_MS` (mặc định 5 phút). Xem
+[Kết nối VC Billing](../README.md#kết-nối-vc-billing).
 
 `NHACTOI_SETTINGS_KEY` phải là 32 byte: 64 ký tự hex hoặc base64. Bản cũ chấp
 nhận chuỗi mật khẩu bất kỳ; bản hiện tại từ chối khởi động với giá trị đó. Trước

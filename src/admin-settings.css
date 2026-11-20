@@ -22,7 +22,7 @@
   display: grid;
   place-items: center;
   background: var(--green-subtle);
-  border-radius: 12px;
+  border-radius: var(--radius-card);
   color: var(--green);
 }
 .settings-card-heading > div {
@@ -81,7 +81,7 @@
 .settings-plan {
   padding: 18px;
   background: var(--bg-subtle);
-  border-radius: 12px;
+  border-radius: var(--radius-card);
   border: 1px solid var(--border-card);
 }
 .settings-plan > span {
@@ -218,7 +218,7 @@
   display: flex;
   gap: 8px;
   margin-top: 16px;
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   padding: 12px;
   background: var(--danger-subtle);
   color: var(--danger);
@@ -285,7 +285,7 @@
   color: inherit;
   text-decoration: none;
   display: inline-block;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
 }
 .admin-identity-link:hover strong {
   color: var(--green);
@@ -295,6 +295,191 @@
 .admin-identity-link:focus-visible {
   outline: 2px solid var(--green);
   outline-offset: 5px;
+}
+
+/* VC Billing: connection check, live-key warning and webhook URL. */
+.settings-billing-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 14px;
+}
+.settings-billing-status .admin-connection {
+  margin-top: 0;
+}
+.settings-billing-status .button {
+  font-size: var(--font-control);
+  padding: 8px 12px;
+}
+.settings-test-slot:empty {
+  display: none;
+}
+.settings-test-result {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-card);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+.settings-test-result > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.settings-test-result > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.settings-test-result strong {
+  display: block;
+  font-weight: 600;
+}
+.settings-test-result p {
+  margin: 2px 0 0;
+  color: var(--ink);
+}
+.settings-test-result small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+.settings-test-result small:empty {
+  display: none;
+}
+.settings-test-result.is-ok {
+  background: var(--green-subtle);
+  border-color: color-mix(in srgb, var(--green) 30%, transparent);
+  color: var(--green);
+}
+.settings-test-result.is-error {
+  background: var(--danger-subtle);
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+  color: var(--danger);
+}
+.settings-values > div.is-warning > span {
+  color: var(--warning);
+}
+.settings-values > div.is-warning > strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: var(--radius-control);
+  background: var(--warning-subtle);
+  color: var(--warning);
+  font-weight: 600;
+}
+.settings-values > div.is-warning > strong svg {
+  flex-shrink: 0;
+}
+.settings-webhook {
+  display: grid;
+  gap: 8px;
+  margin-top: 20px;
+  padding: 14px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-card);
+  background: var(--bg-subtle);
+  min-width: 0;
+}
+.settings-webhook-label {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.settings-webhook-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.settings-webhook-row code {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--bg-input);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.settings-webhook-row code.is-empty {
+  font-family: inherit;
+  color: var(--muted);
+  user-select: auto;
+}
+.settings-copy.button {
+  flex-shrink: 0;
+  font-size: var(--font-control);
+  padding: 8px 12px;
+}
+.settings-copy.is-copied {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 45%, var(--line));
+}
+.settings-webhook small {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: 1.7;
+}
+.settings-webhook small.settings-webhook-error {
+  color: var(--warning);
+}
+.settings-editor .settings-group-title {
+  margin: 8px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--ink);
+}
+/* Number input with a trailing unit (e.g. VAT %). */
+.settings-editor .field > .settings-input-affix {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  font-size: var(--font-control);
+  font-weight: 500;
+  line-height: 1;
+  color: var(--muted);
+}
+.settings-editor .field > .settings-input-affix > input {
+  padding-right: 34px;
+}
+.settings-editor .field > .settings-input-affix > span {
+  position: absolute;
+  right: 12px;
+  pointer-events: none;
+}
+/* Order statuses introduced with VC Billing (partial transfers). */
+.admin-badge.badge-partially_paid,
+.admin-details-badge.badge-partially_paid {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+.admin-table .admin-money > small,
+.admin-details-money > small {
+  font-weight: 400;
+}
+@media (max-width: 600px) {
+  .settings-webhook-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .settings-copy.button {
+    justify-content: center;
+  }
+  .settings-values > div.is-warning > strong {
+    align-self: flex-start;
+  }
 }
 @media (max-width: 1200px) {
   .settings-plan-grid {

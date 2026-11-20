@@ -1,6 +1,6 @@
 # Nhắc tôi
 
-SaaS tiếng Việt quản lý công việc, nhắc lịch dịch vụ, cộng tác nhóm và sổ thu–chi. Gói thuê bao theo tháng/năm, tích hợp BillGateway Payment Hub. Dự án độc lập ở thư mục gốc; `demo/task-crm` là mã tham khảo và không bị sửa.
+SaaS tiếng Việt quản lý công việc, nhắc lịch dịch vụ, cộng tác nhóm và sổ thu–chi. Gói thuê bao theo tháng/năm, thanh toán qua VC Billing (tên cũ BillGateway). Dự án độc lập ở thư mục gốc; `demo/task-crm` là mã tham khảo và không bị sửa.
 
 Nhập/xuất JSON của bảng hỗ trợ tối đa **500 công việc, 40 cột và 1 MiB payload UTF-8** mỗi lần. Dung lượng được tính trên JSON gửi lên API (gồm bảng đích và dữ liệu), không tính phần thụt lề của tệp. Cả xuất và nhập dùng cùng giới hạn; bảng vượt giới hạn sẽ nhận thông báo để giảm dữ liệu trước khi xuất. Tệp đính kèm, bình luận và tài khoản không nằm trong bản xuất bảng; hãy dùng sao lưu hệ thống để phục hồi đầy đủ.
 
@@ -127,7 +127,7 @@ Kiểm thử tự động: `node --test tests/web-push.test.mjs tests/web-app.te
 
 ## Quản lý gia hạn dịch vụ và giấy phép
 
-Mở **Quản lý gia hạn** (`/services`) để theo dõi thuê bao, tên miền/SSL, giấy phép vĩnh viễn, dùng thử và bảo trì. Dữ liệu dịch vụ cũ được giữ lại khi nâng cấp.
+Mở **Quản lý gia hạn** (`/services`) để theo dõi thuê bao, giấy phép vĩnh viễn, dùng thử và bảo trì. Dữ liệu dịch vụ cũ được giữ lại khi nâng cấp.
 
 - Hồ sơ gồm nhà cung cấp, ngày mua/hết hạn, chu kỳ tháng/năm, số lượng, đơn giá, thành tiền, thực chi, tài khoản sử dụng/thanh toán, cổng quản lý, hợp đồng/chứng từ, khách hàng, team và người nhận nhắc. Chỉ lưu thông tin nhận diện tài khoản, không lưu mật khẩu hoặc mã bảo mật thẻ.
 - Lọc theo trạng thái còn hạn, sắp hết hạn, quá hạn hoặc tắt theo dõi; tìm kiếm và lọc team. Có xem chi tiết, sao chép và lịch sử gia hạn.
@@ -223,12 +223,12 @@ Khu vực quản trị gồm:
 - **Doanh nghiệp:** tìm kiếm, lọc và mở hồ sơ liên hệ/thanh toán. Chỉnh sửa tên, ngành nghề, email, điện thoại, địa chỉ, website, mã số thuế, ghi chú hỗ trợ; xem đầu mối liên hệ, thuê bao, hóa đơn và nhật ký.
 - **Người dùng:** tìm kiếm, xem/cập nhật tên và email, tra cứu doanh nghiệp liên quan để hỗ trợ thanh toán, xem lịch sử thay đổi. Trang chi tiết không có thao tác quản lý công việc hoặc nhân sự.
 - **Thuê bao:** xem và điều chỉnh gói, chu kỳ, trạng thái, ngày hết hạn. Thay đổi cần lý do; hạ gói phải đủ số chỗ cho thành viên và lời mời đang chờ. Điều chỉnh không tạo giao dịch tiền, không sửa hóa đơn.
-- **Thanh toán:** tra cứu hóa đơn và mã BillGateway. Trạng thái thanh toán không thể sửa thủ công.
+- **Thanh toán:** tra cứu hóa đơn và mã VC Billing. Danh sách hiển thị mã thanh toán, tạm tính, VAT, tổng tiền và trạng thái (Chờ thanh toán, Thanh toán một phần, Đã thanh toán, Đã hủy, Hết hạn, Đã hoàn tiền). Trạng thái thanh toán không thể sửa thủ công.
 - **Nhật ký quản trị:** người thực hiện, thời gian, đối tượng, lý do và các trường thực sự thay đổi. Modal diễn giải giá trị trước/sau bằng tiếng Việt; mã nội bộ và JSON được thu gọn trong phần thông tin kỹ thuật.
 - **Gói thuê bao** (`/admin/plans`): thêm gói, sửa tên, giá tháng/năm, giới hạn thành viên, quyền lợi hiển thị và bật/ngừng bán. Mã gói giữ nguyên sau khi tạo; không xóa gói để giữ lịch sử. Quyền lợi là mô tả, không tự cấp quyền tính năng; giới hạn thành viên được kiểm soát thực tế. Ngừng bán ẩn gói khỏi trang thanh toán và chặn hóa đơn mới; thuê bao hiện có và xác nhận hóa đơn đã tạo vẫn hoạt động. Có tìm kiếm, lọc trạng thái bán và số doanh nghiệp gắn với gói. Mỗi thay đổi cần lý do và được ghi nhật ký. Giá mới chỉ áp dụng cho hóa đơn mới; không thể giảm giới hạn dưới tổng thành viên và lời mời đang chờ.
-- **Cấu hình:** chỉnh sửa địa chỉ ứng dụng, kết nối BillGateway và SMTP. Mỗi lần lưu cần lý do và được ghi nhật ký. Cấu hình lưu trong DB được ưu tiên hơn biến môi trường, có hiệu lực ngay và tồn tại sau khi khởi động lại.
+- **Cấu hình:** chỉnh sửa địa chỉ ứng dụng, kết nối VC Billing (gồm tiền tố mã thanh toán, thuế VAT, tiền tố SKU và URL webhook để sao chép) và SMTP. Mỗi lần lưu cần lý do và được ghi nhật ký. Cấu hình lưu trong DB được ưu tiên hơn biến môi trường, có hiệu lực ngay và tồn tại sau khi khởi động lại.
 
-Khóa API, khóa webhook và mật khẩu SMTP chỉ nhập để thay thế: để trống sẽ giữ giá trị hiện tại, tùy chọn xóa cần được chọn rõ ràng. API đọc và nhật ký chỉ trả trạng thái đã cấu hình, không trả khóa bí mật. Trạng thái cấu hình không đồng nghĩa đã kiểm tra kết nối thực tế. Thay đổi địa chỉ ứng dụng không tự thay tên miền, reverse proxy hay danh sách `FRONTEND_ORIGIN`.
+Khóa API, khóa webhook và mật khẩu SMTP chỉ nhập để thay thế: để trống sẽ giữ giá trị hiện tại, tùy chọn xóa cần được chọn rõ ràng. API đọc và nhật ký chỉ trả trạng thái đã cấu hình, không trả khóa bí mật. Trạng thái cấu hình không đồng nghĩa đã kiểm tra kết nối thực tế; với VC Billing, dùng nút **Kiểm tra kết nối** để gọi thử API. Thay đổi địa chỉ ứng dụng không tự thay tên miền, reverse proxy hay danh sách `FRONTEND_ORIGIN`.
 
 Tài khoản chưa có quyền thấy màn hình “Không phận sự miễn vào”, với minh họa SVG chuyển động, nút dừng/bật và hỗ trợ tùy chọn giảm chuyển động trên thiết bị.
 
@@ -272,20 +272,56 @@ Có thiết kế riêng cho **400, 401, 402, 403, 404, 408, 409, 410, 422, 423, 
 
 Các trang này chạy trong ứng dụng. Nếu nginx/EnvKit hoặc toàn bộ máy chủ ngừng phục vụ cả HTML và JavaScript, cần cấu hình trang lỗi ở reverse proxy riêng; bộ trang React không thể chạy khi chưa tải được ứng dụng.
 
-## Kết nối BillGateway
+## Kết nối VC Billing
 
-Dùng project Payment Hub của dự án `/Users/ledung/Documents/Github/billgateway`. Không dùng API key truy vấn giao dịch ngân hàng thay cho project key.
+Thanh toán thuê bao đi qua Payment API của **VC Billing** (tên cũ BillGateway), dịch vụ chạy tại **https://billing.vce.codes**. Tên biến môi trường vẫn là `BILLGATE_*` và khóa cấu hình vẫn là `billgateway.*` để tương thích với bản đã triển khai.
 
-1. Tạo project Nhắc tôi trên BillGateway, lấy **project API key** (`bg_proj_…`) và webhook secret.
-2. Vào **Quản trị SaaS → Cấu hình → BillGateway** để nhập kết nối, hoặc điền `BILLGATE_API_URL`, `BILLGATE_API_KEY`, `BILLGATE_WEBHOOK_SECRET` trong `.env`. `BILLGATE_API_URL` là origin của gateway, ví dụ `https://gateway.example.com`, không kèm `/api/v1`. Có thể đặt `BILLGATE_PROJECT_ID` để khóa đúng project.
-3. Trên project BillGateway đặt webhook tới `https://<ten-mien-nhac-toi>/api/billing/webhook`.
-4. Nếu sửa `.env`, khởi động lại API Nhắc tôi; lưu trên giao diện quản trị có hiệu lực ngay. Chủ không gian mở **Gói dịch vụ**, chọn tháng/năm và gói để tạo hóa đơn.
+1. Trên VC Billing, mở **Quản lý dự án & API key**, tạo project Nhắc tôi và lấy **project API key** (`bg_proj_…`) cùng webhook secret của project. Payment API chỉ nhận project key. Khóa `bg_live_…` chỉ dùng để tra cứu giao dịch ngân hàng và bị từ chối khi lưu vào cấu hình quản trị.
+2. Vào **Quản trị SaaS → Cấu hình → VC Billing** để nhập kết nối, hoặc điền các biến `BILLGATE_*` trong `.env` (xem bảng dưới). `BILLGATE_API_URL` là origin của gateway, không kèm `/api/v1`; để trống thì dùng `https://billing.vce.codes`. Có thể đặt `BILLGATE_PROJECT_ID` để khóa đúng project.
+3. Thẻ cấu hình hiển thị URL webhook `https://<ten-mien-nhac-toi>/api/billing/webhook` kèm nút sao chép. Dán URL này vào phần webhook của project trên VC Billing.
+4. Chọn **Kiểm tra kết nối**. Nhắc tôi gọi `GET /api/v1/integration/payments?limit=1` bằng project key để xác nhận địa chỉ API và khóa dùng được. Nút này không kiểm tra webhook secret, cũng không kiểm tra VC Billing có gọi tới được webhook hay không.
+5. Nếu sửa `.env`, khởi động lại API Nhắc tôi; lưu trên giao diện quản trị có hiệu lực ngay. Chủ không gian mở **Gói dịch vụ**, chọn tháng/năm và gói để tạo hóa đơn.
 
-Nhắc tôi gọi `POST /api/v1/integration/payments` phía máy chủ với project API key. Số tiền lấy từ cấu hình gói trên máy chủ, không lấy từ trình duyệt. Người dùng được chuyển sang `hostedUrl` của hóa đơn BillGateway. Mỗi kỳ được thanh toán bằng một hóa đơn; không tự trừ tiền định kỳ. Gia hạn cùng gói nối tiếp hạn hiện tại; đổi sang gói khác bắt đầu kỳ mới tại lúc thanh toán, không cộng dồn thời gian còn lại của gói cũ. Quy tắc này được hiển thị ngay trên màn hình chọn gói.
+| Trường trong Cấu hình | Biến môi trường | Mặc định | Ý nghĩa |
+| --- | --- | --- | --- |
+| Địa chỉ API | `BILLGATE_API_URL` | `https://billing.vce.codes` | Origin của VC Billing, không kèm `/api/v1`. |
+| Mã dự án | `BILLGATE_PROJECT_ID` | trống | Tùy chọn, khóa đúng project. |
+| Khóa API | `BILLGATE_API_KEY` | — | Project key `bg_proj_…`. |
+| Khóa webhook | `BILLGATE_WEBHOOK_SECRET` | — | Webhook secret của project, dùng để xác thực chữ ký. |
+| Tiền tố mã thanh toán | `BILLGATE_PAYMENT_CODE_PREFIX` | trống | Để trống thì VC Billing tự sinh mã. Nếu đặt, dùng 2–10 chữ in hoa hoặc chữ số; mã gửi đi là `<tiền tố><8 ký tự ngẫu nhiên>`. |
+| Thuế VAT (%) | `BILLGATE_TAX_RATE` | `0` | Thuế cộng thêm vào giá gói (xem quy tắc bên dưới). |
+| Tiền tố SKU | `BILLGATE_SKU_PREFIX` | `NHACTOI` | SKU dòng hóa đơn là `<tiền tố>-<MÃ GÓI>-M` (tháng) hoặc `-Y` (năm), ví dụ `NHACTOI-TEAM-Y`. |
 
-Webhook xác thực HMAC-SHA256 trên raw body theo header `x-billgate-signature`. Chỉ xác nhận thanh toán phù hợp hóa đơn đã lưu mới được gia hạn. Tải lại trang hay mở URL trả về không tự kích hoạt gói; thông báo trùng không gia hạn thêm lần nữa.
+Cấu hình lưu trong DB được ưu tiên hơn biến môi trường. Mã thanh toán là nội dung chuyển khoản mà VC Billing dùng để tự đối soát giao dịch ngân hàng, nên người trả cần giữ nguyên khi chuyển khoản.
 
-BillGateway không nhận callback localhost/IP riêng. `nhactoi.test` chỉ phân giải trên máy này nên gateway bên ngoài không gọi được. Kiểm thử webhook bên ngoài cần tên miền HTTPS có thể truy cập được hoặc tunnel được chủ dự án cho phép. Ở lịch sử thuê bao, chủ không gian chọn **Kiểm tra thanh toán** để đối soát lại hóa đơn qua API khi bỏ lỡ webhook. Không tự mở tunnel hoặc công khai môi trường local.
+### Tạo hóa đơn
+
+Nhắc tôi gọi `POST /api/v1/integration/payments` phía máy chủ với project key. Số tiền lấy từ cấu hình gói trên máy chủ, không lấy từ trình duyệt. Body theo Payment Hub gồm `code` (chỉ khi có tiền tố), `externalId`, `description`, `currency` (`VND`), `customer` (`name`, `email`, `taxCode`, `address`), `items` (`description`, `unit`, `sku`, `quantity`, `unitAmount`, `taxRate`), `taxRate`, `totalAmount` và `metadata`. Mỗi hóa đơn có một dòng cho gói đã chọn: đơn vị “Tháng” hoặc “Năm”, số lượng 1. Người dùng được chuyển sang `hostedUrl` của hóa đơn VC Billing.
+
+**VAT cộng thêm vào giá gói.** Khi Thuế VAT lớn hơn 0: tạm tính = giá gói; VAT = làm tròn(tạm tính × thuế suất / 100); tổng hóa đơn = tạm tính + VAT. Webhook phải khớp đúng tổng này. Ví dụ gói 499.000 ₫ với VAT 8%: VAT 39.920 ₫, tổng 538.920 ₫. Thuế 0% thì tổng bằng giá gói.
+
+**Thông tin xuất hóa đơn.** Ở trang **Gói dịch vụ**, chủ không gian điền Tên công ty, Mã số thuế (10 hoặc 13 chữ số), Địa chỉ và Email nhận hóa đơn. Thông tin này được gửi làm `customer` cho các hóa đơn tạo sau khi lưu; hóa đơn đã tạo giữ nguyên. Khi chưa điền, Nhắc tôi dùng thông tin doanh nghiệp của không gian, sau đó tới tên và email của chủ không gian.
+
+Mỗi kỳ được thanh toán bằng một hóa đơn; không tự trừ tiền định kỳ. Gia hạn cùng gói nối tiếp hạn hiện tại; đổi sang gói khác bắt đầu kỳ mới tại lúc thanh toán, không cộng dồn thời gian còn lại của gói cũ. Quy tắc này được hiển thị ngay trên màn hình chọn gói.
+
+### Webhook và đối soát
+
+VC Billing gửi tên sự kiện trong header `x-billgate-event` và chữ ký `x-billgate-signature: sha256=<hex>`, là HMAC-SHA256 trên raw body bằng webhook secret của project. Body có dạng `{event, data: {payment, transaction}}`. Chỉ thanh toán khớp hóa đơn đã lưu mới được ghi nhận.
+
+| Sự kiện | Trạng thái hóa đơn | Thuê bao |
+| --- | --- | --- |
+| `payment.created` | Không đổi | Không đổi |
+| `payment.partially_paid` | Thanh toán một phần | Chưa kích hoạt |
+| `payment.paid` | Đã thanh toán | Kích hoạt hoặc gia hạn, đúng một lần |
+| `payment.canceled` | Đã hủy | Không đổi |
+| `payment.expired` | Hết hạn | Không đổi |
+| `payment.refunded` | Đã hoàn tiền | Không tự thay đổi; admin điều chỉnh ở **Thuê bao** nếu cần |
+
+Tải lại trang hay mở URL trả về không tự kích hoạt gói; thông báo trùng không gia hạn thêm lần nữa.
+
+VC Billing không gửi lại webhook, nên worker nền của Nhắc tôi tự đối soát: mỗi `BILLING_RECONCILE_INTERVAL_MS` (mặc định `300000`, tức 5 phút), worker kiểm tra tối đa 20 hóa đơn đang chờ hoặc thanh toán một phần trong 30 ngày gần nhất qua `GET /api/v1/integration/payments/:id`. Worker không chạy khi `DISABLE_BACKGROUND_WORKER=true`. Ở lịch sử thuê bao, chủ không gian vẫn có thể chọn **Kiểm tra thanh toán** để đối soát ngay, hoặc **Hủy hóa đơn** với hóa đơn đang chờ chưa được thanh toán (gọi `POST /api/v1/integration/payments/:id/cancel`).
+
+VC Billing không nhận callback localhost/IP riêng. `nhactoi.test` chỉ phân giải trên máy này nên gateway bên ngoài không gọi được; trên môi trường local, trạng thái hóa đơn chỉ cập nhật qua đối soát API. Kiểm thử webhook bên ngoài cần tên miền HTTPS có thể truy cập được hoặc tunnel được chủ dự án cho phép. Không tự mở tunnel hoặc công khai môi trường local.
 
 **Hiện chưa có khóa project được cấu hình và chưa chạy giao dịch tiền thật.** Kiểm thử tích hợp dùng gateway giả lập theo hợp đồng API thực tế, trong database cách ly.
 

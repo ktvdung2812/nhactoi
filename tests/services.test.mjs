@@ -8,6 +8,7 @@ import {
   serviceStatus,
 } from "../shared/service-renewal.mjs";
 import { processServiceReminders } from "../server/services.mjs";
+import { migrateDatabase } from "../server/db.mjs";
 
 const fixedClock = (value) => () => new Date(value);
 
@@ -17,7 +18,6 @@ test("shared renewal contract keeps exact enums, statuses, and anchored dates", 
     "perpetual",
     "trial",
     "support",
-    "domain",
     "other",
   ]);
   assert.equal(serviceStatus({ nextDate: "2026-09-30", remindDays: 14, enabled: true }, "2026-09-15"), "ok");
@@ -177,7 +177,7 @@ test("duplicate copies metadata without renewal history or reminder rows", async
   const source = await call(s, "/services", {
     method: "POST",
     cookie: owner.cookie,
-    body: { name: "Source", nextDate: "2026-10-01", amount: 100, quantity: 2, unitPrice: 50, licenseType: "domain" },
+    body: { name: "Source", nextDate: "2026-10-01", amount: 100, quantity: 2, unitPrice: 50, licenseType: "support" },
   });
   assert.equal(source.status, 201, JSON.stringify(source.body));
   const duplicated = await call(s, `/services/${source.body.service.id}/duplicate`, { method: "POST", cookie: owner.cookie, body: {} });
@@ -186,7 +186,7 @@ test("duplicate copies metadata without renewal history or reminder rows", async
   assert.notEqual(copy.id, source.body.service.id);
   assert.equal(copy.name, "Source (bản sao)");
   assert.equal(copy.amount, 100);
-  assert.equal(copy.licenseType, "domain");
+  assert.equal(copy.licenseType, "support");
   assert.equal((await call(s, `/services/${copy.id}/history`, { cookie: owner.cookie })).body.history.length, 0);
   assert.equal(s.db.prepare("SELECT COUNT(*) AS count FROM service_reminders WHERE service_id=?").get(copy.id).count, 0);
 });
@@ -251,4 +251,26 @@ test("legacy service API remains scoped and preserves interactions/history route
   assert.equal((await call(s, `/services/${id}`, { method: "PATCH", cookie: owner.cookie, body: { nextDate: "2026-02-30" } })).status, 400);
   assert.equal((await call(s, `/services/${id}/archive`, { method: "PUT", cookie: owner.cookie, body: { archived: true } })).status, 200);
   assert.equal((await call(s, `/services/${id}/renew`, { method: "POST", cookie: owner.cookie, body: { expectedDate: "2026-09-22" } })).status, 409);
+});
+
+test("migration 20 moves retired domain licenses to other and rejects new ones", async (t) => {
+  const s = await boot(t, { clock: fixedClock("2026-09-21T02:00:00.000Z") });
+  const owner = await user(s, "service-domain-retired@example.test");
+  const created = await call(s, "/services", {
+    method: "POST",
+    cookie: owner.cookie,
+    body: { name: "Old domain", nextDate: "2026-10-01", amount: 100 },
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const id = created.body.service.id;
+  s.db.exec("ALTER TABLE service_contracts DROP CONSTRAINT service_contracts_license_type_check");
+  s.db.exec("ALTER TABLE service_contracts ADD CONSTRAINT service_contracts_license_type_check CHECK (license_type IN ('subscription', 'perpetual', 'trial', 'support', 'domain', 'other'))");
+  s.db.prepare("UPDATE service_contracts SET license_type='domain' WHERE id=?").run(id);
+  s.db.exec("DROP TABLE user_appearance_sync; ALTER TABLE user_appearance DROP CONSTRAINT user_appearance_pkey; ALTER TABLE user_appearance DROP COLUMN platform; ALTER TABLE user_appearance ADD PRIMARY KEY (workspace_id, user_id, scope)");
+  s.db.exec("DELETE FROM schema_migrations WHERE version>=20");
+  migrateDatabase(s.db, { bootstrapAdmin: false });
+  assert.equal(s.db.prepare("SELECT license_type FROM service_contracts WHERE id=?").get(id).license_type, "other");
+  assert.throws(() => s.db.prepare("UPDATE service_contracts SET license_type='domain' WHERE id=?").run(id));
+  const rejected = await call(s, `/services/${id}`, { method: "PATCH", cookie: owner.cookie, body: { licenseType: "domain" } });
+  assert.equal(rejected.status, 400, JSON.stringify(rejected.body));
 });

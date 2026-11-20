@@ -1,4 +1,4 @@
-import {useLocalSearchParams} from 'expo-router';
+import {router,useLocalSearchParams} from 'expo-router';
 import {useSession} from '../../core/session';
-import {ServiceDetail} from '../../features/ServiceDetail';
-export default function Screen(){const {scope}=useSession();const {id}=useLocalSearchParams<{id:string}>();return <ServiceDetail key={`${scope}/${id}`} id={id}/>;}
+import {Services} from '../../features/Services';
+export default function Screen(){const {scope}=useSession();const {id}=useLocalSearchParams<{id:string}>();return <Services key={`${scope}/${id}`} initialId={id} onInitialBack={()=>router.canGoBack()?router.back():router.replace('/')}/>;}

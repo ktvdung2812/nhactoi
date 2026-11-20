@@ -1,5 +1,15 @@
 .appearance-page { padding-bottom: 96px; }
+/* While dirty the action bar sticks above the floating assistant launcher, so
+   the page reserves its measured height and no control is ever covered. */
+.appearance-page.is-dirty { padding-bottom: calc(96px + var(--appearance-save-bar-space, 0px)); }
 .appearance-scope { display: grid; grid-template-columns: minmax(200px, 320px) 1fr; align-items: center; gap: 24px; padding: 20px; margin-bottom: 20px; }
+.appearance-platform { padding: 20px; margin-bottom: 20px; }
+.appearance-platform-options { display: flex; flex-wrap: wrap; gap: 10px; border: 0; padding: 0; margin: 12px 0; }
+.appearance-platform-options label { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-control); }
+.appearance-platform-options label:has(input:checked) { border-color: var(--green); }
+.appearance-platform-options input { accent-color: var(--green); }
+.appearance-platform-options[aria-disabled=true] { opacity: .65; }
+.appearance-web-tag { display: inline-block; color: var(--muted); font-size: var(--text-sm); font-weight: 400; }
 .appearance-page p { color: var(--muted); line-height: 1.7; }
 .appearance-page .field { display: grid; gap: 8px; margin: 0; }
 .appearance-page .field > span { display: flex; gap: 8px; align-items: center; }
@@ -20,12 +30,19 @@
 .appearance-nav-group h3 { margin: 0 0 4px; font-size: var(--text-sm); font-weight: 600; color: var(--muted); }
 .appearance-nav-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .appearance-nav-list li > div { display: flex; }
-/* Sticks to the bottom edge; right padding keeps the actions clear of the AI launcher. */
-.appearance-actions { position: sticky; bottom: 12px; padding-right: 168px !important; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 24px; padding: 16px; background: var(--bg-surface); border: 1px solid var(--line); border-radius: var(--radius-card); box-shadow: var(--shadow-card); z-index: 5; }
+.appearance-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 24px; padding: 16px; background: var(--bg-surface); border: 1px solid var(--line); border-radius: var(--radius-card); box-shadow: var(--shadow-card); }
 .appearance-actions > span { margin-right: auto; color: var(--muted); }
+/* Sticks above the fixed "Trợ lý AI" launcher (bottom 22px, 48px tall) so the
+   two never overlap; the page reserves the measured height above. */
+.appearance-actions.is-sticky { position: sticky; bottom: 88px; z-index: 20; box-shadow: var(--shadow-dialog); }
+.appearance-dirty-cue { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 12px; padding: 7px 12px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--green-subtle); color: var(--ink); font-size: var(--text-sm); }
+.appearance-page .button[aria-disabled=true] { opacity: .65; cursor: default; }
 @media (max-width: 760px) {
   .appearance-grid, .appearance-scope { grid-template-columns: minmax(0, 1fr); }
   .appearance-card { padding: 18px; }
-  .appearance-actions { position: static; padding-right: 16px !important; }
   .appearance-actions > span { width: 100%; }
+}
+@media (max-width: 600px) {
+  /* Matches the launcher's compact position in this range. */
+  .appearance-actions.is-sticky { bottom: 74px; }
 }

@@ -1,3 +1,4 @@
+import { useTheme } from "../ui/theme";
 import React, { useEffect, useRef, useState } from "react";
 import {TaskWork} from "./WorkManagement";
 import {
@@ -17,7 +18,7 @@ import { dateLabel, statuses, priorities, recurrenceLabel } from "../core/policy
 import { queueable } from "../core/offline-state";
 import { errorMessage } from "../core/api";
 import { pickFiles, uploadFile, openAttachment } from "../core/files";
-import {
+import { useKitStyles,
   Text,
   Heading,
   Card,
@@ -27,8 +28,6 @@ import {
   Select,
   ErrorNotice,
   Loading,
-  s,
-  colors,
 } from "../ui/kit";
 type Collaboration = {
   watching: boolean;
@@ -56,6 +55,7 @@ function deliveryStatus(status?: string) {
   return ({ delivered:"Đã chuyển tới người nhận",read:"Người nhận đã đọc",retry:"Chờ thử lại",sending:"Đang gửi",suppressed:"Đã chặn",sent: "Nhà cung cấp đã tiếp nhận", accepted: "Nhà cung cấp đã tiếp nhận", pending: "Đang chờ gửi", failed: "Gửi thất bại", skipped: "Đã bỏ qua", unknown: "Chưa rõ kết quả" } as Record<string, string>)[status || ""] || (status ? "Chưa rõ kết quả" : "Không có lượt gửi");
 }
 function AiEvidence({ sources = [], actions = [], token, onError }: { sources?: AiSource[]; actions?: AiAction[]; token?: string; onError: (message: string) => void }) {
+  const s = useKitStyles();
   const filePath = (source: AiSource) => /^\/api\/tasks\/([^/?#]+)\/attachments\/([^/?#]+)\/download$/.exec(source.url || "");
   async function openSource(source: AiSource) {
     try {
@@ -74,6 +74,8 @@ function AiEvidence({ sources = [], actions = [], token, onError }: { sources?: 
   </>;
 }
 export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
+  const s = useKitStyles();
+  const { colors, radius } = useTheme();
   const { api, session, writable, taskWritable = writable, online, saveDraft, readDraft } = useSession();
   const base = `/tasks/${encodeURIComponent(id)}`;
   const result = useResource<Detail>(base + "/detail");
@@ -272,12 +274,14 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
   return (
     <ScrollView
       keyboardShouldPersistTaps="handled"
-      contentContainerStyle={s.content}
+      contentContainerStyle={[s.content, { width: '100%', maxWidth: 760, alignSelf: 'center' }]}
       refreshControl={
         <RefreshControl
           refreshing={result.isRefetching}
           onRefresh={() => void result.refetch()}
-          tintColor={colors.green}
+          tintColor={colors.accent}
+          colors={[colors.accent]}
+          progressBackgroundColor={colors.surface}
         />
       }
     >
@@ -461,7 +465,7 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
                     )
                   }
                 >
-                  <Text style={{ fontSize: 22, color: colors.green }}>
+                  <Text style={{ fontSize: 22, color: colors.accent }}>
                     {item.completed ? "☑" : "☐"}
                   </Text>
                   <Text
@@ -747,7 +751,7 @@ export function TaskDetail({ id, onBack }: { id: string; onBack: () => void }) {
                 paddingTop: 12,
                 borderTopWidth: 1,
                 borderColor: colors.line,
-                ...(c.authorType === "assistant" ? { backgroundColor: colors.pale, padding: 12, borderRadius: 12 } : {}),
+                ...(c.authorType === "assistant" ? { backgroundColor: colors.pale, padding: 12, borderRadius: radius.card } : {}),
               }}
             >
               <Text style={s.label}>

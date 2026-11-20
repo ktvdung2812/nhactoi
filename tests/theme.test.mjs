@@ -82,3 +82,22 @@ test("design tokens define light and dark values for status and on-accent colors
     assert.ok(dark.includes(`${token}:`), `dark ${token}`);
   }
 });
+
+test("pills and person avatars keep their round shapes", () => {
+  for (const [file, radius, selectors] of [
+    ["src/customer-detail.css", "50%", [".customer-hero-main .avatar.large"]],
+    ["src/customer-detail.css", "999px", [".filter-chip", ".status-badge"]],
+    ["src/task-detail.css", "999px", [".td-mentions button", ".td-reactions>button"]],
+    ["src/admin-details.css", "50%", [".admin-details-avatar", ".admin-details-avatar.small"]],
+    ["src/tickets.css", "50%", [".ticket-avatar"]],
+    ["src/assistant-chat.css", "50%", [".assistant-avatar"]],
+    ["src/task-extras.css", "999px", [".task-extras-pill"]],
+    ["src/personal-tasks.css", "999px", [".personal-capture-chip"]],
+    ["src/styles.css", "999px", [".count-pill"]],
+    ["src/teams.css", "50%", [".teams-status-dot"]],
+  ]) {
+    const css = fs.readFileSync(file, "utf8");
+    for (const selector of selectors)
+      assert.ok(baseRules(css, selector).some(body => new RegExp(`border-radius\\s*:\\s*${radius}(?:\\s*;|\\s*$)`).test(body)), `${file}: ${selector}`);
+  }
+});

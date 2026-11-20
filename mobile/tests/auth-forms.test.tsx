@@ -6,6 +6,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react-native";
+import { TextInput } from "react-native";
 import {
   PasswordRecovery,
   RegisterForm,
@@ -184,4 +185,90 @@ test("a pending forgot request ignores a second keyboard submit", async () => {
 
   pending.resolve({ message: "Kiểm tra hộp thư.", retryAfterSeconds: 60 });
   await waitFor(() => expect(screen.getByTestId("reset-code")).toBeTruthy());
+});
+
+const focusedTestIDs = () =>
+  (TextInput.prototype.focus as jest.Mock).mock.contexts.map(
+    (input) => (input as { props: { testID?: string } }).props.testID,
+  );
+
+test("registration's next key walks every field and only the last field submits", async () => {
+  await render(<RegisterForm onBack={jest.fn()} />);
+  for (const testID of [
+    "register-name",
+    "register-email",
+    "register-password",
+    "register-confirm",
+    "register-workspace",
+  ]) {
+    expect(screen.getByTestId(testID).props).toMatchObject({
+      returnKeyType: "next",
+      submitBehavior: "submit",
+    });
+    await fireEvent(screen.getByTestId(testID), "submitEditing");
+  }
+  // The confirmation used to submit before the workspace and industry fields were filled.
+  expect(focusedTestIDs()).toEqual([
+    "register-email",
+    "register-password",
+    "register-confirm",
+    "register-workspace",
+    "register-industry",
+  ]);
+  expect(screen.queryByText("Vui lòng nhập họ tên và tên doanh nghiệp.")).toBeNull();
+  expect(register).not.toHaveBeenCalled();
+
+  await fill("register-name", "Nguyễn An");
+  await fill("register-email", "an@example.com");
+  await fill("register-password", "password123");
+  await fill("register-confirm", "password123");
+  await fill("register-workspace", "Đội Nhắc Tôi");
+  await fireEvent(screen.getByTestId("register-industry"), "submitEditing");
+  await waitFor(() => expect(register).toHaveBeenCalledTimes(1));
+});
+
+test("auth emails are the iOS AutoFill username and new passwords carry the server's rules", async () => {
+  await render(<RegisterForm onBack={jest.fn()} />);
+  expect(screen.getByTestId("register-email").props).toMatchObject({
+    textContentType: "username",
+    keyboardType: "email-address",
+    autoCorrect: false,
+  });
+  for (const testID of ["register-password", "register-confirm"]) {
+    expect(screen.getByTestId(testID).props).toMatchObject({
+      textContentType: "newPassword",
+      passwordRules: "minlength: 8; maxlength: 256;",
+    });
+  }
+  await cleanup();
+
+  await render(<PasswordRecovery onBack={jest.fn()} />);
+  expect(screen.getByTestId("forgot-email").props).toMatchObject({
+    textContentType: "username",
+    returnKeyType: "send",
+  });
+});
+
+test("a complete reset code moves to the new password because the number pad has no return key", async () => {
+  transport.mockResolvedValueOnce({ message: "Kiểm tra hộp thư.", retryAfterSeconds: 0 });
+  await render(<PasswordRecovery onBack={jest.fn()} />);
+  await fill("forgot-email", "user@example.com");
+  await fireEvent.press(screen.getByTestId("forgot-submit"));
+  await waitFor(() => expect(screen.getByTestId("reset-code")).toBeTruthy());
+
+  await fill("reset-code", "123");
+  expect(focusedTestIDs()).toEqual([]);
+  // A one-tap AutoFill from Mail can deliver the code with spaces.
+  await fill("reset-code", "123 456");
+  expect(screen.getByTestId("reset-code").props.value).toBe("123456");
+  expect(focusedTestIDs()).toEqual(["reset-password"]);
+  // Editing an already complete code does not steal focus again.
+  await fill("reset-code", "123456");
+  expect(focusedTestIDs()).toEqual(["reset-password"]);
+
+  await fireEvent(screen.getByTestId("reset-password"), "submitEditing");
+  expect(focusedTestIDs()).toEqual(["reset-password", "reset-confirm"]);
+  expect(screen.getByTestId("reset-password").props).toMatchObject({
+    passwordRules: "minlength: 8; maxlength: 256;",
+  });
 });
