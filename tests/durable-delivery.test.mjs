@@ -25,7 +25,9 @@ async function fixture(t,options={}) {
  s.db.prepare('UPDATE tasks SET remind_at=? WHERE id=?').run(initial,s.task.id);
  s.app.locals.processReminders();
  s.notice=s.db.prepare("SELECT * FROM notifications WHERE task_id=? AND type='task_reminder'").get(s.task.id);
- s.second=connect(process.env.TEST_DATABASE_URL,{schema:s.db.schema,migrate:false});t.after(()=>s.second.close());
+ s.second=connect(process.env.TEST_DATABASE_URL,{schema:s.db.schema,migrate:false});
+ s.second.projectClock=s.clock;s.second.projectConfig=s.db.projectConfig;
+ t.after(()=>s.second.close());
  return s;
 }
 

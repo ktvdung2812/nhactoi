@@ -77,7 +77,7 @@ const sections = [
     "orders",
     "Thanh toán",
     Receipt,
-    "Tra cứu hóa đơn thuê bao và trạng thái từ BillGateway.",
+    "Tra cứu hóa đơn thuê bao và trạng thái từ VC Billing.",
   ],
   [
     "tickets",
@@ -122,6 +122,7 @@ const labels = {
   expired: "Hết hạn",
   canceled: "Đã hủy",
   pending: "Chờ thanh toán",
+  partially_paid: "Thanh toán một phần",
   paid: "Đã thanh toán",
   failed: "Thất bại",
   refunded: "Đã hoàn tiền",
@@ -368,7 +369,15 @@ export default function Admin({ page, me, api, go }) {
         : section === "subscriptions"
           ? ["active", "trialing", "past_due", "expired", "canceled"]
           : section === "orders"
-            ? ["pending", "paid", "failed", "refunded", "expired"]
+            ? [
+                "pending",
+                "partially_paid",
+                "paid",
+                "failed",
+                "canceled",
+                "refunded",
+                "expired",
+              ]
             : [];
   const items = result?.items || [];
   if (
@@ -849,6 +858,15 @@ export default function Admin({ page, me, api, go }) {
                                     </td>
                                     <td className="admin-money">
                                       {formatMoney(item.amount)}
+                                      {item.status === "partially_paid" ? (
+                                        <small>
+                                          Đã nhận {formatMoney(item.amountPaid)}
+                                        </small>
+                                      ) : Number(item.taxAmount) > 0 ? (
+                                        <small>
+                                          Gồm VAT {formatMoney(item.taxAmount)}
+                                        </small>
+                                      ) : null}
                                     </td>
                                     <td>
                                       <Badge value={item.status} />
@@ -1271,7 +1289,7 @@ function Overview({ data, navigate, planNames = plans }) {
           <div className="panel-head">
             <div>
               <h2>Thanh toán gần đây</h2>
-              <p>Trạng thái đồng bộ từ BillGateway</p>
+              <p>Trạng thái đồng bộ từ VC Billing</p>
             </div>
             <button className="text-button" onClick={() => navigate("orders")}>
               Tra cứu
@@ -1310,6 +1328,36 @@ function Overview({ data, navigate, planNames = plans }) {
     </>
   );
 }
+// Amount rows for an order: subtotal / VAT / total when VAT was charged, and
+// what has been received so far for partial transfers.
+function orderAmountRows(item) {
+  const total = Number(item.amount) || 0,
+    tax = Number(item.taxAmount) || 0,
+    rows = [];
+  if (tax > 0) {
+    const subtotal =
+      item.subtotalAmount !== undefined && item.subtotalAmount !== null
+        ? Number(item.subtotalAmount) || 0
+        : total - tax;
+    const rate = Number(item.taxRate);
+    rows.push(
+      ["Giá gói (chưa VAT)", formatMoney(subtotal)],
+      [
+        Number.isFinite(rate) && rate > 0
+          ? `VAT ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 }).format(rate)}%`
+          : "VAT",
+        formatMoney(tax),
+      ],
+      ["Tổng thanh toán", formatMoney(total)],
+    );
+  } else rows.push(["Số tiền", formatMoney(total)]);
+  if (item.status === "partially_paid") {
+    const paid = Number(item.amountPaid) || 0;
+    rows.push(["Đã nhận", formatMoney(paid)]);
+    if (total > paid) rows.push(["Còn thiếu", formatMoney(total - paid)]);
+  }
+  return rows;
+}
 function ReadDetail({ type, item, onClose, planNames = plans }) {
   if (type === "order")
     return (
@@ -1322,9 +1370,10 @@ function ReadDetail({ type, item, onClose, planNames = plans }) {
               "Gói dịch vụ",
               `${planNames[item.plan]} · ${item.cycle === "yearly" ? "Hàng năm" : "Hàng tháng"}`,
             ],
-            ["Số tiền", formatMoney(item.amount)],
-            ["Trạng thái", labels[item.status]],
-            ["Mã BillGateway", item.providerPaymentId || "Chưa có"],
+            ...orderAmountRows(item),
+            ["Trạng thái", labels[item.status] || item.status],
+            ["Mã thanh toán", item.paymentCode || "Chưa có"],
+            ["Mã VC Billing", item.providerPaymentId || "Chưa có"],
             ["Ngày tạo", date(item.createdAt, true)],
             ["Đã thanh toán lúc", date(item.paidAt, true)],
           ].map(([label, value]) => (
@@ -1335,7 +1384,7 @@ function ReadDetail({ type, item, onClose, planNames = plans }) {
           ))}
         </dl>
         <p className="admin-warning">
-          Trạng thái thanh toán chỉ được xác nhận qua BillGateway. Điều chỉnh
+          Trạng thái thanh toán chỉ được xác nhận qua VC Billing. Điều chỉnh
           thuê bao thủ công không thay đổi hóa đơn.
         </p>
       </div>
@@ -1361,6 +1410,9 @@ const auditFields = {
   projectId: "Mã dự án",
   hasApiKey: "Khóa API",
   hasWebhookSecret: "Khóa webhook",
+  paymentCodePrefix: "Tiền tố mã thanh toán",
+  taxRate: "Thuế VAT (%)",
+  skuPrefix: "Tiền tố SKU",
   host: "Máy chủ SMTP",
   port: "Cổng SMTP",
   secure: "SSL/TLS trực tiếp",
@@ -1394,7 +1446,7 @@ function auditValue(key, value) {
             .map(
               (field) =>
                 ({
-                  "billgateway.apiKey": "Khóa API BillGateway",
+                  "billgateway.apiKey": "Khóa API VC Billing",
                   "billgateway.webhookSecret": "Khóa webhook",
                   "smtp.password": "Mật khẩu SMTP",
                 })[field] || field,
@@ -1405,6 +1457,16 @@ function auditValue(key, value) {
     };
   if (["monthly", "yearly"].includes(key))
     return { label: formatMoney(value), tone: "neutral" };
+  if (key === "paymentCodePrefix" && (value === "" || value === null))
+    return { label: "VC Billing tự sinh", tone: "neutral" };
+  if (key === "taxRate" && value !== undefined && value !== null && value !== "")
+    return {
+      label:
+        Number(value) > 0
+          ? `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 }).format(Number(value))}%`
+          : "Không tính VAT",
+      tone: "neutral",
+    };
   if (["hasApiKey", "hasWebhookSecret", "hasPassword"].includes(key))
     return {
       label: value ? "Đã lưu" : "Chưa thiết lập",
@@ -1491,7 +1553,7 @@ function auditFieldLabel(key) {
   const parts = key.split(".");
   const field = auditFields[parts.at(-1)] || parts.at(-1);
   if (parts[0] === "plans") return `${plans[parts[1]] || parts[1]} · ${field}`;
-  if (parts[0] === "billgateway") return `BillGateway · ${field}`;
+  if (parts[0] === "billgateway") return `VC Billing · ${field}`;
   if (parts[0] === "smtp") return `Email · ${field}`;
   return field;
 }

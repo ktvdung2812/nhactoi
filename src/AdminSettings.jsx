@@ -15,21 +15,94 @@ import {
   Sparkles,
   ArrowUpRight,
   LoaderCircle,
+  Copy,
+  Check,
+  PlugZap,
+  TriangleAlert,
 } from "lucide-react";
 import "./admin-settings.css";
 import ActionMenu from "./ActionMenu.jsx";
 import StorageSettings from "./StorageSettings.jsx";
 
-function Field({ label, hint, ...props }) {
+const DEFAULT_BILLING_API_URL = "https://billing.vce.codes";
+const DEFAULT_SKU_PREFIX = "NHACTOI";
+const PAYMENT_CODE_PREFIX = /^[A-Z0-9]{2,10}$/;
+const SKU_PREFIX = /^[A-Z0-9][A-Z0-9-]{0,19}$/;
+
+function Field({ label, hint, suffix, ...props }) {
+  const input = <input {...props} />;
   return (
     <label className="field">
       <span>{label}</span>
-      <input {...props} />
+      {suffix ? (
+        <span className="settings-input-affix">
+          {input}
+          <span aria-hidden="true">{suffix}</span>
+        </span>
+      ) : (
+        input
+      )}
       {hint && <small>{hint}</small>}
     </label>
   );
 }
-function Secret({ name, label, configured, clearName }) {
+// Uppercases codes as they are typed while keeping the caret where it was.
+function upperCaseInput(event) {
+  const input = event.currentTarget;
+  const next = input.value.toUpperCase();
+  if (next === input.value) return;
+  const { selectionStart, selectionEnd } = input;
+  input.value = next;
+  input.setSelectionRange(selectionStart, selectionEnd);
+}
+function formatRate(value) {
+  return new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 }).format(
+    Number(value) || 0,
+  );
+}
+function formatCheckedAt(value) {
+  const parsed = value ? new Date(value) : new Date();
+  return Number.isNaN(parsed.getTime())
+    ? ""
+    : parsed.toLocaleTimeString("vi-VN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+}
+function testDetails({ latencyMs, httpStatus, checkedAt }) {
+  const time = formatCheckedAt(checkedAt);
+  return [
+    Number.isFinite(latencyMs) ? `Phản hồi sau ${Math.round(latencyMs)} ms` : "",
+    httpStatus ? `HTTP ${httpStatus}` : "",
+    time ? `Kiểm tra lúc ${time}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+function billingSettingsError(f) {
+  const apiKey = (f.apiKey || "").trim();
+  if (apiKey.startsWith("bg_live_"))
+    return "Payment API cần project API key (bg_proj_…), không dùng API key truy vấn giao dịch (bg_live_…).";
+  if (apiKey && !apiKey.startsWith("bg_proj_"))
+    return "Project API key của VC Billing phải bắt đầu bằng bg_proj_.";
+  const prefix = (f.paymentCodePrefix || "").trim().toUpperCase();
+  if (prefix && !PAYMENT_CODE_PREFIX.test(prefix))
+    return "Tiền tố mã thanh toán gồm 2–10 ký tự chữ in hoa (A–Z) hoặc số, hoặc để trống để VC Billing tự sinh mã.";
+  const rawRate = String(f.taxRate ?? "").trim();
+  const rate = rawRate === "" ? 0 : Number(rawRate);
+  if (
+    !Number.isFinite(rate) ||
+    rate < 0 ||
+    rate > 100 ||
+    Math.abs(Math.round(rate * 100) - rate * 100) > 1e-6
+  )
+    return "Thuế VAT phải từ 0 đến 100%, tối đa 2 chữ số thập phân.";
+  if (!SKU_PREFIX.test((f.skuPrefix || "").trim().toUpperCase()))
+    return "Tiền tố SKU gồm 1–20 ký tự chữ in hoa, số hoặc dấu gạch ngang và phải bắt đầu bằng chữ hoặc số.";
+  return "";
+}
+function Secret({ name, label, configured, clearName, hint }) {
   return (
     <div className="settings-secret">
       <Field
@@ -41,6 +114,7 @@ function Secret({ name, label, configured, clearName }) {
         placeholder={
           configured ? "Đã lưu · để trống để giữ nguyên" : "Chưa thiết lập"
         }
+        hint={hint}
       />
       <label className="settings-check">
         <input type="checkbox" name={clearName} /> Xóa {label.toLowerCase()} đã
@@ -60,12 +134,87 @@ function Connection({ ready }) {
 export default function AdminSettings({ data, api, onSaved, openPreview, openPlans }) {
   const [editing, setEditing] = useState(null),
     [saving, setSaving] = useState(false),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [testing, setTesting] = useState(false),
+    [testResult, setTestResult] = useState(null),
+    [copied, setCopied] = useState(null);
   const editor = useRef(null),
-    trigger = useRef(null);
+    trigger = useRef(null),
+    webhookCode = useRef(null),
+    copyTimer = useRef(0),
+    mounted = useRef(true);
   useEffect(() => {
     if (editing) editor.current?.querySelector("input")?.focus();
   }, [editing]);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      clearTimeout(copyTimer.current);
+    };
+  }, []);
+  async function testConnection() {
+    if (testing) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await api("/admin/settings/billgateway/test", {
+        method: "POST",
+      });
+      if (!mounted.current) return;
+      const ok = !!result?.ok;
+      setTestResult({
+        ok,
+        message:
+          result?.message ||
+          (ok
+            ? "VC Billing đã phản hồi với project API key hiện tại."
+            : "VC Billing chưa chấp nhận cấu hình hiện tại."),
+        latencyMs: result?.latencyMs,
+        httpStatus: result?.httpStatus,
+        checkedAt: result?.checkedAt || new Date().toISOString(),
+      });
+    } catch (e) {
+      if (!mounted.current) return;
+      setTestResult({
+        ok: false,
+        message: e.message || "Không kiểm tra được kết nối VC Billing.",
+        checkedAt: new Date().toISOString(),
+      });
+    } finally {
+      if (mounted.current) setTesting(false);
+    }
+  }
+  async function copyWebhook(url) {
+    clearTimeout(copyTimer.current);
+    let copiedOk = false;
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("clipboard");
+      await navigator.clipboard.writeText(url);
+      if (!mounted.current) return;
+      copiedOk = true;
+      setCopied("ok");
+    } catch {
+      if (!mounted.current) return;
+      // Clipboard access can be blocked (non-HTTPS origin, permissions):
+      // select the URL so it can be copied manually.
+      const node = webhookCode.current,
+        selection = window.getSelection?.();
+      if (node && selection) {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+      setCopied("error");
+    }
+    copyTimer.current = setTimeout(
+      () => {
+        if (mounted.current) setCopied(null);
+      },
+      copiedOk ? 2500 : 8000,
+    );
+  }
   function open(key, event) {
     trigger.current = event?.currentTarget || event || null;
     setError("");
@@ -83,21 +232,31 @@ export default function AdminSettings({ data, api, onSaved, openPreview, openPla
     const payload = { reason: f.reason.trim() };
     if (editing === "general") payload.publicAppUrl = f.publicAppUrl.trim();
     if (editing === "billgateway") {
-      payload.billgateway = {
-        apiUrl: f.apiUrl.trim(),
-        projectId: f.projectId.trim(),
-      };
-      if (f.apiKey) payload.billgateway.apiKey = f.apiKey;
-      if (f.webhookSecret) payload.billgateway.webhookSecret = f.webhookSecret;
-      if (f.clearApiKey) payload.billgateway.clearApiKey = true;
-      if (f.clearWebhookSecret) payload.billgateway.clearWebhookSecret = true;
+      const apiKey = (f.apiKey || "").trim(),
+        taxRate = String(f.taxRate ?? "").trim();
       if (
-        (f.apiKey && f.clearApiKey) ||
+        (apiKey && f.clearApiKey) ||
         (f.webhookSecret && f.clearWebhookSecret)
       ) {
         setError("Chọn nhập khóa mới hoặc xóa khóa đã lưu cho mỗi trường.");
         return;
       }
+      const invalid = billingSettingsError(f);
+      if (invalid) {
+        setError(invalid);
+        return;
+      }
+      payload.billgateway = {
+        apiUrl: f.apiUrl.trim(),
+        projectId: f.projectId.trim(),
+        paymentCodePrefix: f.paymentCodePrefix.trim().toUpperCase(),
+        taxRate: taxRate === "" ? 0 : Number(taxRate),
+        skuPrefix: f.skuPrefix.trim().toUpperCase(),
+      };
+      if (apiKey) payload.billgateway.apiKey = apiKey;
+      if (f.webhookSecret) payload.billgateway.webhookSecret = f.webhookSecret;
+      if (f.clearApiKey) payload.billgateway.clearApiKey = true;
+      if (f.clearWebhookSecret) payload.billgateway.clearWebhookSecret = true;
     }
     if (editing === "smtp") {
       payload.smtp = {
@@ -123,6 +282,8 @@ export default function AdminSettings({ data, api, onSaved, openPreview, openPla
         body: JSON.stringify(payload),
       });
       onSaved(result.settings || result);
+      // A previous connection check no longer describes the saved settings.
+      if (editing === "billgateway") setTestResult(null);
       setEditing(null);
       requestAnimationFrame(() => trigger.current?.focus());
     } catch (e) {
@@ -132,7 +293,15 @@ export default function AdminSettings({ data, api, onSaved, openPreview, openPla
     }
   }
   const gateway = data.billgateway || {},
-    smtp = data.smtp || {};
+    smtp = data.smtp || {},
+    taxRate = Number(gateway.taxRate) || 0,
+    webhookUrl = gateway.webhookUrl || "",
+    apiKeyWarning =
+      gateway.apiKeyKind === "live"
+        ? "Đang dùng key bg_live_ — cần project key bg_proj_"
+        : gateway.apiKeyKind === "other" && gateway.hasApiKey
+          ? "Khóa đã lưu không phải project key bg_proj_"
+          : "";
   function card(key, title, description, Icon, summary, form) {
     const active = editing === key;
     return (
@@ -245,11 +414,49 @@ export default function AdminSettings({ data, api, onSaved, openPreview, openPla
       </section>
       {card(
         "billgateway",
-        "BillGateway",
-        "Cổng thanh toán thuê bao tháng và năm.",
+        "VC Billing",
+        "Payment Hub thu tiền thuê bao tháng/năm qua billing.vce.codes.",
         Receipt,
         <>
-          <Connection ready={data.billingConfigured} />
+          <div className="settings-billing-status">
+            <Connection ready={data.billingConfigured} />
+            <button
+              type="button"
+              className="button secondary"
+              disabled={!!editing || saving || testing}
+              aria-busy={testing || undefined}
+              onClick={testConnection}
+            >
+              {testing ? (
+                <LoaderCircle size={15} className="spin" />
+              ) : (
+                <PlugZap size={15} />
+              )}
+              {testing ? "Đang kiểm tra…" : "Kiểm tra kết nối"}
+            </button>
+          </div>
+          <div role="status" aria-live="polite" className="settings-test-slot">
+            {testResult && (
+              <div
+                className={`settings-test-result ${testResult.ok ? "is-ok" : "is-error"}`}
+              >
+                {testResult.ok ? (
+                  <CheckCircle2 size={17} />
+                ) : (
+                  <AlertCircle size={17} />
+                )}
+                <div>
+                  <strong>
+                    {testResult.ok
+                      ? "Kết nối VC Billing thành công"
+                      : "Kết nối VC Billing chưa thành công"}
+                  </strong>
+                  <p>{testResult.message}</p>
+                  <small>{testDetails(testResult)}</small>
+                </div>
+              </div>
+            )}
+          </div>
           <div className="settings-values">
             <div>
               <span>Địa chỉ API</span>
@@ -259,15 +466,93 @@ export default function AdminSettings({ data, api, onSaved, openPreview, openPla
               <span>Mã dự án</span>
               <strong>{gateway.projectId || "Chưa thiết lập"}</strong>
             </div>
-            <div>
-              <span>Khóa API / Webhook</span>
+            <div className={apiKeyWarning ? "is-warning" : undefined}>
+              <span>Project API key</span>
               <strong>
-                {gateway.hasApiKey ? "Đã lưu khóa API" : "Chưa có khóa API"} ·{" "}
+                {apiKeyWarning ? (
+                  <>
+                    <TriangleAlert size={14} aria-hidden="true" />
+                    {apiKeyWarning}
+                  </>
+                ) : gateway.hasApiKey ? (
+                  "Đã lưu khóa bg_proj_"
+                ) : (
+                  "Chưa có khóa API"
+                )}
+              </strong>
+            </div>
+            <div>
+              <span>Khóa webhook</span>
+              <strong>
                 {gateway.hasWebhookSecret
                   ? "Đã lưu khóa webhook"
                   : "Chưa có khóa webhook"}
               </strong>
             </div>
+            <div>
+              <span>Mã thanh toán</span>
+              <strong>
+                {gateway.paymentCodePrefix
+                  ? `Tiền tố ${gateway.paymentCodePrefix}`
+                  : "VC Billing tự sinh"}
+              </strong>
+            </div>
+            <div>
+              <span>Thuế VAT</span>
+              <strong>
+                {taxRate > 0
+                  ? `${formatRate(taxRate)}% cộng thêm vào giá gói`
+                  : "Không tính VAT"}
+              </strong>
+            </div>
+            <div>
+              <span>Tiền tố SKU</span>
+              <strong>{gateway.skuPrefix || DEFAULT_SKU_PREFIX}</strong>
+            </div>
+          </div>
+          <div className="settings-webhook">
+            <span className="settings-webhook-label">Webhook URL</span>
+            <div className="settings-webhook-row">
+              <code
+                ref={webhookCode}
+                className={webhookUrl ? undefined : "is-empty"}
+              >
+                {webhookUrl ||
+                  "Cấu hình địa chỉ ứng dụng để tạo webhook URL"}
+              </code>
+              <button
+                type="button"
+                className={`button secondary settings-copy ${copied === "ok" ? "is-copied" : ""}`}
+                disabled={!webhookUrl}
+                aria-label={
+                  copied === "ok"
+                    ? "Đã sao chép webhook URL"
+                    : "Sao chép webhook URL"
+                }
+                onClick={() => copyWebhook(webhookUrl)}
+              >
+                {copied === "ok" ? <Check size={15} /> : <Copy size={15} />}
+                {copied === "ok" ? "Đã sao chép" : "Sao chép"}
+              </button>
+            </div>
+            <span className="sr-only" role="status" aria-live="polite">
+              {copied === "ok"
+                ? "Đã sao chép webhook URL"
+                : copied === "error"
+                  ? "Trình duyệt chặn sao chép tự động. Địa chỉ đã được chọn để bạn sao chép thủ công."
+                  : ""}
+            </span>
+            {copied === "error" && (
+              <small className="settings-webhook-error">
+                Trình duyệt chặn sao chép tự động — địa chỉ đã được chọn, nhấn
+                Ctrl/⌘ + C để sao chép.
+              </small>
+            )}
+            <small>
+              Dán địa chỉ này vào cấu hình webhook của dự án trên VC Billing.
+              VC Billing không gửi lại webhook bị lỗi; hệ thống tự đối soát các
+              hóa đơn đang chờ thanh toán mỗi vài phút.
+            </small>
           </div>
         </>,
         <>
@@ -278,7 +563,8 @@ export default function AdminSettings({ data, api, onSaved, openPreview, openPla
               maxLength={500}
               type="url"
               defaultValue={gateway.apiUrl || ""}
-              placeholder="https://billgateway.example"
+              placeholder={gateway.defaultApiUrl || DEFAULT_BILLING_API_URL}
+              hint="Origin của VC Billing, không kèm /api/v1"
             />
             <Field
               label="Mã dự án"
@@ -287,21 +573,62 @@ export default function AdminSettings({ data, api, onSaved, openPreview, openPla
               maxLength={160}
             />
             <Secret
-              label="Khóa API"
+              label="Khóa API dự án"
               name="apiKey"
               configured={gateway.hasApiKey}
               clearName="clearApiKey"
+              hint="Project API key bắt đầu bằng bg_proj_ — không dùng key bg_live_"
             />
             <Secret
               label="Khóa webhook"
               name="webhookSecret"
               configured={gateway.hasWebhookSecret}
               clearName="clearWebhookSecret"
+              hint="Dùng để xác minh chữ ký x-billgate-signature của webhook."
+            />
+          </div>
+          <h3 className="settings-group-title">Hóa đơn và mã thanh toán</h3>
+          <div className="settings-fields">
+            <Field
+              label="Tiền tố mã thanh toán"
+              name="paymentCodePrefix"
+              defaultValue={gateway.paymentCodePrefix || ""}
+              maxLength={10}
+              autoComplete="off"
+              autoCapitalize="characters"
+              spellCheck={false}
+              placeholder="VD: NHACTOI"
+              onChange={upperCaseInput}
+              hint="Để trống để VC Billing tự sinh mã. Mã dùng làm nội dung chuyển khoản."
+            />
+            <Field
+              label="Thuế VAT"
+              name="taxRate"
+              type="number"
+              inputMode="decimal"
+              min={0}
+              max={100}
+              step={0.01}
+              defaultValue={gateway.taxRate ?? 0}
+              suffix="%"
+              hint="Cộng thêm vào giá gói; 0 = không tính VAT"
+            />
+            <Field
+              label="Tiền tố SKU"
+              name="skuPrefix"
+              defaultValue={gateway.skuPrefix || DEFAULT_SKU_PREFIX}
+              maxLength={20}
+              autoComplete="off"
+              autoCapitalize="characters"
+              spellCheck={false}
+              onChange={upperCaseInput}
+              hint="Chữ in hoa, số và dấu gạch ngang; dùng để đặt mã sản phẩm gói trên VC Billing."
             />
           </div>
           <p className="settings-help">
             Khóa đã lưu không được hiển thị lại. Để trống trường khóa để giữ
-            nguyên kết nối hiện tại.
+            nguyên kết nối hiện tại. Thuế VAT và các tiền tố áp dụng cho hóa
+            đơn tạo sau khi lưu.
           </p>
         </>,
       )}

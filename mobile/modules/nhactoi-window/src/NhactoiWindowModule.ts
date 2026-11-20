@@ -12,7 +12,7 @@ export interface NhactoiWindowModule extends NativeModule<NhactoiWindowEvents> {
   getSnapshot(): WindowLayoutInfoEvent | null;
 }
 
-/** Optional keeps iOS, web, and Expo Go usable until the Android dev build is installed. */
+/** Optional keeps web and Expo Go usable until a dev build with the native module is installed. */
 export default requireOptionalNativeModule<NhactoiWindowModule>(
   "NhactoiWindow",
 );

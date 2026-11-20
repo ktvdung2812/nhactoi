@@ -79,7 +79,7 @@ type Context = {
   logout: (choice?: "sync"|"keep"|"delete") => Promise<void>;
   switchWorkspace: (id: string) => Promise<void>;
   refresh: () => Promise<void>;
-  api: <T>(path: string, options?: RequestInit) => Promise<T>;
+  api: <T>(path: string, options?: RequestInit, config?: { soft?: boolean }) => Promise<T>;
   read: <T>(
     path: string,
     signal?: AbortSignal,
@@ -253,7 +253,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     };
   }, [refresh]);
   const api = useCallback(
-    async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+    async <T,>(path: string, options: RequestInit = {}, config?: { soft?: boolean }): Promise<T> => {
       path=path.replace(/local%3A/gi,'local:');
       const s = current.current;
       if (!s) throw new ApiError(401, "Vui lòng đăng nhập.");
@@ -315,7 +315,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         if (version === epoch.current && e instanceof ApiError) {
           if (e.status === 0) setOnline(false);
           if ([401, 423].includes(e.status)) await clear();
-          if ([403, 404].includes(e.status)) {
+          if (!config?.soft && [403, 404].includes(e.status)) {
             cancel();
             const scope=cacheScope(API_URL,s.user.id,s.workspace.id), taskId=path.startsWith('/tasks/')?path.split('/')[2]:'*';
             await offlineUpdate(scope,state=>{

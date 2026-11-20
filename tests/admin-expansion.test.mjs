@@ -401,7 +401,7 @@ test("admin settings persist encrypted secrets, preserve quotes, and guard seats
       billgateway: {
         apiUrl: "https://gateway.example.test",
         projectId: "project-new",
-        apiKey: "secret-api-key",
+        apiKey: "bg_proj_secret-api-key",
         webhookSecret: "secret-webhook",
       },
       smtp: {
@@ -420,13 +420,13 @@ test("admin settings persist encrypted secrets, preserve quotes, and guard seats
   assert.equal(changed.json.plans[0].monthly, 200000);
   assert.equal(changed.json.billgateway.hasApiKey, true);
   assert.equal(changed.json.smtp.hasPassword, true);
-  assert.equal(JSON.stringify(changed.json).includes("secret-api-key"), false);
+  assert.equal(JSON.stringify(changed.json).includes("bg_proj_secret-api-key"), false);
   assert.equal(JSON.stringify(changed.json).includes("secret-smtp-password"), false);
   const stored = server.db
     .prepare("SELECT key, value, encrypted FROM app_settings ORDER BY key")
     .all();
   assert.ok(stored.some((row) => row.key === "billgateway.apiKey" && row.encrypted === 1));
-  assert.equal(stored.some((row) => row.value.includes("secret-api-key")), false);
+  assert.equal(stored.some((row) => row.value.includes("bg_proj_secret-api-key")), false);
   assert.equal(stored.some((row) => row.value.includes("secret-smtp-password")), false);
   assert.equal(
     server.db
@@ -513,11 +513,11 @@ test("admin settings persist encrypted secrets, preserve quotes, and guard seats
     env: { NODE_ENV: "test", NHACTOI_SETTINGS_KEY: settingsKey },
   });
   assert.equal(reopened.locals.config.smtp.pass, " secret-smtp-password ");
-  assert.equal(reopened.locals.config.gatewayApiKey, "secret-api-key");
+  assert.equal(reopened.locals.config.gatewayApiKey, "bg_proj_secret-api-key");
   assert.equal(reopened.locals.config.plans[0].monthlyPrice, 200000);
   reopened.locals.close();
   const auditJson = JSON.stringify(server.db.prepare("SELECT before_json, after_json FROM admin_audit_logs WHERE action = 'settings.update'").all());
-  for (const secret of ["secret-api-key", "secret-webhook", "secret-smtp-password"])
+  for (const secret of ["bg_proj_secret-api-key", "secret-webhook", "secret-smtp-password"])
     assert.equal(auditJson.includes(secret), false);
 
 

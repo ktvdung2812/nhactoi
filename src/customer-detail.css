@@ -58,7 +58,7 @@
   width: 64px;
   height: 64px;
   font-size: 22px;
-  border-radius: 16px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -156,7 +156,7 @@
 .stat-icon-wrap {
   width: 44px;
   height: 44px;
-  border-radius: 10px;
+  border-radius: var(--radius-card);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -257,7 +257,7 @@
 
 .filter-chip {
   padding: 6px 12px;
-  border-radius: 20px;
+  border-radius: 999px;
   border: 1px solid var(--line);
   background: var(--bg-surface);
   color: var(--muted);
@@ -346,7 +346,7 @@
 .status-badge {
   display: inline-block;
   padding: 3px 8px;
-  border-radius: 12px;
+  border-radius: 999px;
   font-size: 12px;
   font-weight: 600;
 }
@@ -364,7 +364,7 @@
 .tx-category {
   display: inline-block;
   padding: 2px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   background: var(--bg-subtle, rgba(0, 0, 0, 0.04));
   font-size: 12.5px;
   color: var(--muted);
@@ -435,7 +435,7 @@
 }
 
 /* Customer task rows: priority, due date and assignee keep their own columns. */
-.customer-tasks-list-panel .task-row { border-bottom: 0; border-radius: 8px; }
+.customer-tasks-list-panel .task-row { border-bottom: 0; border-radius: var(--radius-control); }
 .customer-tasks-list-panel .task-row + .task-row { border-top: 1px solid var(--line); border-radius: 0; }
 .customer-tasks-list-panel .tag { flex: 0 0 auto; }
 .customer-tasks-list-panel .due { flex: 0 0 auto; min-width: 104px; }

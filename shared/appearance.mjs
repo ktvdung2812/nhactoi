@@ -1,3 +1,5 @@
+export const APPEARANCE_PLATFORMS = ['web', 'mobile'];
+export const MOBILE_APPEARANCE_FIELDS = ['mode', 'accent', 'background', 'font', 'fontSize', 'density', 'corners', 'contrast', 'motion'];
 export const APPEARANCE_NAV_IDS = [
   'dashboard', 'tasks', 'today', 'upcoming', 'week', 'inbox',
   'projects', 'teams', 'customers', 'services', 'finance',
@@ -5,8 +7,8 @@ export const APPEARANCE_NAV_IDS = [
   'transfer', 'tickets', 'trash'
 ];
 export const APPEARANCE_DEFAULTS = Object.freeze({
-  mode: 'system', accent: '#176b59', background: 'default', font: 'vietnam',
-  fontSize: 'medium', density: 'comfortable', corners: 'rounded',
+  mode: 'system', accent: '#245bc0', background: 'default', font: 'vietnam',
+  fontSize: 'medium', density: 'comfortable', corners: 'square',
   sidebarWidth: 'standard', contentWidth: 'full', hiddenNav: [], navOrder: APPEARANCE_NAV_IDS,
   contrast: 'standard', motion: 'system',
 });

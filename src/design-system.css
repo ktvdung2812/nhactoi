@@ -20,31 +20,31 @@
   --leading-body: 1.6;
   --leading-heading: 1.35;
   --control-height: 40px;
-  --radius-control: 8px;
-  --radius-card: 12px;
-  --radius-dialog: 16px;
+  --radius-control: 4px;
+  --radius-card: 6px;
+  --radius-dialog: 8px;
   --space-section: 24px;
   --space-field: 16px;
 
   /* Color tokens */
-  --green: #176b59;
-  --green-hover: #105b4b;
-  --green-subtle: #edf5ef;
-  --ink: #283c38;
-  --ink-secondary: #4e635c;
-  --muted: #65786f;
-  --line: #dfe8e2;
-  --border-color: #dfe8e2;
-  --border-card: #d4e2da;
-  --bg-app: #f7f9f8;
+  --green: #245bc0;
+  --green-hover: #1c4a9e;
+  --green-subtle: #edf3fc;
+  --ink: #1f2a3d;
+  --ink-secondary: #3f4b60;
+  --muted: #5f6d84;
+  --line: #dbe2ec;
+  --border-color: #dbe2ec;
+  --border-card: #d0d9e6;
+  --bg-app: #f3f5f9;
   --bg-surface: #ffffff;
   --bg-card: #ffffff;
-  --bg-subtle: #f8faf9;
-  --bg-hover: #eef3f0;
+  --bg-subtle: #f6f8fb;
+  --bg-hover: #eaeff6;
   --bg-input: #ffffff;
-  --modal-overlay: rgba(15, 30, 24, 0.45);
-  --shadow-card: 0 2px 4px rgba(36, 72, 56, 0.04);
-  --shadow-dialog: 0 20px 80px rgba(18, 50, 28, 0.2);
+  --modal-overlay: rgba(13, 22, 40, 0.45);
+  --shadow-card: 0 2px 4px rgba(30, 45, 80, 0.04);
+  --shadow-dialog: 0 20px 80px rgba(15, 30, 60, 0.2);
   /* Text/icons drawn on a solid var(--green) fill. */
   --on-green: #ffffff;
   /* Main call to action: accent in light mode, a light fill in dark mode (matches .button). */
@@ -56,8 +56,8 @@
   --danger-subtle: #fef3f2;
   --warning: #9a5b0b;
   --warning-subtle: #fef6e7;
-  --info: #1d5bbf;
-  --info-subtle: #eef4ff;
+  --info: #0e7490;
+  --info-subtle: #e5f6fa;
   --violet: #6941c6;
   --violet-subtle: #f4f0fd;
 
@@ -67,9 +67,9 @@
 
 [data-theme="dark"],
 .dark {
-  --green: #2fb99a;
-  --green-hover: #26a287;
-  --green-subtle: rgba(47, 185, 154, 0.12);
+  --green: #7aa7ff;
+  --green-hover: #6b9cf7;
+  --green-subtle: rgba(122, 167, 255, 0.12);
   --ink: #f0f2f5;
   --ink-secondary: #c2c8d2;
   --muted: #8b94a2;
@@ -85,7 +85,7 @@
   --modal-overlay: rgba(0, 0, 0, 0.75);
   --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.45);
   --shadow-dialog: 0 20px 80px rgba(0, 0, 0, 0.8);
-  --on-green: #0f1a17;
+  --on-green: #0f1626;
   --primary: #f0f2f5;
   --primary-hover: #ffffff;
   --on-primary: #101214;
@@ -93,8 +93,8 @@
   --danger-subtle: rgba(249, 112, 102, 0.14);
   --warning: #f5b041;
   --warning-subtle: rgba(245, 176, 65, 0.14);
-  --info: #84adff;
-  --info-subtle: rgba(132, 173, 255, 0.14);
+  --info: #67d4e8;
+  --info-subtle: rgba(103, 212, 232, 0.14);
   --violet: #b9a3f5;
   --violet-subtle: rgba(185, 163, 245, 0.14);
   color-scheme: dark;
@@ -276,8 +276,8 @@ body :is(.button, .teams-button, .icon-button, .icon-btn, .action-menu-trigger,
 :root[data-appearance-background="cool"][data-theme="dark"] { --bg-app: #10151e; --bg-subtle: #1b2534; --bg-hover: #253348;
   --bg-surface: #151b26; --bg-card: #19212e; --bg-input: #121822; --line: #283447; --border-color: #283447; --border-card: #314058; }
 /* After the backgrounds so stronger borders win; text reaches WCAG AAA, borders 3:1. */
-:root[data-appearance-contrast="high"] { --ink: #0d1f1a; --ink-secondary: #22342f; --muted: #3d4f48;
-  --line: #7a8f86; --border-color: #7a8f86; --border-card: #6b8077; }
+:root[data-appearance-contrast="high"] { --ink: #0d131f; --ink-secondary: #222834; --muted: #3d434f;
+  --line: #7a818f; --border-color: #7a818f; --border-card: #6b7280; }
 :root[data-appearance-contrast="high"][data-theme="dark"] { --ink: #ffffff; --ink-secondary: #e6e9ee; --muted: #c3c9d2;
   --line: #6b7280; --border-color: #6b7280; --border-card: #7b8390; }
 :root[data-appearance-contrast="high"] :is(button, a, input, select, textarea, [tabindex]):focus-visible { outline: 3px solid var(--green); outline-offset: 2px; }
@@ -289,9 +289,11 @@ body :is(.button, .teams-button, .icon-button, .icon-btn, .action-menu-trigger,
 :root[data-appearance] .app-shell :is(.sidebar, .topbar, .brand-box) { background: var(--bg-surface); }
 :root[data-appearance] .app-shell .page-content { max-width: var(--appearance-content-width); }
 :root[data-appearance] .app-shell .sidebar nav button.active { background: var(--green-subtle); color: var(--green); }
-/* Dark mode keeps the app-wide light primary fill; the raw accent only fills light-mode CTAs. */
-:root[data-appearance]:not([data-theme="dark"]) .app-shell :is(.button.primary, .teams-button.primary) { background: var(--appearance-accent); color: var(--appearance-on-accent); border-color: var(--appearance-accent); }
-:root[data-appearance]:not([data-theme="dark"]) .app-shell :is(.button.primary, .teams-button.primary):hover { filter: brightness(0.95); }
+:root[data-appearance] { --button-fill: var(--appearance-button-light); --button-text: var(--appearance-button-text-light); --button-hover: var(--appearance-button-light-hover); --button-hover-text: var(--appearance-button-text-light-hover); --button-active: var(--appearance-button-light-active); --button-active-text: var(--appearance-button-text-light-active); }
+:root[data-appearance][data-theme="dark"] { --button-fill: var(--appearance-button-dark); --button-text: var(--appearance-button-text-dark); --button-hover: var(--appearance-button-dark-hover); --button-hover-text: var(--appearance-button-text-dark-hover); --button-active: var(--appearance-button-dark-active); --button-active-text: var(--appearance-button-text-dark-active); }
+:root[data-appearance] .app-shell :is(.button.primary, .teams-button.primary, .workflow-board-button.primary, .task-extras-button.primary) { background: var(--button-fill); color: var(--button-text); border-color: var(--button-fill); }
+:root[data-appearance] .app-shell :is(.button.primary, .teams-button.primary, .workflow-board-button.primary, .task-extras-button.primary):hover { background: var(--button-hover); color: var(--button-hover-text); border-color: var(--button-hover); filter: none; }
+:root[data-appearance] .app-shell :is(.button.primary, .teams-button.primary, .workflow-board-button.primary, .task-extras-button.primary):active { background: var(--button-active); color: var(--button-active-text); border-color: var(--button-active); filter: none; }
 :root[data-appearance] .app-shell :is(.workspace-switch, .plan-promo, .overview-strip) { background: var(--bg-subtle); border-color: var(--line); color: var(--ink); }
 :root[data-appearance] .app-shell :is(input, select, textarea):focus { border-color: var(--green) !important; box-shadow: 0 0 0 3px var(--green-subtle); }
 :root[data-appearance] .app-shell :is(button, a):focus-visible { outline-color: var(--green); }
@@ -309,7 +311,6 @@ body :is(.button, .teams-button, .icon-button, .icon-btn, .action-menu-trigger,
   :root[data-appearance] { --control-height: 44px; }
 }
 :root[data-appearance] .app-shell :is(.task-board-card, .workflow-board-archived, .workflow-board-archived-row) { border-radius: var(--radius-card); background: var(--bg-card); border-color: var(--border-card); color: var(--ink); }
-:root[data-appearance]:not([data-theme="dark"]) .app-shell :is(.workflow-board-button.primary, .task-extras-button.primary) { background: var(--appearance-accent); color: var(--appearance-on-accent); }
 :root[data-appearance-density="compact"] .app-shell .task-board-card { padding: 8px; }
 :root[data-appearance-density="compact"] .app-shell .task-board-cards { gap: 6px; }
 @media (max-width: 600px) {

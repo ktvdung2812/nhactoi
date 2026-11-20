@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getAdaptiveLayout } from "../src/ui/layout.ts";
+import { currentWindowSnapshot, getAdaptiveLayout, localizeFoldingFeatures } from "../src/ui/layout.ts";
 
 const feature = (
   orientation: "VERTICAL" | "HORIZONTAL",
@@ -145,4 +145,88 @@ test("a horizontal hinge never lets a short split-screen pane overlap the hinge"
   assert.equal(layout.posture, "tabletop");
   assert.deepEqual(layout.primary, { x: 0, y: 0, width: 480, height: 220 });
   assert.ok(layout.primary.y + layout.primary.height <= 220);
+});
+
+test("every separating feature is excluded from content and navigation", () => {
+  const layout = getAdaptiveLayout({
+    width: 1400,
+    height: 900,
+    foldingFeatures: [
+      feature("VERTICAL", { left: 690, top: 0, right: 710, bottom: 900 }),
+      feature("HORIZONTAL", { left: 0, top: 440, right: 1400, bottom: 460 }),
+    ],
+  });
+  for (const area of [layout.primary, layout.secondary!, layout.navigationRegion]) {
+    assert.ok(area.y + area.height <= 440 || area.y >= 460);
+    assert.ok(area.x + area.width <= 690 || area.x >= 710);
+  }
+});
+
+test("hinges at the edge and outside the content do not obscure navigation", () => {
+  const edge = getAdaptiveLayout({ width: 480, height: 800, foldingFeatures: [
+    feature("VERTICAL", { left: 0, top: 0, right: 10, bottom: 800 }),
+  ] });
+  assert.equal(edge.primary.x, 10);
+  assert.equal(edge.navigationRegion.x, 10);
+  const rail = getAdaptiveLayout({ width: 900, height: 800, foldingFeatures: [
+    feature("VERTICAL", { left: 40, top: 0, right: 48, bottom: 800 }),
+  ] });
+  assert.ok(rail.navigationRegion.x >= 48 || rail.navigationRegion.x + rail.navigationRegion.width <= 40);
+  assert.equal(rail.posture, "flat");
+});
+
+test("font scale is clamped and invalid scales fall back", () => {
+  const layout = (fontScale: number) => getAdaptiveLayout({ width: 400, height: 800, fontScale });
+  assert.equal(layout(2).navigationRegion.height, 108);
+  assert.equal(layout(0.5).navigationRegion.height, 72);
+  assert.equal(layout(Number.NaN).navigationRegion.height, 72);
+});
+
+test("a feature touching the content edge does not create a phantom hinge", () => {
+  const layout = getAdaptiveLayout({ width: 900, height: 800, foldingFeatures: [
+    feature("VERTICAL", { left: 80, top: 0, right: 88, bottom: 800 }),
+  ] });
+  assert.equal(layout.posture, "flat");
+  assert.equal(layout.primary.x, 88);
+});
+
+test("a cached native snapshot is ignored during a resize until dimensions match", () => {
+  const snapshot = { width: 900, height: 800, density: 2, origin: { x: 100, y: 0 },
+    windowBounds: { left: 100, top: 0, right: 1000, bottom: 800 }, foldingFeatures: [] };
+  assert.equal(currentWindowSnapshot(snapshot, { width: 800, height: 900 }), null);
+  assert.equal(currentWindowSnapshot(snapshot, { width: 899, height: 801 }), snapshot);
+  assert.equal(currentWindowSnapshot(null, { width: 900, height: 800 }), null);
+});
+
+test("measured frame offsets translate window-local features, independent of display origin", () => {
+  const [local] = localizeFoldingFeatures([
+    feature("HORIZONTAL", { left: 0, top: 440, right: 900, bottom: 460 }),
+  ], 12, 24);
+  assert.deepEqual(local.bounds, { left: -12, top: 416, right: 888, bottom: 436 });
+  const layout = getAdaptiveLayout({ width: 876, height: 750, foldingFeatures: [local] });
+  assert.equal(layout.hinge?.y, 416);
+});
+
+test("an unfolded ~700dp foldable shows list and detail when both panes fit", () => {
+  const layout = getAdaptiveLayout({ width: 700, height: 840 });
+
+  assert.equal(layout.widthClass, "medium");
+  assert.equal(layout.mode, "dual");
+  assert.equal(layout.posture, "flat");
+  assert.deepEqual(layout.primary, { x: 88, y: 0, width: 298, height: 840 });
+  assert.deepEqual(layout.secondary, { x: 402, y: 0, width: 298, height: 840 });
+});
+
+test("medium windows stay single when larger text would squeeze either pane", () => {
+  const layout = getAdaptiveLayout({ width: 700, height: 840, fontScale: 1.3 });
+
+  assert.equal(layout.widthClass, "medium");
+  assert.equal(layout.mode, "single");
+});
+
+test("an unfolded Pixel Fold keeps two panes at the largest font scale", () => {
+  const layout = getAdaptiveLayout({ width: 851.7, height: 882.8, fontScale: 2 });
+  assert.equal(layout.mode, "dual");
+  assert.ok(layout.primary.width >= 336);
+  assert.ok(layout.secondary && layout.secondary.width >= 336);
 });

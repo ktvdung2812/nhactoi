@@ -5,12 +5,13 @@ import NhactoiWindowModule, {
   type NhactoiFoldingFeature,
   type WindowLayoutInfoEvent,
 } from "../../modules/nhactoi-window";
-import { getAdaptiveLayout, type AdaptiveLayout } from "./layout";
+import { currentWindowSnapshot, getAdaptiveLayout, localizeFoldingFeatures, type AdaptiveLayout } from "./layout";
 
 export type AdaptiveWindowState = {
   /** Window dimensions and feature coordinates are density-independent pixels. */
   width: number;
   height: number;
+  fontScale: number;
   windowWidth: number;
   windowHeight: number;
   /** Host-display origin retained for edge-to-edge/SafeArea root translation. */
@@ -32,7 +33,7 @@ export type AdaptiveWindowOptions = {
 };
 
 /**
- * Observes Android WindowManager while keeping a useful width-only fallback everywhere else.
+ * Observes Android WindowManager / iOS UIKit reserved regions while keeping a useful width-only fallback everywhere else.
  * Native events replace the snapshot in place, so a rotation or split-screen drag does not
  * remount either pane or reset the screen's local state.
  */
@@ -45,7 +46,11 @@ export function useAdaptiveWindow(
     useState<WindowLayoutInfoEvent | null>(null);
 
   useEffect(() => {
-    if (Platform.OS !== "android" || !NhactoiWindowModule) return;
+    if (
+      (Platform.OS !== "android" && Platform.OS !== "ios") ||
+      !NhactoiWindowModule
+    )
+      return;
     let disposed = false;
     const subscription = NhactoiWindowModule.addListener(
       "onWindowLayoutInfo",
@@ -73,45 +78,35 @@ export function useAdaptiveWindow(
   // Native WindowInfoTracker can deliver the next posture after RN has already
   // reported a rotation or split-screen resize. Ignore a cached payload from the
   // previous window shape until its dimensions match the current RN window.
-  const currentNativeSnapshot =
-    nativeSnapshot &&
-    Math.abs(nativeSnapshot.width - dimensions.width) <= 2 &&
-    Math.abs(nativeSnapshot.height - dimensions.height) <= 2
-      ? nativeSnapshot
-      : null;
+  const currentNativeSnapshot = currentWindowSnapshot(nativeSnapshot, dimensions);
+  const fontScale = nativeSnapshot?.fontScale ?? dimensions.fontScale;
   const width =
     options.width ?? currentNativeSnapshot?.width ?? dimensions.width;
   const height =
     options.height ?? currentNativeSnapshot?.height ?? dimensions.height;
   const offsetX = options.offsetX ?? 0;
   const offsetY = options.offsetY ?? 0;
-  const foldingFeatures = (currentNativeSnapshot?.foldingFeatures ?? []).map(
-    (feature) => ({
-      ...feature,
-      bounds: {
-        left: feature.bounds.left - offsetX,
-        top: feature.bounds.top - offsetY,
-        right: feature.bounds.right - offsetX,
-        bottom: feature.bounds.bottom - offsetY,
-      },
-    }),
+  const foldingFeatures = useMemo(
+    () => localizeFoldingFeatures(currentNativeSnapshot?.foldingFeatures ?? [], offsetX, offsetY),
+    [currentNativeSnapshot, offsetX, offsetY],
   );
   const layout = useMemo(
     () =>
       getAdaptiveLayout({
         width,
         height,
-        fontScale: dimensions.fontScale,
+        fontScale,
         foldingFeatures,
       }),
-    [dimensions.fontScale, foldingFeatures, height, width],
+    [fontScale, foldingFeatures, height, width],
   );
 
   return {
     width,
     height,
-    windowWidth: width,
-    windowHeight: height,
+    fontScale,
+    windowWidth: currentNativeSnapshot?.width ?? dimensions.width,
+    windowHeight: currentNativeSnapshot?.height ?? dimensions.height,
     windowOrigin: currentNativeSnapshot?.origin ?? { x: 0, y: 0 },
     windowBounds: currentNativeSnapshot?.windowBounds,
     foldingFeature: foldingFeatures[0] ?? null,

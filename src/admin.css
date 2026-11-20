@@ -7,7 +7,7 @@
   margin: 29px 0 27px;
   border: 1px solid var(--border-card);
   background: var(--green-subtle);
-  border-radius: 10px;
+  border-radius: var(--radius-card);
 }
 .admin-context > span:first-child {
   color: var(--green);
@@ -67,7 +67,7 @@
   justify-content: space-between;
   gap: 20px;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--radius-card);
   background: linear-gradient(110deg, color-mix(in srgb, var(--green) 8%, var(--bg-surface)),
     color-mix(in srgb, var(--green) 4%, var(--bg-surface)) 70%, color-mix(in srgb, var(--green) 11%, var(--bg-surface)));
   padding: 28px 30px;
@@ -96,7 +96,7 @@
   display: grid;
   place-items: center;
   border: 1px solid var(--border-card);
-  border-radius: 28px;
+  border-radius: var(--radius-card);
   color: var(--green);
   background: color-mix(in srgb, var(--bg-surface) 40%, transparent);
   margin: 0 23px;
@@ -114,7 +114,7 @@
   color: var(--on-green);
   background: var(--green);
   border: 4px solid color-mix(in srgb, var(--green) 10%, var(--bg-surface));
-  border-radius: 13px;
+  border-radius: var(--radius-card);
   transform: rotate(7deg);
 }
 .admin-metrics {
@@ -126,13 +126,13 @@
 .admin-metric {
   border: 1px solid var(--border-card, var(--line));
   background: var(--bg-surface);
-  border-radius: 12px;
+  border-radius: var(--radius-card);
   padding: 21px;
   text-align: left;
   min-width: 0;
 }
 .admin-metric:hover {
-  box-shadow: 0 4px 15px #315f3910;
+  box-shadow: 0 4px 15px #31405f10;
   border-color: color-mix(in srgb, var(--green) 40%, var(--border-card));
 }
 .admin-metric > div {
@@ -166,7 +166,7 @@
   justify-content: space-between;
   background: var(--bg-surface);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius-card);
   margin-bottom: 27px;
   padding: 19px 23px;
   gap: 16px;
@@ -181,7 +181,7 @@
   place-items: center;
   width: 46px;
   height: 46px;
-  border-radius: 12px;
+  border-radius: var(--radius-card);
   background: var(--warning-subtle);
   color: var(--warning);
 }
@@ -267,7 +267,7 @@
   gap: 10px;
   background: var(--bg-input);
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: var(--radius-control);
   padding: 0 13px;
   max-width: 440px;
   flex: 1;
@@ -294,7 +294,7 @@
 .admin-toolbar > select {
   background: var(--bg-input);
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: var(--radius-control);
   padding: 10px 34px 10px 13px;
   color: var(--ink);
   font-size: var(--font-control);
@@ -378,7 +378,7 @@
   height: 35px;
   background: var(--green-subtle);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-card);
   color: var(--green);
   flex-shrink: 0;
 }
@@ -404,7 +404,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   padding: 5px 8px;
   background: var(--bg-hover);
   color: var(--muted);
@@ -456,7 +456,7 @@
   color: var(--green);
   border: 1px solid var(--line);
   background: var(--bg-surface);
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   padding: 7px 9px;
   white-space: nowrap;
 }
@@ -513,7 +513,7 @@
   width: 29px;
   height: 29px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   color: var(--ink-secondary);
 }
 .admin-state {
@@ -527,7 +527,7 @@
   text-align: center;
   background: var(--bg-surface);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius-card);
   padding: 40px 25px;
 }
 .admin-state h2 {
@@ -594,7 +594,7 @@
 .admin-dialog-context {
   background: var(--bg-subtle);
   padding: 14px 16px;
-  border-radius: 9px;
+  border-radius: var(--radius-control);
   display: flex;
   flex-direction: column;
   gap: 7px;
@@ -612,7 +612,7 @@
   background: var(--warning-subtle);
   border: 1px solid color-mix(in srgb, var(--warning) 22%, transparent);
   color: var(--warning);
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   font-size: var(--text-xs);
   line-height: 1.8;
   margin-bottom: 20px;
@@ -623,7 +623,7 @@
   gap: 8px;
   padding: 12px;
   background: var(--danger-subtle);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   font-size: var(--text-xs);
   line-height: 1.8;
   color: var(--danger);
@@ -670,7 +670,7 @@
   line-height: 1.8;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   max-height: 300px;
   overflow: auto;
 }
@@ -692,7 +692,7 @@
   place-items: center;
   width: 50px;
   height: 50px;
-  border-radius: 12px;
+  border-radius: var(--radius-card);
   background: var(--green-subtle);
   color: var(--green);
 }
@@ -818,7 +818,7 @@
   padding: 21px 24px;
   background: var(--green-subtle);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-card);
   margin-top: 24px;
   color: var(--ink);
 }
@@ -1043,7 +1043,7 @@
   padding: 17px;
   border: 1px solid var(--border-card);
   background: var(--bg-subtle);
-  border-radius: 12px;
+  border-radius: var(--radius-card);
 }
 .audit-event-icon {
   width: 44px;
@@ -1053,7 +1053,7 @@
   place-items: center;
   background: var(--green-subtle);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius-card);
   color: var(--green);
 }
 .audit-event-summary > div {
@@ -1152,7 +1152,7 @@
   gap: 11px;
   padding: 15px 17px;
   border: 1px solid color-mix(in srgb, var(--warning) 20%, transparent);
-  border-radius: 10px;
+  border-radius: var(--radius-card);
   background: var(--warning-subtle);
 }
 .audit-reason-box > svg {
@@ -1187,11 +1187,11 @@
   background: var(--bg-subtle);
   border: 1px solid var(--line);
   padding: 4px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
 }
 .audit-change {
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-card);
   margin-top: 12px;
   overflow: hidden;
 }
@@ -1265,12 +1265,12 @@
   color: var(--muted);
   background: var(--bg-subtle);
   padding: 15px;
-  border-radius: 9px;
+  border-radius: var(--radius-control);
 }
 .audit-technical {
   margin-top: 19px;
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: var(--radius-control);
 }
 .audit-technical summary {
   display: flex;
@@ -1288,7 +1288,7 @@
 .audit-technical summary:focus-visible {
   outline: 3px solid var(--green);
   outline-offset: 2px;
-  border-radius: 7px;
+  border-radius: var(--radius-control);
 }
 .audit-technical[open] summary svg {
   transform: rotate(180deg);

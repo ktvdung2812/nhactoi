@@ -1,0 +1,50 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { boot, user } from './roadmap-helpers.mjs';
+import { migrateDatabase, openDatabase } from './database-helpers.mjs';
+import { exportSnapshot, importSnapshot, upgradeSnapshot } from '../server/database-snapshot.mjs';
+import { V20_TABLE_COLUMNS } from '../server/database-tables.mjs';
+
+test('migration 21 preserves old appearance rows and enforces platform constraints', async t => {
+  const s = await boot(t), owner = await user(s, 'appearance-migration@example.test');
+  s.db.exec(`DROP TABLE user_appearance_sync;
+    ALTER TABLE user_appearance DROP CONSTRAINT user_appearance_pkey;
+    ALTER TABLE user_appearance DROP COLUMN platform;
+    ALTER TABLE user_appearance ADD PRIMARY KEY (workspace_id,user_id,scope);
+    DELETE FROM schema_migrations WHERE version=21`);
+  s.db.prepare("INSERT INTO user_appearance(workspace_id,user_id,scope,preferences) VALUES (?,?,'',?)").run(owner.workspace.id, owner.user.id, '{"mode":"dark"}');
+  migrateDatabase(s.db); migrateDatabase(s.db);
+  assert.deepEqual(s.db.prepare('SELECT platform,preferences FROM user_appearance WHERE user_id=?').get(owner.user.id), { platform: 'all', preferences: '{"mode":"dark"}' });
+  assert.equal(s.db.prepare('SELECT count(*) n FROM schema_migrations WHERE version=21').get().n, 1);
+  assert.equal(s.db.prepare('SELECT count(*) n FROM user_appearance_sync').get().n, 0);
+  const insert = s.db.prepare("INSERT INTO user_appearance(workspace_id,user_id,scope,platform,preferences) VALUES (?,?,'',?, '{}')");
+  insert.run(owner.workspace.id, owner.user.id, 'mobile');
+  assert.throws(() => insert.run(owner.workspace.id, owner.user.id, 'mobile'));
+  assert.throws(() => insert.run(owner.workspace.id, owner.user.id, 'other'));
+  const flag = s.db.prepare('INSERT INTO user_appearance_sync(workspace_id,user_id,platform,separate,updated_at) VALUES (?,?,?,?,?)');
+  flag.run(owner.workspace.id, owner.user.id, 'web', 1, 'now');
+  assert.throws(() => flag.run(owner.workspace.id, owner.user.id, 'all', 1, 'now'));
+  assert.throws(() => flag.run(owner.workspace.id, owner.user.id, 'mobile', 2, 'now'));
+  assert.throws(() => flag.run(owner.workspace.id, 'missing', 'mobile', 0, 'now'));
+  s.db.prepare('DELETE FROM workspace_members WHERE workspace_id=? AND user_id=?').run(owner.workspace.id, owner.user.id);
+  assert.equal(s.db.prepare('SELECT count(*) n FROM user_appearance_sync').get().n, 0);
+});
+
+test('schema 20 snapshots upgrade appearance and restore both platform tables', async t => {
+  const s = await boot(t), owner = await user(s, 'appearance-snapshot@example.test'), target = openDatabase();
+  s.db.prepare("INSERT INTO user_appearance(workspace_id,user_id,scope,preferences) VALUES (?,?,'',?)").run(owner.workspace.id, owner.user.id, '{"mode":"dark"}');
+  const snapshot = exportSnapshot(s.db), old = structuredClone(snapshot);
+  old.schemaVersion = 20;
+  delete old.tables.user_appearance_sync;
+  old.tables.user_appearance = { columns: V20_TABLE_COLUMNS.user_appearance, rows: old.tables.user_appearance.rows.map(row => row.slice(0, -1)) };
+  const upgraded = upgradeSnapshot(old);
+  assert.equal(upgraded.tables.user_appearance.rows[0].at(-1), 'all');
+  assert.deepEqual(upgraded.tables.user_appearance_sync.rows, []);
+  importSnapshot(target, old);
+  assert.deepEqual(exportSnapshot(target), upgraded);
+  target.prepare("INSERT INTO user_appearance(workspace_id,user_id,scope,platform,preferences) VALUES (?,?,'','mobile',?)").run(owner.workspace.id, owner.user.id, '{"mode":"light"}');
+  target.prepare("INSERT INTO user_appearance_sync(workspace_id,user_id,platform,separate,updated_at) VALUES (?,?,'mobile',1,'now')").run(owner.workspace.id, owner.user.id);
+  const withFlag = exportSnapshot(target);
+  importSnapshot(target, withFlag, { replace: true });
+  assert.deepEqual(exportSnapshot(target), withFlag);
+});

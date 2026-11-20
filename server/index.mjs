@@ -40,6 +40,28 @@ import { registerWorkReports } from "./work-reports.mjs";
 import { registerAutomationRoutes,emitTaskEvent } from "./automations.mjs";
 import { authRequestLimiter, registerPasswordResetRoutes } from "./password-reset.mjs";
 import {
+  VC_BILLING_DEFAULT_API_URL,
+  VC_BILLING_MESSAGES,
+  DEFAULT_SKU_PREFIX,
+  TAX_CODE_PATTERN,
+  apiKeyKind,
+  billingEventKind,
+  billingTotals,
+  buildPaymentRequest,
+  claimReconcile,
+  generatePaymentCode,
+  normalizePaymentCodePrefix,
+  normalizeSkuPrefix,
+  normalizeTaxRate,
+  paymentAmountPaid,
+  paymentCodeFrom,
+  paymentCustomer,
+  paymentStatusEvent,
+  reconcileCandidates,
+  testVcBillingConnection,
+  vcBillingEndpoint,
+} from "./vc-billing.mjs";
+import {
   createFcmTransport,
   processNotificationOutbox,
   registerMobileRoutes,
@@ -109,6 +131,9 @@ const SETTINGS_PLAIN_KEYS = new Set([
   "plans",
   "billgateway.apiUrl",
   "billgateway.projectId",
+  "billgateway.paymentCodePrefix",
+  "billgateway.taxRate",
+  "billgateway.skuPrefix",
   "smtp.host",
   "smtp.port",
   "smtp.secure",
@@ -168,9 +193,18 @@ function configFrom(options = {}) {
     }
     return fallback;
   };
+  // VC Billing (formerly BillGateway) defaults to its production API; checkout
+  // still needs a project key and webhook secret before billing is configured.
   const gatewayApiUrl = String(
-    env.BILLGATE_API_URL || env.BILLGATE_URL || env.BILLING_GATEWAY_URL || "",
+    env.BILLGATE_API_URL || env.BILLGATE_URL || env.BILLING_GATEWAY_URL || VC_BILLING_DEFAULT_API_URL,
   ).replace(/\/$/, "");
+  const envSetting = (name, normalize, fallback) => {
+    if (env[name] === undefined || env[name] === "") return fallback;
+    const value = normalize(String(env[name]));
+    if (value !== null) return value;
+    console.warn(`[nhactoi] ${name} is invalid; using the default`);
+    return fallback;
+  };
   const gatewayUrl = String(env.BILLGATE_CHECKOUT_URL || gatewayApiUrl).replace(
     /\/$/,
     "",
@@ -207,9 +241,13 @@ function configFrom(options = {}) {
       String(env.NHACTOI_DEV_LOGIN || "").toLowerCase() === "true",
     gatewayUrl,
     gatewayApiUrl,
+    gatewayEnvApiUrl: gatewayApiUrl,
     gatewayApiKey,
     gatewayProjectId,
     webhookSecret,
+    billingPaymentCodePrefix: envSetting("BILLGATE_PAYMENT_CODE_PREFIX", normalizePaymentCodePrefix, ""),
+    billingTaxRate: envSetting("BILLGATE_TAX_RATE", normalizeTaxRate, 0),
+    billingSkuPrefix: envSetting("BILLGATE_SKU_PREFIX", normalizeSkuPrefix, DEFAULT_SKU_PREFIX),
     billingConfigured: configured,
     frontendOrigins,
     publicAppUrl: String(
@@ -379,8 +417,24 @@ function applyStoredSettings(config, values) {
   const gatewayApiKey = parseStoredJson(values, "billgateway.apiKey");
   const webhookSecret = parseStoredJson(values, "billgateway.webhookSecret");
   if (gatewayApiUrl !== null) {
-    config.gatewayApiUrl = String(gatewayApiUrl).replace(/\/$/, "");
-    config.gatewayUrl = config.gatewayApiUrl;
+    // An empty stored URL means "use the environment or VC Billing default".
+    const stored = String(gatewayApiUrl).replace(/\/$/, "");
+    if (stored) {
+      config.gatewayApiUrl = stored;
+      config.gatewayUrl = stored;
+    }
+    source.billgateway = "database";
+  }
+  for (const [key, property, normalize] of [
+    ["billgateway.paymentCodePrefix", "billingPaymentCodePrefix", normalizePaymentCodePrefix],
+    ["billgateway.taxRate", "billingTaxRate", normalizeTaxRate],
+    ["billgateway.skuPrefix", "billingSkuPrefix", normalizeSkuPrefix],
+  ]) {
+    const value = parseStoredJson(values, key);
+    if (value === null) continue;
+    const normalized = normalize(value);
+    if (normalized === null) throw new Error(`stored setting ${key} is invalid`);
+    config[property] = normalized;
     source.billgateway = "database";
   }
   if (gatewayProjectId !== null) {
@@ -1286,6 +1340,17 @@ function planJson(plan) {
   };
 }
 
+// `amount` is the invoice total (VAT included); orders before VAT have no tax.
+function billingOrderAmounts(row) {
+  return {
+    paymentCode: row.payment_code || null,
+    subtotalAmount: Number(row.subtotal_amount ?? row.amount),
+    taxRate: Number(row.tax_rate || 0),
+    taxAmount: Number(row.tax_amount || 0),
+    amountPaid: Number(row.amount_paid || 0),
+  };
+}
+
 function billingOrderJson(row) {
   return {
     id: row.id,
@@ -1297,7 +1362,57 @@ function billingOrderJson(row) {
     checkoutUrl: row.checkout_url || null,
     createdAt: row.created_at,
     paidAt: row.paid_at,
+    ...billingOrderAmounts(row),
   };
+}
+
+// The owner's saved invoice details, or the workspace profile as a starting
+// point. An unvalidated workspace tax code is not offered for invoices.
+function billingProfileFor(db, workspaceId) {
+  const saved = db.prepare("SELECT * FROM billing_profiles WHERE workspace_id = ?").get(workspaceId);
+  if (saved)
+    return {
+      profile: { companyName: saved.company_name, taxCode: saved.tax_code, address: saved.address, email: saved.email },
+      profileSaved: true,
+    };
+  const workspace = db
+    .prepare("SELECT name, tax_code, address, contact_email FROM workspaces WHERE id = ?")
+    .get(workspaceId) || {};
+  const taxCode = String(workspace.tax_code || "").trim();
+  return {
+    profile: {
+      companyName: String(workspace.name || "").slice(0, 200),
+      taxCode: TAX_CODE_PATTERN.test(taxCode) ? taxCode : "",
+      address: String(workspace.address || "").slice(0, 300),
+      email: workspace.contact_email || "",
+    },
+    profileSaved: false,
+  };
+}
+
+function billingProfileValues(body) {
+  const value = (field, max) => {
+    const raw = body?.[field];
+    if (raw === undefined || raw === null) return "";
+    if (typeof raw !== "string") throw new HttpError(400, "Thông tin hóa đơn không hợp lệ");
+    const text = raw.trim();
+    if (text.length > max) throw new HttpError(400, `${{ companyName: "Tên đơn vị", address: "Địa chỉ" }[field]} tối đa ${max} ký tự`);
+    return text;
+  };
+  const companyName = value("companyName", 200);
+  const address = value("address", 300);
+  const taxCode = value("taxCode", 14);
+  if (taxCode && !TAX_CODE_PATTERN.test(taxCode)) throw new HttpError(400, VC_BILLING_MESSAGES.taxCode);
+  if (body?.email !== undefined && body?.email !== null && typeof body.email !== "string")
+    throw new HttpError(400, "Thông tin hóa đơn không hợp lệ");
+  let email;
+  try {
+    email = optionalEmailValue(String(body?.email ?? "").trim(), "email");
+  } catch (error) {
+    if (error instanceof HttpError) throw new HttpError(400, "Email nhận hóa đơn không hợp lệ");
+    throw error;
+  }
+  return { companyName, taxCode, address, email };
 }
 
 const ADMIN_PAGE_SIZE = 20;
@@ -1310,8 +1425,10 @@ const ADMIN_SUBSCRIPTION_STATUSES = new Set([
 ]);
 const ADMIN_ORDER_STATUSES = new Set([
   "pending",
+  "partially_paid",
   "paid",
   "failed",
+  "canceled",
   "refunded",
   "expired",
 ]);
@@ -1430,6 +1547,7 @@ function adminOrderJson(row) {
     providerPaymentId: row.provider_payment_id || null,
     createdAt: row.created_at,
     paidAt: row.paid_at || null,
+    ...billingOrderAmounts(row),
   };
 }
 
@@ -1572,7 +1690,8 @@ function adminWorkspaceDetailData(db, workspaceId, clock) {
       `
       SELECT o.id, o.workspace_id, w.name AS workspace_name, o.plan, o.cycle,
              o.amount, o.currency, o.status, o.provider_payment_id,
-             o.created_at, o.paid_at
+             o.created_at, o.paid_at, o.payment_code, o.subtotal_amount,
+             o.tax_rate, o.tax_amount, o.amount_paid
       FROM billing_orders o JOIN workspaces w ON w.id = o.workspace_id
       WHERE o.workspace_id = ?
       ORDER BY o.created_at DESC, o.id DESC
@@ -1756,16 +1875,17 @@ function adminOrderPage(db, params) {
   if (params.q) {
     const like = adminSearchLike(params.q);
     clauses.push(
-      "(unicode_fold(COALESCE(o.id, '')) LIKE ? ESCAPE '\\' OR unicode_fold(COALESCE(o.workspace_id, '')) LIKE ? ESCAPE '\\' OR unicode_fold(COALESCE(w.name, '')) LIKE ? ESCAPE '\\' OR unicode_fold(COALESCE(o.provider_payment_id, '')) LIKE ? ESCAPE '\\')",
+      "(unicode_fold(COALESCE(o.id, '')) LIKE ? ESCAPE '\\' OR unicode_fold(COALESCE(o.workspace_id, '')) LIKE ? ESCAPE '\\' OR unicode_fold(COALESCE(w.name, '')) LIKE ? ESCAPE '\\' OR unicode_fold(COALESCE(o.provider_payment_id, '')) LIKE ? ESCAPE '\\' OR unicode_fold(COALESCE(o.payment_code, '')) LIKE ? ESCAPE '\\')",
     );
-    values.push(like, like, like, like);
+    values.push(like, like, like, like, like);
   }
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   const select = `
     SELECT
       o.id, o.workspace_id, w.name AS workspace_name, o.plan, o.cycle,
       o.amount, o.currency, o.status, o.provider_payment_id,
-      o.created_at, o.paid_at
+      o.created_at, o.paid_at, o.payment_code, o.subtotal_amount,
+      o.tax_rate, o.tax_amount, o.amount_paid
     FROM billing_orders o
     JOIN workspaces w ON w.id = o.workspace_id
     ${where}
@@ -1878,7 +1998,8 @@ function adminOverviewData(db, config, clock) {
       `
       SELECT o.id, o.workspace_id, w.name AS workspace_name, o.plan, o.cycle,
              o.amount, o.currency, o.status, o.provider_payment_id,
-             o.created_at, o.paid_at
+             o.created_at, o.paid_at, o.payment_code, o.subtotal_amount,
+             o.tax_rate, o.tax_amount, o.amount_paid
       FROM billing_orders o JOIN workspaces w ON w.id = o.workspace_id
       ORDER BY o.created_at DESC, o.id DESC LIMIT 5
     `,
@@ -1902,10 +2023,16 @@ function adminSettingsData(config) {
     })),
     publicAppUrl: config.publicAppUrl,
     billgateway: {
-      apiUrl: config.gatewayApiUrl || "",
+      apiUrl: config.gatewayApiUrl || VC_BILLING_DEFAULT_API_URL,
       projectId: config.gatewayProjectId || "",
       hasApiKey: Boolean(config.gatewayApiKey),
       hasWebhookSecret: Boolean(config.webhookSecret),
+      apiKeyKind: apiKeyKind(config.gatewayApiKey),
+      paymentCodePrefix: config.billingPaymentCodePrefix || "",
+      taxRate: Number(config.billingTaxRate || 0),
+      skuPrefix: config.billingSkuPrefix || DEFAULT_SKU_PREFIX,
+      webhookUrl: `${String(config.publicAppUrl || "").replace(/\/$/, "")}/api/billing/webhook`,
+      defaultApiUrl: VC_BILLING_DEFAULT_API_URL,
     },
     smtp: {
       host: smtp.host || "",
@@ -2114,56 +2241,22 @@ function normalizeEventType(value) {
     .replace(/_/g, ".");
 }
 
-function isPaidEvent(eventType, payload) {
-  const value = normalizeEventType(eventType);
-  const status = String(
-    firstValue(
-      payload?.status,
-      payload?.paymentStatus,
-      payload?.data?.status,
-    ) || "",
-  ).toLowerCase();
-  return (
-    value === "payment.paid" ||
-    value === "paid" ||
-    value === "payment.success" ||
-    value === "payment.succeeded" ||
-    value === "payment.completed" ||
-    status === "paid" ||
-    status === "success" ||
-    status === "succeeded" ||
-    status === "completed"
-  );
+// Webhook event names decide the transition. Legacy envelopes with a generic
+// event name fall back to their top-level status, as before VC Billing.
+function billingEventKindFor(eventType, payload) {
+  const kind = billingEventKind(eventType);
+  if (kind !== "other") return kind;
+  const status = firstValue(payload?.status, payload?.paymentStatus, payload?.data?.status);
+  return status ? billingEventKind(paymentStatusEvent(status)) : "other";
 }
 
-function isNonExtendingEvent(eventType, payload) {
-  const value = normalizeEventType(eventType);
-  const status = String(
-    firstValue(
-      payload?.status,
-      payload?.paymentStatus,
-      payload?.data?.status,
-    ) || "",
-  ).toLowerCase();
-  return (
-    value.includes("failed") ||
-    value.includes("failure") ||
-    value.includes("refunded") ||
-    value.includes("refund") ||
-    value.includes("canceled") ||
-    value.includes("cancelled") ||
-    value.includes("expired") ||
-    [
-      "failed",
-      "failure",
-      "refunded",
-      "refund",
-      "canceled",
-      "cancelled",
-      "expired",
-    ].includes(status)
-  );
-}
+const BILLING_EVENT_STATUS = {
+  partially_paid: "partially_paid",
+  canceled: "canceled",
+  expired: "expired",
+  failed: "failed",
+  refunded: "refunded",
+};
 
 function hmacMatches(raw, signature, secret) {
   if (!secret || !signature) return false;
@@ -2176,10 +2269,7 @@ function hmacMatches(raw, signature, secret) {
 }
 
 function billGatewayEndpoint(config, path) {
-  const base = config.gatewayApiUrl || config.gatewayUrl;
-  if (!base) return null;
-  if (/\/api(?:\/v1)?$/i.test(base)) return `${base}${path}`;
-  return `${base}/api/v1${path}`;
+  return vcBillingEndpoint(config.gatewayApiUrl || config.gatewayUrl, path);
 }
 
 function absoluteGatewayUrl(config, value) {
@@ -2293,19 +2383,29 @@ function applyBillingEvent(
         "UPDATE billing_orders SET provider_payment_id = ? WHERE id = ?",
       ).run(paymentId, order.id);
     }
-    if (isNonExtendingEvent(eventType, payload)) {
-      const normalized = normalizeEventType(eventType);
-      const status = normalized.includes("refund")
-        ? "refunded"
-        : normalized.includes("fail")
-          ? "failed"
-          : "expired";
-      db.prepare(
-        "UPDATE billing_orders SET status = ? WHERE id = ? AND status != 'paid'",
-      ).run(status, order.id);
+    // The payer sees VC Billing's code; keep it unless another order owns it.
+    const paymentCode = paymentCodeFrom(payment);
+    if (paymentCode && !order.payment_code)
+      db.prepare(`UPDATE billing_orders SET payment_code = ? WHERE id = ? AND payment_code IS NULL
+        AND NOT EXISTS (SELECT 1 FROM billing_orders other WHERE other.payment_code = ? AND other.id <> ?)`)
+        .run(paymentCode, order.id, paymentCode, order.id);
+    const reportedPaid = paymentAmountPaid(payment);
+    if (reportedPaid !== null)
+      db.prepare("UPDATE billing_orders SET amount_paid = ? WHERE id = ?").run(reportedPaid, order.id);
+    const kind = billingEventKindFor(eventType, payload);
+    const nextStatus = BILLING_EVENT_STATUS[kind];
+    if (nextStatus) {
+      // A refund overrides a paid order (paid_at is kept as history) but never
+      // shortens the subscription by itself; other states never undo a payment.
+      if (kind === "refunded")
+        db.prepare("UPDATE billing_orders SET status = 'refunded' WHERE id = ?").run(order.id);
+      else
+        db.prepare(
+          "UPDATE billing_orders SET status = ? WHERE id = ? AND status NOT IN ('paid', 'refunded')",
+        ).run(nextStatus, order.id);
       return { duplicate: false, extended: false, orderId: order.id };
     }
-    if (!isPaidEvent(eventType, payload))
+    if (kind !== "paid")
       return { duplicate: false, extended: false, orderId: order.id };
     const amountPaid = Number(payment.amountPaid ?? payment.paidAmount ?? 0);
     const paymentStatus = String(payment.status || "").toLowerCase();
@@ -2359,7 +2459,7 @@ function applyBillingEvent(
       order.workspace_id,
     );
     db.prepare(
-      "UPDATE billing_orders SET status = 'paid', paid_at = ? WHERE id = ?",
+      "UPDATE billing_orders SET status = 'paid', paid_at = ?, amount_paid = GREATEST(amount_paid, amount) WHERE id = ?",
     ).run(nowDate.toISOString(), order.id);
     return {
       duplicate: false,
@@ -2726,11 +2826,13 @@ function createApp(options = {}) {
         }
         const eventType = firstValue(headerEvent, bodyEvent, "unknown");
         const eventId = eventIdFromPayload(payload, req, raw);
+        // VC Billing's documented envelope is { event, data: { payment } };
+        // reject only a project id that is present and belongs elsewhere.
+        const projectIds = [payload?.project?.id, gatewayPaymentFromPayload(payload)?.projectId]
+          .filter((value) => value !== undefined && value !== null && value !== "");
         if (
           config.gatewayProjectId &&
-          (String(payload?.project?.id || "") !== config.gatewayProjectId ||
-            String(payload?.data?.payment?.projectId || "") !==
-              config.gatewayProjectId)
+          projectIds.some((value) => String(value) !== config.gatewayProjectId)
         ) {
           return fail(
             res,
@@ -2738,11 +2840,14 @@ function createApp(options = {}) {
             "webhook project does not match this application",
           );
         }
+        const paymentId = paymentIdFromPayload(payload);
         const result = applyBillingEvent(db, {
           eventId,
           eventType,
-          orderId: orderIdFromPayload(payload),
-          paymentId: paymentIdFromPayload(payload),
+          orderId: orderIdFromPayload(payload) || (paymentId
+            ? db.prepare("SELECT id FROM billing_orders WHERE provider_payment_id = ?").get(paymentId)?.id || null
+            : null),
+          paymentId,
           amount: amountFromPayload(payload),
           currency: currencyFromPayload(payload),
           payload,
@@ -3420,6 +3525,9 @@ function createApp(options = {}) {
         gatewayProjectId: config.gatewayProjectId,
         gatewayApiKey: config.gatewayApiKey,
         webhookSecret: config.webhookSecret,
+        billingPaymentCodePrefix: config.billingPaymentCodePrefix,
+        billingTaxRate: config.billingTaxRate,
+        billingSkuPrefix: config.billingSkuPrefix,
         smtp: config.smtp ? { ...config.smtp } : null,
         smtpEnabled: config.smtpEnabled,
       };
@@ -3442,11 +3550,24 @@ function createApp(options = {}) {
       if (hasGateway) {
         const gateway = body.billgateway;
         if (gateway.apiUrl !== undefined) {
-          next.gatewayApiUrl = httpUrlValue(gateway.apiUrl, "billgateway.apiUrl", {
+          const apiUrl = httpUrlValue(gateway.apiUrl, "billgateway.apiUrl", {
             max: 500,
           });
+          // Clearing the URL falls back to the environment or VC Billing default.
+          next.gatewayApiUrl = apiUrl || config.gatewayEnvApiUrl || VC_BILLING_DEFAULT_API_URL;
           next.gatewayUrl = next.gatewayApiUrl;
-          plainWrites.push(["billgateway.apiUrl", next.gatewayApiUrl]);
+          plainWrites.push(["billgateway.apiUrl", apiUrl]);
+        }
+        for (const [field, property, normalize, message] of [
+          ["paymentCodePrefix", "billingPaymentCodePrefix", normalizePaymentCodePrefix, VC_BILLING_MESSAGES.paymentCodePrefix],
+          ["taxRate", "billingTaxRate", (value) => (typeof value === "number" ? normalizeTaxRate(value) : null), VC_BILLING_MESSAGES.taxRate],
+          ["skuPrefix", "billingSkuPrefix", normalizeSkuPrefix, VC_BILLING_MESSAGES.skuPrefix],
+        ]) {
+          if (gateway[field] === undefined) continue;
+          const value = normalize(gateway[field]);
+          if (value === null) throw new HttpError(400, message);
+          next[property] = value;
+          plainWrites.push([`billgateway.${field}`, value]);
         }
         if (gateway.projectId !== undefined) {
           next.gatewayProjectId = cleanString(gateway.projectId, {
@@ -3466,11 +3587,19 @@ function createApp(options = {}) {
           if (hasValue && clear)
             throw new HttpError(400, `${field} and ${clearField} cannot be used together`);
           if (hasValue) {
-            const value = secretSettingValue(
+            let value = secretSettingValue(
               gateway[field],
               `billgateway.${field}`,
               500,
             );
+            if (field === "apiKey") {
+              // The Payment API only accepts project keys; bg_live_ keys query
+              // bank transactions and would fail every checkout.
+              value = value.trim();
+              const kind = apiKeyKind(value);
+              if (kind === "live") throw new HttpError(400, VC_BILLING_MESSAGES.liveApiKey);
+              if (kind !== "project") throw new HttpError(400, VC_BILLING_MESSAGES.otherApiKey);
+            }
             next[field === "apiKey" ? "gatewayApiKey" : "webhookSecret"] = value;
             secretWrites.push([settingKey, value]);
           } else if (clear) {
@@ -3588,6 +3717,22 @@ function createApp(options = {}) {
       for (const [key, value] of secretWrites) stored.set(key, jsonSetting(value));
       Object.assign(config, next, { settingsSource: source, _storedSettings: stored });
       return res.json(adminSettingsData(config));
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  // Checks the saved URL and project key against VC Billing without creating
+  // a payment. Unreachable or rejected keys are reported in the 200 result.
+  app.post("/api/admin/settings/billgateway/test", requirePlatformAdmin, async (req, res, next) => {
+    try {
+      if (!config.gatewayApiUrl || !config.gatewayApiKey)
+        throw new HttpError(409, VC_BILLING_MESSAGES.testMissing);
+      return res.json(await testVcBillingConnection({
+        endpoint: billGatewayEndpoint(config, "/integration/payments?limit=1"),
+        apiKey: config.gatewayApiKey,
+        now: () => currentDate(clock),
+      }));
     } catch (error) {
       return next(error);
     }
@@ -5128,6 +5273,8 @@ function createApp(options = {}) {
         ),
         orders,
         configured: config.billingConfigured,
+        ...billingProfileFor(db, req.auth.workspaceId),
+        taxRate: Number(config.billingTaxRate || 0),
       });
     } catch (error) {
       return next(error);
@@ -5161,34 +5308,45 @@ function createApp(options = {}) {
           !config.gatewayApiUrl ||
           !config.gatewayApiKey
         ) {
-          throw new HttpError(
-            503,
-            "billing is not configured; set BILLGATE_API_URL, BILLGATE_API_KEY and BILLGATE_WEBHOOK_SECRET",
-          );
+          throw new HttpError(503, VC_BILLING_MESSAGES.notConfigured);
         }
         const orderId = createId("order_");
-        const amount = withTransaction(db, () => {
+        const { profile } = billingProfileFor(db, req.auth.workspaceId);
+        const { totals, sentCode } = withTransaction(db, () => {
         lockWorkspaceSeats(db, req.auth.workspaceId);
         config.plans = currentPlans(db, config.plans);
         plan = config.plans.find(item => item.id === planId);
         if (!plan || plan.active === false) throw new HttpError(409, 'Gói thuê bao đã ngừng bán');
         assertWorkspacePlanSeats(db, req.auth.workspaceId, plan, clock);
-        const quotedAmount = cycle === 'yearly' ? plan.yearlyPrice : plan.monthlyPrice;
+        // VAT is added on top of the plan price; `amount` stores the total so
+        // settlement compares the exact invoice total.
+        const quote = billingTotals(cycle === 'yearly' ? plan.yearlyPrice : plan.monthlyPrice, config.billingTaxRate);
+        let code = null;
+        for (let attempt = 0; config.billingPaymentCodePrefix && attempt < 5 && !code; attempt++) {
+          const candidate = generatePaymentCode(config.billingPaymentCodePrefix);
+          if (!db.prepare("SELECT 1 FROM billing_orders WHERE payment_code = ?").get(candidate)) code = candidate;
+        }
         db.prepare(
           `
-        INSERT INTO billing_orders(id, workspace_id, plan, cycle, amount, currency, status, created_at)
-        VALUES (?, ?, ?, ?, ?, 'VND', 'pending', ?)
+        INSERT INTO billing_orders(id, workspace_id, plan, cycle, amount, currency, status, created_at,
+          payment_code, subtotal_amount, tax_rate, tax_amount)
+        VALUES (?, ?, ?, ?, ?, 'VND', 'pending', ?, ?, ?, ?, ?)
       `,
         ).run(
           orderId,
           req.auth.workspaceId,
           planId,
           cycle,
-          quotedAmount,
+          quote.total,
           isoNow(clock),
+          code,
+          quote.subtotal,
+          quote.taxRate,
+          quote.taxAmount,
         );
-        return quotedAmount;
+        return { totals: quote, sentCode: code };
         });
+        const amount = totals.total;
         const endpoint = billGatewayEndpoint(config, "/integration/payments");
         let response;
         try {
@@ -5198,17 +5356,15 @@ function createApp(options = {}) {
               "content-type": "application/json",
               "x-api-key": config.gatewayApiKey,
             },
-            body: JSON.stringify({
-              externalId: orderId,
-              description: `Nhắc Tôi ${plan.name} (${cycle})`,
-              currency: "VND",
-              totalAmount: amount,
-              metadata: { nhacToiOrderId: orderId, plan: planId, cycle },
-              customer: {
-                name: req.auth.user.name,
-                email: req.auth.user.email,
-              },
-            }),
+            body: JSON.stringify(buildPaymentRequest({
+              orderId,
+              plan,
+              cycle,
+              totals,
+              code: sentCode,
+              skuPrefix: config.billingSkuPrefix,
+              customer: paymentCustomer(profile, req.auth.user),
+            })),
             signal: AbortSignal.timeout(15000),
           });
         } catch (error) {
@@ -5265,6 +5421,13 @@ function createApp(options = {}) {
         db.prepare(
           "UPDATE billing_orders SET provider_payment_id = ? WHERE id = ?",
         ).run(String(providerPaymentId), orderId);
+        // Keep the code VC Billing shows the payer when it differs from ours.
+        const returnedCode = paymentCodeFrom(payment);
+        if (returnedCode && returnedCode !== sentCode)
+          db.prepare(`UPDATE billing_orders SET payment_code = ? WHERE id = ?
+            AND NOT EXISTS (SELECT 1 FROM billing_orders other WHERE other.payment_code = ? AND other.id <> ?)`)
+            .run(returnedCode, orderId, returnedCode, orderId);
+        const paymentCode = db.prepare("SELECT payment_code FROM billing_orders WHERE id = ?").get(orderId)?.payment_code || null;
         const hostedPath =
           payment.hostedPath ||
           (payment.hostedToken ? `/pay/${payment.hostedToken}` : null);
@@ -5289,6 +5452,7 @@ function createApp(options = {}) {
             checkoutUrl: hosted,
             orderId,
             providerPaymentId: String(providerPaymentId),
+            paymentCode,
           });
       } catch (error) {
         return next(error);
@@ -5296,76 +5460,179 @@ function createApp(options = {}) {
     },
   );
 
+  const assertBillingReady = () => {
+    if (!config.billingConfigured || !config.gatewayApiUrl || !config.gatewayApiKey)
+      throw new HttpError(503, VC_BILLING_MESSAGES.notConfigured);
+  };
+  const gatewayError = (body, fallback) => {
+    const message = typeof body?.error === "string" ? body.error
+      : typeof body?.error?.message === "string" ? body.error.message
+        : typeof body?.message === "string" ? body.message : "";
+    return message.slice(0, 300) || fallback;
+  };
+
+  // Reads the payment back from VC Billing and applies its current state
+  // through the webhook settlement path. Shared by refresh and reconcile.
+  async function refreshBillingOrder(order) {
+    const paymentId = order.provider_payment_id;
+    if (!paymentId)
+      throw new HttpError(409, "billing order has no provider payment id");
+    db.prepare("UPDATE billing_orders SET last_checked_at = ? WHERE id = ?").run(isoNow(clock), order.id);
+    const response = await fetch(
+      billGatewayEndpoint(
+        config,
+        `/integration/payments/${encodeURIComponent(paymentId)}`,
+      ),
+      {
+        headers: { "x-api-key": config.gatewayApiKey },
+        signal: AbortSignal.timeout(15000),
+      },
+    );
+    let body = null;
+    try {
+      body = await response.json();
+    } catch {}
+    if (!response.ok || body?.success === false)
+      throw new HttpError(502, gatewayError(body, "billing gateway rejected the refresh"));
+    const payment = body?.data || body?.payment || body || {};
+    const event = paymentStatusEvent(payment.status);
+    const payload = {
+      event,
+      orderId: order.id,
+      paymentId,
+      amount: payment.totalAmount ?? payment.amount,
+      currency: payment.currency,
+      data: { payment },
+    };
+    // Deterministic per observed state, so repeated polling is a no-op.
+    const observed = [payment.status || "unknown", paymentAmountPaid(payment) ?? "", payment.updatedAt || payment.paidAt || ""];
+    return applyBillingEvent(db, {
+      eventId: `refresh:${paymentId}:${observed.join(":")}`,
+      eventType: event,
+      orderId: order.id,
+      paymentId,
+      amount: amountFromPayload(payload),
+      currency: currencyFromPayload(payload),
+      payload,
+      raw: JSON.stringify(payload),
+      clock,
+      config,
+    });
+  }
+
+  const workspaceOrder = (req) => db
+    .prepare("SELECT * FROM billing_orders WHERE id = ? AND workspace_id = ?")
+    .get(req.params.id, req.auth.workspaceId);
+
   app.post(
     "/api/billing/orders/:id/refresh",
     requireRoles("owner"),
     async (req, res, next) => {
       try {
-        if (
-          !config.billingConfigured ||
-          !config.gatewayApiUrl ||
-          !config.gatewayApiKey
-        ) {
-          throw new HttpError(503, "billing is not configured");
-        }
-        const order = db
-          .prepare(
-            "SELECT * FROM billing_orders WHERE id = ? AND workspace_id = ?",
-          )
-          .get(req.params.id, req.auth.workspaceId);
+        assertBillingReady();
+        const order = workspaceOrder(req);
         if (!order) return fail(res, 404, "billing order was not found");
-        const paymentId = order.provider_payment_id;
-        if (!paymentId)
-          throw new HttpError(409, "billing order has no provider payment id");
-        const response = await fetch(
-          billGatewayEndpoint(
-            config,
-            `/integration/payments/${encodeURIComponent(paymentId)}`,
-          ),
-          {
-            headers: { "x-api-key": config.gatewayApiKey },
-            signal: AbortSignal.timeout(15000),
-          },
-        );
-        let body = null;
-        try {
-          body = await response.json();
-        } catch {}
-        if (!response.ok || body?.success === false)
-          throw new HttpError(
-            502,
-            body?.error || "billing gateway rejected the refresh",
-          );
-        const payment = body?.data || body?.payment || body || {};
-        const payload = {
-          event:
-            payment.status === "paid"
-              ? "payment.paid"
-              : `payment.${payment.status || "unknown"}`,
-          orderId: order.id,
-          paymentId,
-          amount: payment.totalAmount ?? payment.amount,
-          currency: payment.currency,
-          data: { payment },
-        };
-        const result = applyBillingEvent(db, {
-          eventId: `refresh:${paymentId}:${payment.status || "unknown"}:${payment.updatedAt || payment.paidAt || ""}`,
-          eventType: payload.event,
-          orderId: order.id,
-          paymentId,
-          amount: amountFromPayload(payload),
-          currency: currencyFromPayload(payload),
-          payload,
-          raw: JSON.stringify(payload),
-          clock,
-          config,
+        const result = await refreshBillingOrder(order);
+        return res.json({
+          ok: true,
+          ...result,
+          order: billingOrderJson(db.prepare("SELECT * FROM billing_orders WHERE id = ?").get(order.id)),
         });
-        return res.json({ ok: true, ...result });
       } catch (error) {
         return next(error);
       }
     },
   );
+
+  // Owners may withdraw an unpaid invoice. VC Billing cancels it first, so a
+  // payment arriving meanwhile is never hidden behind a local status.
+  app.post(
+    "/api/billing/orders/:id/cancel",
+    requireRoles("owner"),
+    async (req, res, next) => {
+      try {
+        assertBillingReady();
+        const order = workspaceOrder(req);
+        if (!order) return fail(res, 404, "billing order was not found");
+        if (order.status !== "pending" || Number(order.amount_paid || 0) > 0 || order.paid_at || !order.provider_payment_id)
+          throw new HttpError(409, VC_BILLING_MESSAGES.notCancelable);
+        let response;
+        try {
+          response = await fetch(
+            billGatewayEndpoint(config, `/integration/payments/${encodeURIComponent(order.provider_payment_id)}/cancel`),
+            {
+              method: "POST",
+              headers: { "content-type": "application/json", "x-api-key": config.gatewayApiKey },
+              body: "{}",
+              signal: AbortSignal.timeout(15000),
+            },
+          );
+        } catch {
+          throw new HttpError(502, "Không kết nối được VC Billing để hủy hóa đơn");
+        }
+        let body = null;
+        try {
+          body = await response.json();
+        } catch {}
+        if (!response.ok || body?.success === false)
+          throw new HttpError(502, gatewayError(body, "VC Billing không hủy được hóa đơn"));
+        const payment = body?.data || body?.payment || null;
+        const reportedStatus = payment && typeof payment === "object" ? payment.status : undefined;
+        if (reportedStatus && billingEventKind(paymentStatusEvent(reportedStatus)) !== "canceled")
+          throw new HttpError(409, VC_BILLING_MESSAGES.notCancelable);
+        const changed = db.prepare(
+          "UPDATE billing_orders SET status = 'canceled' WHERE id = ? AND status = 'pending' AND paid_at IS NULL AND amount_paid = 0",
+        ).run(order.id).changes;
+        if (!changed) throw new HttpError(409, VC_BILLING_MESSAGES.notCancelable);
+        return res.json({
+          ok: true,
+          order: billingOrderJson(db.prepare("SELECT * FROM billing_orders WHERE id = ?").get(order.id)),
+        });
+      } catch (error) {
+        return next(error);
+      }
+    },
+  );
+
+  app.put("/api/billing/profile", requireRoles("owner"), (req, res, next) => {
+    try {
+      if (req.auth.workspace.kind === "personal")
+        throw new HttpError(409, "Không gian cá nhân miễn phí, không cần mua gói");
+      const values = billingProfileValues(req.body);
+      db.prepare(`INSERT INTO billing_profiles(workspace_id, company_name, tax_code, address, email, updated_by, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(workspace_id) DO UPDATE SET company_name = excluded.company_name, tax_code = excluded.tax_code,
+          address = excluded.address, email = excluded.email, updated_by = excluded.updated_by, updated_at = excluded.updated_at`)
+        .run(req.auth.workspaceId, values.companyName, values.taxCode, values.address, values.email, req.auth.userId, isoNow(clock));
+      return res.json(billingProfileFor(db, req.auth.workspaceId));
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  // VC Billing never retries webhooks, so open invoices are read back
+  // periodically. Each order is claimed first; settlement is idempotent, so two
+  // processes running this together cannot extend a subscription twice.
+  async function reconcileBilling({ limit = 20 } = {}) {
+    const summary = { checked: 0, extended: 0, failed: 0 };
+    if (!config.billingConfigured || !config.gatewayApiUrl || apiKeyKind(config.gatewayApiKey) === "live")
+      return summary;
+    const now = currentDate(clock);
+    for (const order of reconcileCandidates(db, { now, limit })) {
+      if (!claimReconcile(db, order.id, { now })) continue;
+      try {
+        const result = await refreshBillingOrder(order);
+        summary.checked++;
+        if (result.extended) summary.extended++;
+      } catch (error) {
+        summary.failed++;
+        const reason = String(error?.message || "request failed").split(config.gatewayApiKey).join("***").slice(0, 200);
+        console.warn(`[nhactoi] VC Billing reconcile failed for ${order.id}: ${reason}`);
+      }
+    }
+    return summary;
+  }
+  app.locals.reconcileBilling = reconcileBilling;
 
   app.use((req, res) => fail(res, 404, "route was not found"));
   app.use((error, req, res, next) => {
@@ -5390,6 +5657,12 @@ function createApp(options = {}) {
     const intervalMs = Number(
       options.reminderIntervalMs || config.env.REMINDER_INTERVAL_MS || 30000,
     );
+    const reconcileIntervalMs = Math.max(
+      1000,
+      Number(config.env.BILLING_RECONCILE_INTERVAL_MS) || 300000,
+    );
+    let lastBillingReconcile = 0;
+    let reconcilingBilling = false;
     const interval = setInterval(
       () => {
         try {
@@ -5407,6 +5680,13 @@ function createApp(options = {}) {
           void app.locals.processNotificationOutbox?.().catch(error=>console.error("[nhactoi] notification outbox failed", error));
           void app.locals.processBackups?.().catch(error=>console.error("[nhactoi] backup failed",error));
           void app.locals.processRemoteCleanup?.().catch(error=>console.error("[nhactoi] remote cleanup failed",error));
+          if (!reconcilingBilling && Date.now() - lastBillingReconcile >= reconcileIntervalMs) {
+            lastBillingReconcile = Date.now();
+            reconcilingBilling = true;
+            void reconcileBilling()
+              .catch(() => console.error("[nhactoi] VC Billing reconcile failed"))
+              .finally(() => { reconcilingBilling = false; });
+          }
         } catch (error) {
           console.error("[nhactoi] reminder worker failed:", error);
         }

@@ -10,7 +10,7 @@
   height: 38px;
   padding: 0;
   border: 1px solid var(--border-card);
-  border-radius: 9px;
+  border-radius: var(--radius-control);
   background: var(--bg-card);
   color: var(--ink-secondary);
   cursor: pointer;
@@ -28,9 +28,9 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   border: 1px solid var(--border-card);
-  border-radius: 11px;
+  border-radius: var(--radius-card);
   background: var(--bg-surface);
-  box-shadow: 0 12px 35px #173e2924;
+  box-shadow: 0 12px 35px #17243e24;
   color: var(--ink);
 }
 .action-menu-item {
@@ -41,7 +41,7 @@
   min-height: 40px;
   padding: 10px 11px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: inherit;
   font: inherit;

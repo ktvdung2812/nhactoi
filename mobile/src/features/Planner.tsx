@@ -4,9 +4,10 @@ import {useResource,useSession,refreshData} from '../core/session';
 import type {Task} from '../core/types';
 import {planningDay,personalTaskGroups,parseQuickTask} from '../../../shared/personal-planning.mjs';
 import {errorMessage} from '../core/api';
-import {Text,Heading,Field,DateField,Select,Button,Row,Card,Loading,ErrorNotice,s} from '../ui/kit';
+import { useKitStyles,Text,Heading,Field,DateField,Select,Button,Row,Card,Loading,ErrorNotice} from '../ui/kit';
 import {dateLabel} from '../core/policy';
 export function Planner({onTask}:{onTask:(id:string)=>void}) {
+  const s = useKitStyles();
   const {api,session,taskWritable}=useSession();
   const [view,setView]=useState('today'),[now,setNow]=useState(new Date()),[text,setText]=useState(''),[manualDue,setManualDue]=useState<string|null|undefined>(undefined);
   const scope=`${view}:${planningDay(now)}`;
@@ -33,7 +34,7 @@ export function Planner({onTask}:{onTask:(id:string)=>void}) {
     setEditor(null);setMessage(response.pending?'Đã lưu kế hoạch local · Chờ đồng bộ.':'Máy chủ đã xác nhận kế hoạch. Hạn công việc giữ nguyên.');
   }
   const tasks=result.data?.value.tasks||[],groups=personalTaskGroups(tasks,view,now);
-  return <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled"><Heading>Kế hoạch của tôi</Heading>
+  return <ScrollView contentContainerStyle={[s.content, { width: '100%', maxWidth: 760, alignSelf: 'center' }]} keyboardShouldPersistTaps="handled"><Heading>Kế hoạch của tôi</Heading>
     <Select label="Xem kế hoạch" value={view} onChange={setView} options={[{value:'inbox',label:'Inbox'},{value:'today',label:'Hôm nay'},{value:'upcoming',label:'Sắp tới'},{value:'week',label:'Tuần này'}]}/>
     <ErrorNotice message={error||(result.error?errorMessage(result.error):'')}/>{!!message&&<Text accessibilityLiveRegion="polite">{message}</Text>}
     <Card><Field label="Nhập nhanh tiếng Việt" value={text} onChangeText={value=>{setText(value);setManualDue(undefined);}} placeholder="mai 9h gửi báo giá"/>

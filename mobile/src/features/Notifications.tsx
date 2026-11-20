@@ -1,3 +1,4 @@
+import { useTheme } from "../ui/theme";
 import React, { useState } from "react";
 import { ScrollView, RefreshControl, Pressable } from "react-native";
 import { router } from "expo-router";
@@ -7,7 +8,7 @@ import type { Notice } from "../core/types";
 import { errorMessage } from "../core/api";
 import { dateLabel } from "../core/policy";
 import { registerPush, pushConfigured } from "../core/push";
-import {
+import { useKitStyles,
   Heading,
   Text,
   Card,
@@ -15,14 +16,14 @@ import {
   ErrorNotice,
   Loading,
   Empty,
-  s,
-  colors,
 } from "../ui/kit";
 export function Notifications({ onTask }: { onTask: (id: string) => void }) {
   const { scope } = useSession();
   return <NotificationList key={scope} onTask={onTask} />;
 }
 function NotificationList({ onTask }: { onTask: (id: string) => void }) {
+  const s = useKitStyles();
+  const { colors } = useTheme();
   const { api, read, scope, session, online } = useSession();
   const queryClient = useQueryClient();
   const path = `/mobile/notifications?workspaceId=${encodeURIComponent(session?.workspace.id || "")}`;
@@ -79,12 +80,14 @@ function NotificationList({ onTask }: { onTask: (id: string) => void }) {
   }
   return (
     <ScrollView
-      contentContainerStyle={s.content}
+      contentContainerStyle={[s.content, { width: '100%', maxWidth: 760, alignSelf: 'center' }]}
       refreshControl={
         <RefreshControl
           refreshing={result.isRefetching}
           onRefresh={() => void refresh()}
-          tintColor={colors.green}
+          tintColor={colors.accent}
+          colors={[colors.accent]}
+          progressBackgroundColor={colors.surface}
         />
       }
     >

@@ -98,7 +98,7 @@
   min-height: 64px;
   padding: 0 16px;
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: var(--radius-card);
   background: var(--bg-card);
 }
 .pd-row-text { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -131,7 +131,7 @@
   align-items: center;
   justify-content: center;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--radius-card);
   background: var(--bg-card);
   font-size: var(--text-base);
   font-weight: 500;
@@ -147,7 +147,7 @@
 .pd-past {
   position: absolute;
   inset: 0 auto 0 0;
-  border-radius: 16px;
+  border-radius: var(--radius-card);
   background: repeating-linear-gradient(135deg, transparent 0 7px, color-mix(in srgb, var(--muted) 18%, transparent) 7px 8px);
   opacity: 0.7;
   pointer-events: none;
@@ -170,7 +170,7 @@
   gap: 10px;
   padding: 0 12px 0 10px;
   border: 0;
-  border-radius: 16px;
+  border-radius: var(--radius-card);
   /* Deep-to-base tone keeps the white text readable across the whole block. */
   background: var(--tone) linear-gradient(100deg, color-mix(in srgb, var(--tone), black 20%), var(--tone));
   color: #fff;
@@ -235,7 +235,7 @@
 .pd-unscheduled button:hover { background: var(--bg-hover); }
 
 .pd-row-label.is-today { border-color: var(--green); box-shadow: inset 3px 0 0 var(--green); }
-.pd-row-label.is-drop, .pd-lane-row.is-drop { outline: 2px dashed var(--green); outline-offset: -2px; background: var(--green-subtle); border-radius: 16px; }
+.pd-row-label.is-drop, .pd-lane-row.is-drop { outline: 2px dashed var(--green); outline-offset: -2px; background: var(--green-subtle); border-radius: var(--radius-card); }
 .pd-row-label { text-transform: none; }
 .pd-row-text strong::first-letter { text-transform: uppercase; }
 .pd-row-add {
@@ -265,7 +265,7 @@
   justify-content: center;
   gap: 2px;
   border: 1px dashed var(--line);
-  border-radius: 14px;
+  border-radius: var(--radius-card);
   background: var(--bg-card);
   color: var(--ink);
   font-size: var(--text-sm);
@@ -284,10 +284,10 @@
 .pd-board-hint { margin: 0; color: var(--muted); font-size: var(--text-sm); }
 
 /* Week: compact full-week list kept below the timeline. */
-.pd-week-list .week-calendar-grid { border-radius: 18px; }
+.pd-week-list .week-calendar-grid { border-radius: var(--radius-card); }
 
 /* Schedule editor inside the assistant card */
-.pd-assist .week-calendar-editor { margin: 0; padding: 16px; grid-template-columns: minmax(0, 1fr); text-align: left; border-radius: 18px; background: var(--pd-soft); }
+.pd-assist .week-calendar-editor { margin: 0; padding: 16px; grid-template-columns: minmax(0, 1fr); text-align: left; border-radius: var(--radius-card); background: var(--pd-soft); }
 .pd-assist .week-calendar-editor h2 { display: none; }
 
 /* Bottom cards */
@@ -305,7 +305,7 @@
   margin-bottom: 14px;
   padding: 18px 20px;
   border: 1px solid var(--line);
-  border-radius: 18px;
+  border-radius: var(--radius-card);
   background: var(--bg-card);
   color: var(--ink);
   font: inherit;
@@ -353,7 +353,7 @@
   min-height: 80px;
   padding: 14px;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--radius-card);
   text-align: left;
 }
 .pd-stat > .pd-row-icon { grid-row: 1 / 3; width: 36px; height: 36px; }
@@ -399,7 +399,7 @@
 .pd-assist .personal-capture-compact {
   margin: 0;
   padding: 14px;
-  border-radius: 18px;
+  border-radius: var(--radius-card);
   background: var(--pd-soft);
   box-shadow: none;
   text-align: left;

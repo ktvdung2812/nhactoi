@@ -1,5 +1,6 @@
-import React, { useEffect, useState, useRef } from "react";
-import { View, Pressable, BackHandler, Alert, ScrollView } from "react-native";
+import { useTheme } from "../ui/theme";
+import React, { useEffect, useState, useRef, useLayoutEffect } from "react";
+import { View, Pressable, BackHandler, Alert, ScrollView, Platform } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as NotificationsAPI from "expo-notifications";
 import { router } from "expo-router";
@@ -12,7 +13,7 @@ import { Planner } from "../features/Planner";
 import { Projects } from "../features/Projects";
 import { Account } from "../features/Account";
 import { Login } from "../features/Login";
-import { Text, Empty, Loading, colors } from "../ui/kit";
+import { Text, Empty, Loading, EdgeSwipeBack } from "../ui/kit";
 import { useMeasuredWindow, position } from "../ui/frames";
 import { errorMessage, API_URL } from "../core/api";
 const tabs = [
@@ -23,10 +24,13 @@ const tabs = [
   { id: "account", label: "Tài khoản", icon: "◎" },
 ] as const;
 type Tab = (typeof tabs)[number]["id"];
-export default function Home() {
+/** Navigation labels and icons stop growing here so five tabs still fit a cover display. */
+const NAV_MAX_FONT_SCALE = 1.3;
+export default function Home({initialTaskId, onInitialBack, listenForPush = true}: {initialTaskId?: string; onInitialBack?: () => void; listenForPush?: boolean} = {}) {
+  const { colors, radius } = useTheme();
   const { session, loading, online, scope, switchWorkspace } = useSession();
   const [tab, setTab] = useState<Tab>("tasks"),
-    [selection, setSelection] = useState<{ id: string; scope: string }>();
+    [selection, setSelection] = useState<{ id: string; scope: string } | undefined>(() => initialTaskId ? {id: initialTaskId, scope} : undefined);
   const selected = selection?.scope === scope ? selection.id : undefined;
   const lastResponse = useRef("");
   const {
@@ -35,7 +39,7 @@ export default function Home() {
     ...window
   } = useMeasuredWindow();
   const { layout } = window;
-  const dual = layout.mode === "dual",
+  const dual = layout.mode === "dual" && !!layout.secondary,
     rail = layout.navigation === "rail";
   const sessionRef = useRef(session);
   useEffect(() => {
@@ -46,26 +50,39 @@ export default function Home() {
     switchRef.current = switchWorkspace;
   }, [switchWorkspace]);
   const openTask = (id: string) => {
-    setTab("tasks");
     setSelection({ id, scope });
   };
+  // Android dispatches back to the newest listener first. Home registers once, at mount, so a
+  // child screen's own handler (an open project, a service) always runs before it; the latest
+  // tab/selection is read from a ref instead of re-registering on every change.
+  const backState = useRef({ selected, tab, onInitialBack });
+  useLayoutEffect(() => {
+    backState.current = { selected, tab, onInitialBack };
+  }, [selected, tab, onInitialBack]);
   useEffect(() => {
     const listener = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (selected) {
-        setSelection(undefined);
+      const current = backState.current;
+      const detailVisible =
+        current.tab === "tasks" ||
+        current.tab === "planner" ||
+        current.tab === "notifications";
+      // A selection kept while another tab is showing is invisible: back leaves that tab first.
+      if (current.selected && detailVisible) {
+        if (current.onInitialBack) current.onInitialBack();
+        else setSelection(undefined);
         return true;
       }
-      if (tab !== "tasks") {
+      if (current.tab !== "tasks") {
         setTab("tasks");
         return true;
       }
       return false;
     });
     return () => listener.remove();
-  }, [selected, tab]);
+  }, []);
   const token = session?.token;
   useEffect(() => {
-    if (!token) return;
+    if (!token || !listenForPush) return;
     let live = true;
     if (pushConfigured) void registerPush(token).catch(() => {});
     const handle = async (
@@ -126,17 +143,20 @@ export default function Home() {
       received.remove();
       changed.remove();
     };
-  }, [token]);
+  }, [token, listenForPush]);
   if (loading) return <Loading />;
   if (!session) return <Login />;
+  const supportsTaskDetail = tab === "tasks" || tab === "planner" || tab === "notifications";
   const detailRegion =
     dual && layout.secondary ? layout.secondary : layout.primary;
-  const fullRegion = layout.hinge
+  const fullRegion = (selected && dual && supportsTaskDetail) || (layout.hinge && !(tab === "projects" && dual))
     ? layout.primary
     : {
         ...layout.primary,
         width: window.width - layout.primary.x,
-        height: layout.primary.height,
+        height: dual && tab === "projects" && layout.secondary
+          ? Math.max(layout.primary.y + layout.primary.height, layout.secondary.y + layout.secondary.height) - layout.primary.y
+          : layout.primary.height,
       };
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -144,7 +164,7 @@ export default function Home() {
         <Text
           accessibilityRole="alert"
           style={{
-            backgroundColor: "#fff0dd",
+            backgroundColor: colors.orangePale,
             color: colors.orange,
             padding: 5,
             fontSize: 11,
@@ -158,10 +178,11 @@ export default function Home() {
       )}
       <View ref={frameRef} onLayout={measureFrame} style={{ flex: 1 }}>
         <View
+          testID="home-navigation-region"
           style={[
             position(layout.navigationRegion),
             {
-              backgroundColor: colors.white,
+              backgroundColor: colors.surface,
               borderColor: colors.line,
               borderRightWidth: rail ? 1 : 0,
               borderTopWidth: rail ? 0 : 1,
@@ -189,27 +210,34 @@ export default function Home() {
                   paddingVertical: 8,
                   minHeight: 60,
                   minWidth: rail ? undefined : 70,
-                  borderRadius: 12,
+                  borderRadius: radius.card,
                   alignItems: "center",
                   justifyContent: "center",
                   backgroundColor: tab === item.id ? colors.pale : undefined,
                 }}
               >
                 <Text
+                  maxFontSizeMultiplier={NAV_MAX_FONT_SCALE}
                   style={{
                     fontSize: 23,
                     lineHeight: 29,
-                    color: tab === item.id ? colors.green : colors.muted,
+                    color: tab === item.id ? colors.accent : colors.muted,
                   }}
                 >
                   {item.icon}
                 </Text>
+                {/* Like system tab bars, labels stop growing at large text sizes instead of
+                    disappearing: the glyph icons alone are not self-explanatory. */}
                 <Text
+                  maxFontSizeMultiplier={NAV_MAX_FONT_SCALE}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
                   style={{
                     fontSize: 11,
                     lineHeight: 18,
                     textAlign: "center",
-                    color: tab === item.id ? colors.green : colors.muted,
+                    color: tab === item.id ? colors.accent : colors.muted,
                   }}
                 >
                   {item.label}
@@ -220,6 +248,7 @@ export default function Home() {
         </View>
         <View
           key={scope + "list"}
+          testID="home-task-list-pane"
           style={[
             position(layout.primary),
             {
@@ -230,20 +259,29 @@ export default function Home() {
           <TaskList selectedId={selected} onSelect={openTask} />
         </View>
         <View
+          testID="home-task-detail-pane"
           style={[
             position(detailRegion),
             {
               display:
-                tab === "tasks" && (!!selected || dual) ? "flex" : "none",
+                supportsTaskDetail && (!!selected || (tab === "tasks" && dual)) ? "flex" : "none",
             },
           ]}
         >
           {selected ? (
-            <TaskDetail
-              key={scope + selected}
-              id={selected}
-              onBack={() => setSelection(undefined)}
-            />
+            <EdgeSwipeBack
+              testID="home-task-swipe-back"
+              enabled={Platform.OS === "ios" && !dual}
+              onBack={() =>
+                onInitialBack ? onInitialBack() : setSelection(undefined)
+              }
+            >
+              <TaskDetail
+                key={scope + selected}
+                id={selected}
+                onBack={() => onInitialBack ? onInitialBack() : setSelection(undefined)}
+              />
+            </EdgeSwipeBack>
           ) : (
             <Empty
               title="Một việc tại một thời điểm"
@@ -253,12 +291,13 @@ export default function Home() {
         </View>
         <View
           key={scope + "other"}
+          testID="home-other-pane"
           style={[
             position(fullRegion),
-            { display: tab === "tasks" ? "none" : "flex" },
+            { display: tab === "tasks" || (!!selected && supportsTaskDetail && !dual) ? "none" : "flex" },
           ]}
         >
-          {tab === "planner" ? <Planner onTask={openTask}/> : tab === "projects" ? <Projects/> : tab === "notifications" ? (
+          {tab === "planner" ? <Planner onTask={openTask}/> : tab === "projects" ? <Projects layout={layout}/> : tab === "notifications" ? (
             <Notifications onTask={openTask} />
           ) : tab === "account" ? (
             <Account />

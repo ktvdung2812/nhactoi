@@ -5,7 +5,7 @@ import { useResource, useSession, refreshData } from "../core/session";
 import type { CalendarEvent, Team } from "../core/types";
 import { statuses } from "../core/policy";
 import { errorMessage } from "../core/api";
-import {
+import { useKitStyles,
   FormPage,
   Field,
   DateField,
@@ -14,9 +14,9 @@ import {
   Loading,
   ErrorNotice,
   Text,
-  s,
 } from "../ui/kit";
 export function EventForm({ id }: { id?: string }) {
+  const s = useKitStyles();
   const { api, writable } = useSession();
   const result = useResource<{ event: CalendarEvent }>(
     `/calendar-events/${id}`,

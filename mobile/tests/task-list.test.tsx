@@ -27,6 +27,7 @@ jest.mock("../src/core/session", () => ({
 jest.mock("../src/ui/frames", () => ({
   HingeSafe: ({ children }: { children: React.ReactNode }) => children,
 }));
+jest.mock("../src/ui/adaptive", () => ({ useAdaptiveWindow: () => ({ fontScale: 1 }) }));
 beforeEach(() => {
   mockTaskState = {
     isPending: false,
@@ -43,6 +44,26 @@ beforeEach(() => {
   jest.mocked(router.push).mockClear();
 });
 afterEach(cleanup);
+test("short panes compact the header without remounting the list or losing search", async () => {
+  await render(<TaskList onSelect={() => {}} />);
+  const list = screen.getByTestId("task-list");
+  const layout = (height: number) => fireEvent(list, "layout", { nativeEvent: { layout: { height, width: 800, x: 0, y: 0 } } });
+  await layout(800);
+  expect(screen.getByText("KHÔNG GIAN LÀM VIỆC")).toBeTruthy();
+  expect(screen.getByText("Lọc dự án")).toBeTruthy();
+  await fireEvent.changeText(screen.getByLabelText("Tìm công việc hoặc lịch hẹn"), "meeting");
+  await layout(380);
+  expect(screen.queryByText("KHÔNG GIAN LÀM VIỆC")).toBeNull();
+  expect(screen.queryByText("Lọc dự án")).toBeNull();
+  expect(screen.getByLabelText("Tìm công việc hoặc lịch hẹn").props.value).toBe("meeting");
+  expect(screen.getByTestId("task-list")).toBe(list);
+  await fireEvent.press(screen.getByLabelText("Bộ lọc"));
+  expect(screen.getByText("Lọc dự án")).toBeTruthy();
+  await layout(800);
+  expect(screen.getByText("KHÔNG GIAN LÀM VIỆC")).toBeTruthy();
+  expect(screen.getByLabelText("Tìm công việc hoặc lịch hẹn").props.value).toBe("meeting");
+  expect(screen.getByTestId("task-list")).toBe(list);
+});
 test('undated tasks stay out of date filters and sort after dated tasks', () => {
   const base = { title: 'Task', description: '', status: 'todo' as const, priority: 'medium' as const, remindAt: null, recurrence: 'none' as const, assigneeId: 'u', teamId: null };
   const tasks = [{ ...base, id: 'inbox', dueAt: null }, { ...base, id: 'later', dueAt: '2030-01-02T10:00:00Z' }, { ...base, id: 'earlier', dueAt: '2030-01-01T10:00:00Z' }];

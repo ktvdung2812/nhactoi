@@ -4,12 +4,15 @@ import {router} from 'expo-router';
 import * as Crypto from 'expo-crypto';
 import {useResource,useSession,refreshData} from '../core/session';
 import {errorMessage} from '../core/api';
-import {FormPage,Text,Button,Field,Loading,ErrorNotice,Select,s} from '../ui/kit';
+import { useKitStyles,FormPage,Text,Button,Field,Loading,ErrorNotice,Select} from '../ui/kit';
+import { useTheme } from '../ui/theme';
 type Service = {id:string;revision?:string;name:string;provider:string;nextDate:string;amount:number;actualPaid:number|null;archivedAt:string|null;canEdit:boolean;note:string;cycle:string;intervalCount:number;customerId?:string|null;reminderTime?:string|null;reminderMode?:string};
 type Renewal={id:string;previous_date:string;next_date:string;amount:number;expense_id:string|null;note:string;actor_name:string;created_at:string};
 type Interaction={id:string;note:string;actor_name:string;happened_at:string};
 type Confirm={date:string;revision?:string;operationId:string};
-export function ServiceDetail({id}:{id:string}) {
+export function ServiceDetail({id,onBack}:{id:string;onBack?:()=>void}) {
+  const s = useKitStyles();
+ const {colors}=useTheme();
  const {api,writable,online,session}=useSession();
  const result=useResource<{service:Service}>(`/services/${encodeURIComponent(id)}`);
  const service=result.data?.value.service;
@@ -38,7 +41,7 @@ export function ServiceDetail({id}:{id:string}) {
   setBusy(true);setError('');
   try{await api(`/customers/${encodeURIComponent(service.customerId)}/interactions`,{method:'POST',body:JSON.stringify({type:careType,note:care})});setCare('');setNotice('Đã lưu lịch sử chăm sóc.');await refreshData();}catch(e){setError(errorMessage(e));}finally{setBusy(false);}
  }
- return <FormPage title="Gia hạn dịch vụ" onBack={()=>router.canGoBack()?router.back():router.replace('/')}>
+ return <FormPage title="Gia hạn dịch vụ" onBack={onBack||(()=>router.canGoBack()?router.back():router.replace('/'))}>
  {result.isPending?<Loading/>:result.error?<ErrorNotice message={errorMessage(result.error)}/>:service&&<>
  <Text style={s.cardTitle}>{service.name}</Text><Text>Nhà cung cấp: {service.provider||'Chưa đặt'}</Text>
  <Text>Ngày gia hạn: {service.nextDate.split('-').reverse().join('/')}</Text>
@@ -49,8 +52,8 @@ export function ServiceDetail({id}:{id:string}) {
  <ErrorNotice message={error}/>{!!notice&&<Text accessibilityRole="alert">{notice}</Text>}
  {confirm?<>
  <Field label="Chi phí kỳ gia hạn (VND)" value={amount} onChangeText={setAmount} keyboardType="numeric" editable={!busy&&!submitted}/>
- <Text>Ghi khoản chi (cần quyền tài chính)</Text><Switch accessibilityLabel="Ghi khoản chi" value={recordExpense} onValueChange={setRecordExpense} disabled={!finance||busy||!!submitted}/>
- <Text>Tạo việc cho kỳ mới</Text><Switch accessibilityLabel="Tạo việc cho kỳ mới" value={createTask} onValueChange={setCreateTask} disabled={busy||!!submitted}/>
+ <Text>Ghi khoản chi (cần quyền tài chính)</Text><Switch accessibilityLabel="Ghi khoản chi" value={recordExpense} onValueChange={setRecordExpense} disabled={!finance||busy||!!submitted} trackColor={{false:colors.line,true:colors.accent}} thumbColor={recordExpense?colors.onAccent:colors.surface}/>
+ <Text>Tạo việc cho kỳ mới</Text><Switch accessibilityLabel="Tạo việc cho kỳ mới" value={createTask} onValueChange={setCreateTask} disabled={busy||!!submitted} trackColor={{false:colors.line,true:colors.accent}} thumbColor={createTask?colors.onAccent:colors.surface}/>
  <Text>Xác nhận gia hạn kỳ {confirm.date.split('-').reverse().join('/')}. Gia hạn không đồng nghĩa đã thanh toán. Khoản chi chỉ được tạo khi bật ghi chi; thao tác không chuyển tiền.</Text>
  {!!submitted&&!!error&&<Text>Giữ nguyên yêu cầu để thử lại an toàn. Nếu dữ liệu đã đổi, hủy biểu mẫu và tải lại; dữ liệu nhập vẫn được giữ khi lỗi.</Text>}
  <Button label="Xác nhận ghi nhận gia hạn" disabled={!allowed||busy} onPress={()=>void renew()}/>

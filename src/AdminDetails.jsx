@@ -38,6 +38,7 @@ const STATUS_LABELS = {
   expired: "Hết hạn",
   canceled: "Đã hủy",
   pending: "Chờ thanh toán",
+  partially_paid: "Thanh toán một phần",
   paid: "Đã thanh toán",
   failed: "Thất bại",
   refunded: "Đã hoàn tiền",
@@ -834,13 +835,23 @@ function OrdersPanel({ orders, planNames }) {
                     <small>
                       {order.cycle === "yearly" ? "Theo năm" : "Theo tháng"}
                     </small>
+                    {order.paymentCode && (
+                      <small>Mã thanh toán {order.paymentCode}</small>
+                    )}
                     {order.id && (
                       <TechnicalDetails>
                         <code>{order.id}</code>
                       </TechnicalDetails>
                     )}
                   </td>
-                  <td className="admin-details-money">{money(order.amount)}</td>
+                  <td className="admin-details-money">
+                    {money(order.amount)}
+                    {order.status === "partially_paid" ? (
+                      <small>Đã nhận {money(order.amountPaid)}</small>
+                    ) : Number(order.taxAmount) > 0 ? (
+                      <small>Gồm VAT {money(order.taxAmount)}</small>
+                    ) : null}
+                  </td>
                   <td>
                     <StatusBadge value={order.status} />
                   </td>

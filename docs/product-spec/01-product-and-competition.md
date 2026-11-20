@@ -16,7 +16,7 @@ Thứ tự khách hàng ưu tiên đã chốt: (1) SME dịch vụ/agency, (2) �
 |---|---|---|---|
 | Chủ doanh nghiệp/điều phối | Sáng phải hỏi nhiều người về các việc còn treo | Biết việc quá hạn, chưa nhận, đang hoãn; truy được người và khách liên quan | Dashboard đáng tin, quyền rõ, không nhân số task theo số người được giao |
 | Nhân viên kỹ thuật/dịch vụ | Nhận việc khi đang ở hiện trường, mạng chập chờn | Nhập/sửa việc, checklist, kế hoạch ngay; không mất nội dung | Android offline có queue bền vững, conflict rõ và sync không tạo bản sao |
-| CSKH/vận hành gia hạn | Theo dõi domain, phần mềm, bảo trì và hợp đồng | Không bỏ kỳ, giữ lịch sử chăm sóc, tạo việc và thông báo đúng người | Chính sách nhắc theo kỳ, task gia hạn và lịch sử; gia hạn không tự thành thanh toán |
+| CSKH/vận hành gia hạn | Theo dõi phần mềm, bảo trì và hợp đồng | Không bỏ kỳ, giữ lịch sử chăm sóc, tạo việc và thông báo đúng người | Chính sách nhắc theo kỳ, task gia hạn và lịch sử; gia hạn không tự thành thanh toán |
 | Quản lý dự án | Điều phối nhiều đầu việc, người và thời hạn | Kanban/list/calendar, dependency, timeline, mẫu và capacity | Dữ liệu nhất quán giữa views, không tự dời hạn hoặc phỏng đoán effort |
 | Khách hàng/đối tác | Cần trao đổi trên một dự án cụ thể | Xem/bình luận/sửa phần được cấp mà không thấy nội bộ | Guest ACL, private project và giới hạn CRM/tài chính thực sự ở server |
 | Cá nhân/freelancer | Có Google Tasks và Calendar nhưng nhiều cam kết với khách | Tách hạn cam kết khỏi lịch mình dự định làm; kiểm soát công việc dịch vụ | Planner gọn, Calendar dùng chung thói quen; có giá trị vượt một danh sách việc |
